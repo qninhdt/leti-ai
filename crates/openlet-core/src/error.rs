@@ -28,6 +28,9 @@ pub enum CoreError {
 
     #[error("config error: {0}")]
     Config(#[from] ConfigError),
+
+    #[error("context still overflows after compaction summary; manual trim required")]
+    ContextOverflowAfterCompaction,
 }
 
 impl CoreError {
@@ -44,6 +47,7 @@ impl CoreError {
             Self::Event(_) => FailureClass::Event,
             Self::Permission(_) => FailureClass::Permission,
             Self::Config(_) => FailureClass::Config,
+            Self::ContextOverflowAfterCompaction => FailureClass::ContextWindow,
         }
     }
 }

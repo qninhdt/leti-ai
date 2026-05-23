@@ -25,6 +25,7 @@
 #![allow(clippy::module_inception)]
 
 pub mod adapters;
+pub mod agent;
 pub mod config;
 pub mod error;
 pub mod permission;

@@ -1,5 +1,5 @@
 [package]
-name = "openlet-plugin-registry"
+name = "openlet-plugin-core-agents"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,12 +9,16 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 openlet-core.workspace = true
 openlet-plugin-api.workspace = true
-openlet-plugin-core-agents.workspace = true
-thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
-tracing.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+blake3.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

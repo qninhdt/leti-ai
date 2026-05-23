@@ -106,6 +106,7 @@ impl TestHarness {
             active_turns: Arc::new(DashMap::new()),
             agents: Arc::new(agents),
             default_agent_id,
+            agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
         };
 
         let router = openlet_server::build_router(state);

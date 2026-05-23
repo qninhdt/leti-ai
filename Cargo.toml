@@ -6,6 +6,7 @@ members = [
     "crates/openlet-protocol",
     "crates/openlet-plugin-api",
     "crates/openlet-plugin-registry",
+    "crates/openlet-plugins/core-agents",
     "crates/openlet-server",
 ]
 
@@ -96,6 +97,7 @@ openlet-adapters = { path = "crates/openlet-adapters" }
 openlet-protocol = { path = "crates/openlet-protocol" }
 openlet-plugin-api = { path = "crates/openlet-plugin-api" }
 openlet-plugin-registry = { path = "crates/openlet-plugin-registry" }
+openlet-plugin-core-agents = { path = "crates/openlet-plugins/core-agents" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

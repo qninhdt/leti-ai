@@ -432,6 +432,7 @@ fn part_kind(part: &Part) -> &'static str {
         Part::Image { .. } => "image",
         Part::StepStart { .. } => "step_start",
         Part::StepFinish { .. } => "step_finish",
+        Part::Compaction { .. } => "compaction",
     }
 }
 

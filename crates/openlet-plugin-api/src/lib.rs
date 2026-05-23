@@ -9,7 +9,7 @@ pub mod manifest;
 pub mod plugin;
 pub mod prelude;
 
-pub use context::PluginContext;
+pub use context::{CoreApi, PluginContext};
 pub use hooks::{HookKind, HookResult, Priority};
 pub use manifest::{Capability, PluginManifest};
 pub use plugin::{Plugin, PluginError};

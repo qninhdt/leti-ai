@@ -237,6 +237,11 @@ async fn drive_loop(
         read_history,
         mode: session_meta.permission_mode,
         max_steps: 50,
+        agent: openlet_core::agent::AgentSlug::new("general")
+            .ok()
+            .and_then(|slug| state.agent_registry.get(&slug))
+            .cloned()
+            .map(std::sync::Arc::new),
     };
 
     let input = TurnInput {

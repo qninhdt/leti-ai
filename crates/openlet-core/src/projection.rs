@@ -4,7 +4,7 @@
 //! set. Pure function over a snapshot of messages and parts; appending a
 //! part to the source never invalidates a prior projection's prefix.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -65,8 +65,27 @@ pub fn project_for_llm(
     parts_by_msg: &HashMap<MessageId, Vec<Part>>,
     caps: ProjectionCaps,
 ) -> Vec<LlmMessage> {
+    let (compacted_ids, summaries) = collect_compactions(msgs, parts_by_msg);
     let mut out = Vec::with_capacity(msgs.len());
+    let mut emitted_summary_for: HashSet<MessageId> = HashSet::new();
     for msg in msgs {
+        // If this message was superseded by a compaction summary, emit the
+        // summary in its place — exactly once per summary, on the first
+        // compacted message in chronological order.
+        if let Some(owner) = compacted_ids.get(&msg.id) {
+            if emitted_summary_for.insert(*owner) {
+                if let Some(summary) = summaries.get(owner) {
+                    out.push(LlmMessage {
+                        role: LlmRole::System,
+                        content: format!("[Compacted conversation summary]\n{summary}"),
+                        reasoning: None,
+                        tool_calls: Vec::new(),
+                        tool_call_id: None,
+                    });
+                }
+            }
+            continue;
+        }
         let parts = parts_by_msg
             .get(&msg.id)
             .map(Vec::as_slice)
@@ -79,6 +98,39 @@ pub fn project_for_llm(
         }
     }
     out
+}
+
+/// Walk parts; for each `Part::Compaction`, map every superseded message id
+/// to the compaction's owning message id, and store the summary text by
+/// owner. Returns `(superseded_id -> owner_id, owner_id -> summary)`.
+fn collect_compactions(
+    msgs: &[Message],
+    parts_by_msg: &HashMap<MessageId, Vec<Part>>,
+) -> (HashMap<MessageId, MessageId>, HashMap<MessageId, String>) {
+    use uuid::Uuid;
+    let mut superseded: HashMap<MessageId, MessageId> = HashMap::new();
+    let mut summaries: HashMap<MessageId, String> = HashMap::new();
+    for m in msgs {
+        let Some(parts) = parts_by_msg.get(&m.id) else {
+            continue;
+        };
+        for p in parts {
+            if let Part::Compaction {
+                summary,
+                compacted_message_ids,
+                ..
+            } = p
+            {
+                summaries.insert(m.id, summary.clone());
+                for raw in compacted_message_ids {
+                    if let Ok(uuid) = Uuid::parse_str(raw) {
+                        superseded.insert(MessageId(uuid), m.id);
+                    }
+                }
+            }
+        }
+    }
+    (superseded, summaries)
 }
 
 fn collect_text(parts: &[Part]) -> String {

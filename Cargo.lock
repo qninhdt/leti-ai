@@ -1591,12 +1591,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "openlet-plugin-core-agents"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blake3",
+ "chrono",
+ "openlet-core",
+ "openlet-plugin-api",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "openlet-plugin-registry"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "openlet-core",
  "openlet-plugin-api",
+ "openlet-plugin-core-agents",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -1631,6 +1647,7 @@ dependencies = [
  "openlet-adapters",
  "openlet-core",
  "openlet-plugin-api",
+ "openlet-plugin-core-agents",
  "openlet-plugin-registry",
  "openlet-protocol",
  "rust_decimal",

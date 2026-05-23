@@ -46,6 +46,12 @@ pub enum PartDto {
         id: Uuid,
         reason: String,
     },
+    Compaction {
+        id: Uuid,
+        summary: String,
+        compacted_message_ids: Vec<String>,
+        original_token_count: u32,
+    },
 }
 
 impl From<Part> for PartDto {
@@ -66,6 +72,17 @@ impl From<Part> for PartDto {
             Part::Image { id, mime, .. } => Self::Image { id: id.as_uuid(), mime },
             Part::StepStart { id } => Self::StepStart { id: id.as_uuid() },
             Part::StepFinish { id, reason } => Self::StepFinish { id: id.as_uuid(), reason },
+            Part::Compaction {
+                id,
+                summary,
+                compacted_message_ids,
+                original_token_count,
+            } => Self::Compaction {
+                id: id.as_uuid(),
+                summary,
+                compacted_message_ids,
+                original_token_count,
+            },
         }
     }
 }

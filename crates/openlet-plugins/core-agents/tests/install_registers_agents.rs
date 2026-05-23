@@ -1,0 +1,37 @@
+//! Phase-07 agent-registration smoke test: installing the `core-agents`
+//! plugin populates the registry with `general` + `indexer`.
+
+use openlet_core::agent::{AgentRegistry, AgentSlug};
+use openlet_plugin_api::PluginContext;
+use openlet_plugin_api::context::CoreApi;
+use openlet_plugin_core_agents::CoreAgentsPlugin;
+use openlet_plugin_api::Plugin;
+
+struct StubCore;
+impl CoreApi for StubCore {}
+
+#[tokio::test]
+async fn core_agents_plugin_registers_general_and_indexer() {
+    let plugin = CoreAgentsPlugin::new();
+    let manifest = plugin.manifest().clone();
+    let mut ctx = PluginContext::new(
+        manifest,
+        serde_json::Value::Null,
+        std::sync::Arc::new(StubCore),
+    );
+    plugin.install(&mut ctx).await.expect("install");
+    let agents = ctx.take_registered_agents();
+    assert_eq!(agents.len(), 2);
+
+    let mut registry = AgentRegistry::new();
+    for def in agents {
+        registry.insert(def).expect("insert");
+    }
+    let general = AgentSlug::new("general").unwrap();
+    let indexer = AgentSlug::new("indexer").unwrap();
+    let g = registry.get(&general).expect("general present");
+    let i = registry.get(&indexer).expect("indexer present");
+    assert_eq!(g.tool_allowlist.len(), 8);
+    assert_eq!(i.tool_allowlist.len(), 3);
+    assert!(!g.cacheable_prompt().is_empty());
+}

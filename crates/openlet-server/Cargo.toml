@@ -24,6 +24,7 @@ openlet-adapters.workspace = true
 openlet-core.workspace = true
 openlet-plugin-api.workspace = true
 openlet-plugin-registry.workspace = true
+openlet-plugin-core-agents.workspace = true
 openlet-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true

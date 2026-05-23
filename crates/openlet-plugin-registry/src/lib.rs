@@ -1,7 +1,9 @@
 //! Compile-time plugin registry.
 //!
-//! Phase 1 ships an empty registry. Plugins land in later phases via
-//! `register()` extensions to `all_plugins()`.
+//! Phase 7 wires the `core-agents` plugin (general + indexer). Plugin
+//! amendment §6 mandates built-in agents register through the plugin
+//! surface so external Cloud agents can extend or replace them without
+//! forking core.
 
 use std::sync::Arc;
 
@@ -9,11 +11,11 @@ use openlet_plugin_api::Plugin;
 
 /// Returns the compile-time list of plugins shipped in this build.
 ///
-/// Empty in Phase 1. Phase 4 introduces `core-tools` + `quota`; Phase 7
-/// introduces `core-agents`; Phase 8 introduces `audit-log`.
+/// Phase 7 ships `core-agents`. Phase 4 deferred `core-tools` + `quota`
+/// (still hardcoded). Phase 8 introduces `audit-log`.
 #[must_use]
 pub fn all_plugins() -> Vec<Arc<dyn Plugin>> {
-    Vec::new()
+    vec![Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new())]
 }
 
 /// Registry of resolved plugin handles + sorted hook chains.

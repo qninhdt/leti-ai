@@ -49,6 +49,10 @@ pub struct LoopContext {
     pub read_history: ReadHistory,
     pub mode: PermissionMode,
     pub max_steps: usize,
+    /// Optional agent definition. When provided, compaction triggers
+    /// at the top of each loop iteration once projected tokens cross
+    /// `agent.context_window * agent.compaction_threshold`.
+    pub agent: Option<Arc<crate::agent::AgentDefinition>>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -71,14 +75,105 @@ impl ConversationRuntime {
         mut input: TurnInput,
         cancel: CancellationToken,
     ) -> Result<LoopOutcome, CoreError> {
+        use crate::runtime::compaction::{
+            CompactDecision, append_compaction_part, append_synthetic_request,
+            should_compact, superseded_messages,
+        };
         let session_id = input.session_id;
         let mut last_assistant_id: Option<MessageId> = None;
-        for step in 1..=loop_ctx.max_steps {
+        let mut last_actual_tokens: Option<usize> = None;
+        let mut compacted_this_loop = false;
+        // Compaction iterations don't count against the model-step budget;
+        // they're not the model doing user-visible work, just keeping the
+        // window healthy. Track the budget explicitly so the `continue;`
+        // after a compaction doesn't burn a step.
+        let mut model_steps: usize = 0;
+        loop {
+            if model_steps >= loop_ctx.max_steps {
+                break;
+            }
+            // Compaction check at top of each iteration. Skipped during a
+            // compaction-induced turn to avoid recursion.
+            if let Some(agent) = loop_ctx.agent.as_ref() {
+                if !compacted_this_loop {
+                    let decision = should_compact(&input.messages, agent, last_actual_tokens);
+                    if let CompactDecision::Run { keep } = decision {
+                        compacted_this_loop = true;
+                        // Determine which existing messages will be superseded.
+                        let messages = memory.list_messages(session_id).await?;
+                        let mut superseded = superseded_messages(&messages, keep);
+                        let original_tokens =
+                            crate::runtime::token_estimate::estimate_conversation_tokens(
+                                &input.messages,
+                            ) as u32;
+                        // Append synthetic user message asking for summary.
+                        // The synthetic id is added to `superseded` so the
+                        // projection substitutes the summary in its place
+                        // — otherwise the next turn would see the literal
+                        // "Summarize the conversation history above" prompt
+                        // it never issued.
+                        let synth_id =
+                            append_synthetic_request(memory, &loop_ctx.events, session_id).await?;
+                        superseded.push(synth_id);
+                        // Build a one-shot compaction projection and run a
+                        // turn. The result text becomes Part::Compaction.
+                        let mut compact_input = input.clone();
+                        compact_input.messages = crate::runtime::compaction::build_compaction_projection(
+                            &input.messages,
+                            keep,
+                        );
+                        compact_input.tools = Vec::new();
+                        let outcome = self.run_turn(compact_input, cancel.clone()).await?;
+                        // Drain the freshly produced assistant text into a Compaction part.
+                        let summary = collect_assistant_text(
+                            memory,
+                            session_id,
+                            outcome.assistant_message_id,
+                        )
+                        .await?;
+                        // The compaction-turn's assistant message holds the
+                        // verbatim summary as Part::Text; substitute it via
+                        // the Compaction part on subsequent projections so
+                        // the model doesn't see the summary twice.
+                        superseded.push(outcome.assistant_message_id);
+                        if !superseded.is_empty() {
+                            let _comp_id = append_compaction_part(
+                                memory,
+                                &loop_ctx.events,
+                                session_id,
+                                summary,
+                                superseded,
+                                original_tokens,
+                            )
+                            .await?;
+                        }
+                        // Re-project so the next turn sees the summary in
+                        // place of the compacted messages.
+                        input.messages = project_session_messages(memory, session_id).await?;
+                        // Reset provider-actual anchor — last value referred
+                        // to the pre-compaction prompt and is now stale.
+                        last_actual_tokens = None;
+                        // Post-compaction overflow check (amendment §P).
+                        let post = should_compact(&input.messages, agent, None);
+                        if matches!(post, CompactDecision::Run { .. }) {
+                            return Err(CoreError::ContextOverflowAfterCompaction);
+                        }
+                        continue;
+                    }
+                }
+            }
             let outcome = self.run_turn(input.clone(), cancel.clone()).await?;
+            model_steps += 1;
             last_assistant_id = Some(outcome.assistant_message_id);
+            if let Some(u) = outcome.usage.as_ref() {
+                last_actual_tokens = Some(u.input_tokens as usize);
+            }
+            // Reset the per-loop compaction guard after a real model turn
+            // — subsequent turns may need to compact again.
+            compacted_this_loop = false;
             if !matches!(outcome.finish_reason, FinishReason::ToolUse) {
                 return Ok(LoopOutcome {
-                    steps: step,
+                    steps: model_steps,
                     finish_reason: outcome.finish_reason,
                     final_assistant_message_id: outcome.assistant_message_id,
                 });
@@ -89,7 +184,7 @@ impl ConversationRuntime {
                 collect_tool_calls(memory, session_id, outcome.assistant_message_id).await?;
             if invocations.is_empty() {
                 return Ok(LoopOutcome {
-                    steps: step,
+                    steps: model_steps,
                     finish_reason: FinishReason::EndTurn,
                     final_assistant_message_id: outcome.assistant_message_id,
                 });
@@ -163,6 +258,26 @@ async fn collect_tool_calls(
         }
     }
     Ok(out)
+}
+
+/// Concatenate every `Part::Text` body on a single message. Used after a
+/// compaction turn to fold the assistant's reply into a Compaction part.
+async fn collect_assistant_text(
+    memory: &Arc<dyn MemoryStore>,
+    session_id: SessionId,
+    message_id: MessageId,
+) -> Result<String, CoreError> {
+    let parts = memory.list_parts(session_id, message_id).await?;
+    let mut buf = String::new();
+    for p in parts {
+        if let Part::Text { text, .. } = p {
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(&text);
+        }
+    }
+    Ok(buf)
 }
 
 async fn append_tool_message(

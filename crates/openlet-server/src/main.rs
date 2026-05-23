@@ -20,6 +20,7 @@ use openlet_core::config::{Config, LogFormat};
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::tools::builtins::default_registry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
+use openlet_plugin_api::{PluginContext, context::CoreApi};
 use openlet_plugin_registry::PluginRegistry;
 use openlet_server::{AgentResources, AppState, build_router, cli::{Cli, Command}};
 use tokio::net::TcpListener;
@@ -174,6 +175,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         active_turns: Arc::new(DashMap::new()),
         agents: Arc::new(agents),
         default_agent_id,
+        agent_registry: Arc::new(install_agents(&config).await?),
     };
 
     let app = build_router(state);
@@ -194,6 +196,35 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
 
     info!("openlet-server stopped");
     Ok(())
+}
+
+/// Install all compile-time plugins and drain their registered agents into
+/// a single `AgentRegistry`. Called once during boot.
+async fn install_agents(
+    _config: &Config,
+) -> anyhow::Result<openlet_core::agent::AgentRegistry> {
+    struct StubCore;
+    impl CoreApi for StubCore {}
+
+    let mut registry = openlet_core::agent::AgentRegistry::new();
+    for plugin in openlet_plugin_registry::all_plugins() {
+        let manifest = plugin.manifest().clone();
+        let mut ctx = PluginContext::new(
+            manifest.clone(),
+            serde_json::Value::Null,
+            Arc::new(StubCore) as Arc<dyn CoreApi>,
+        );
+        plugin
+            .install(&mut ctx)
+            .await
+            .with_context(|| format!("installing plugin {}", manifest.id))?;
+        for def in ctx.take_registered_agents() {
+            registry
+                .insert(def)
+                .with_context(|| format!("registering agent from {}", manifest.id))?;
+        }
+    }
+    Ok(registry)
 }
 
 async fn shutdown_signal() {

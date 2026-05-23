@@ -13,6 +13,7 @@ use openlet_core::adapters::{
     memory_store::MemoryStore, model_provider::ModelProvider,
     permission_manager::PermissionManager, tool_executor::ToolExecutor,
 };
+use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
 use openlet_core::runtime::ConversationRuntime;
 use openlet_core::tools::ReadHistory;
@@ -69,4 +70,9 @@ pub struct AppState {
     pub active_turns: Arc<DashMap<SessionId, TurnHandle>>,
     pub agents: Arc<HashMap<AgentId, AgentResources>>,
     pub default_agent_id: AgentId,
+    /// Agent definitions registered by plugins. Indexed by slug; the
+    /// HTTP route resolves the per-session slug via `SessionMeta` once
+    /// the column lands (phase-08), and falls back to the `general` slug
+    /// for MVP.
+    pub agent_registry: Arc<AgentRegistry>,
 }

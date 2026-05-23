@@ -197,6 +197,10 @@ impl From<openlet_core::error::CoreError> for AppError {
             Event(x) => x.into(),
             Permission(x) => x.into(),
             Config(x) => x.into(),
+            ContextOverflowAfterCompaction => AppError::internal(
+                "context_overflow_after_compaction",
+                "context still overflows after compaction; manual conversation trim required",
+            ),
         }
     }
 }
