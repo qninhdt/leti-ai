@@ -39,7 +39,7 @@ MVP for **openlet-ai** (Team 2): a standalone Rust agent runtime exposing REST +
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | [Foundation](./phase-01-foundation.md) | Complete |
-| 2 | [Storage and Message Model](./phase-02-storage-and-message-model.md) | Pending |
+| 2 | [Storage and Message Model](./phase-02-storage-and-message-model.md) | Complete |
 | 3 | [Agent Loop Core](./phase-03-agent-loop-core.md) | Pending |
 | 4 | [Tools and Permissions](./phase-04-tools-and-permissions.md) | Pending |
 | 5 | [HTTP API and SSE](./phase-05-http-api-and-sse.md) | Pending |
