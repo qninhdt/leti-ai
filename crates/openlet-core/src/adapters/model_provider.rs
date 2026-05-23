@@ -1,29 +1,39 @@
 use async_trait::async_trait;
 use futures::Stream;
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
-use crate::types::message::Role;
+use crate::projection::LlmMessage;
+use crate::types::event::Usage;
 
-/// Provider-side request body. Phase 3 fills in the message-shaping logic
-/// that produces this from a projected conversation.
+/// Provider-side request body. Built by the runtime from a projected
+/// conversation (`projection::LlmMessage`) plus tool definitions and per-turn
+/// sampling params. Wire-agnostic; the OpenAI-compat adapter converts to the
+/// concrete OpenAI JSON shape inside its own `wire` module.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
     pub model: String,
     pub messages: Vec<LlmMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<ToolSpec>,
+    #[serde(default = "default_stream")]
     pub stream: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmMessage {
-    pub role: Role,
-    pub content: String,
+const fn default_stream() -> bool {
+    true
 }
 
+/// One tool advertised to the model. `parameters` is a JSON Schema (built
+/// from `schemars::schema_for!` per registered tool input struct).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
@@ -31,24 +41,76 @@ pub struct ToolSpec {
     pub parameters: serde_json::Value,
 }
 
-/// Streaming chunk emitted by `chat_stream`. Phase 3 expands variants for
-/// reasoning, tool-call accumulation, and finish reasons.
+/// Closed-set finish reason. Loop termination policy:
+/// - `EndTurn | MaxTokens | Error | Cancelled` → terminate the loop
+/// - `ToolUse` → run tools then continue
+/// - `Length | ContentFilter` → terminate (treated as error-ish; bubble up)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    EndTurn,
+    ToolUse,
+    MaxTokens,
+    Length,
+    ContentFilter,
+    Error,
+    Cancelled,
+}
+
+/// Streaming chunk emitted by `chat_stream`.
+///
+/// Granularity mirrors claw-code/api/src/types.rs `StreamEvent` collapsed
+/// into a flat enum. Tool-call args arrive in chunks indexed by position;
+/// the processor accumulates them and parses on `Finish`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChatDelta {
-    Text { text: String },
-    Reasoning { text: String },
-    ToolArgs { call_id: String, args_chunk: String },
-    StepFinish { reason: String },
+    /// Assistant role announcement (some providers send this once at start).
+    Role,
+    /// Streamed assistant text fragment.
+    Content { text: String },
+    /// Reasoning preamble (OpenAI o1/o3 `reasoning_content` or Anthropic
+    /// `thinking_delta`). `signature` is Anthropic's signed-thinking token.
+    Reasoning {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    /// First chunk for a tool call at `index`. Carries `call_id` + `name`.
+    ToolCallStart {
+        call_id: String,
+        name: String,
+        index: usize,
+    },
+    /// Subsequent argument fragment for the tool call at `index`. Concatenate
+    /// chunks; do NOT parse until `Finish` (chunks may not be valid JSON
+    /// mid-stream).
+    ToolCallArgsDelta { index: usize, args_chunk: String },
+    /// Terminal frame — `usage` is best-effort (some providers send it on a
+    /// preceding `MessageDelta` instead).
+    Finish {
+        reason: FinishReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<Usage>,
+    },
 }
 
-/// Per-model pricing (decimal strings to avoid float drift on cost math).
+/// Per-model pricing. Stored as `Decimal` (USD per million tokens) to avoid
+/// f64 drift in cost math (§S no-`Other`, plan-locked rule).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
-    pub input_per_mtok: String,
-    pub output_per_mtok: String,
-    pub cached_input_per_mtok: Option<String>,
+    pub input_per_mtok: Decimal,
+    pub output_per_mtok: Decimal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cached_input_per_mtok: Option<Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_write_per_mtok: Option<Decimal>,
 }
+
+/// Type alias for the streaming chunk channel — kept as a boxed trait object
+/// per phase-03 step 1 (revisit when GATs stabilize cleanly across runtime).
+pub type ChatStream =
+    Box<dyn Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin + 'static>;
 
 /// Wraps an LLM provider — local mock, OpenAI-compat, OpenRouter.
 ///
@@ -60,7 +122,7 @@ pub trait ModelProvider: Send + Sync + 'static {
         &self,
         req: ChatRequest,
         cancel: CancellationToken,
-    ) -> Result<Box<dyn Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin>, ProviderError>;
+    ) -> Result<ChatStream, ProviderError>;
 
     fn pricing(&self, model: &str) -> Option<ModelPricing>;
 }

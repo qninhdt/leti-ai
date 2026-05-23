@@ -1,0 +1,271 @@
+//! Conversation runtime — drives one provider call end-to-end.
+//!
+//! Slice-2 scope: a single LLM stream → `Processor` → storage + bus.
+//! Tool dispatch and the multi-step outer loop (claw `run_turn` /
+//! opencode `runLoop`) land in Phase 4. Cost is tracked per-session
+//! across turn calls, so the future loop can enforce `max_cost_per_session`.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use chrono::Utc;
+use dashmap::DashMap;
+use futures::StreamExt;
+use rust_decimal::Decimal;
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+
+use crate::adapters::event_sink::{EventSink, Persistence};
+use crate::adapters::memory_store::MemoryStore;
+use crate::adapters::model_provider::{ChatRequest, FinishReason, ModelProvider, ToolSpec};
+use crate::error::{CoreError, ProviderError};
+use crate::projection::LlmMessage;
+use crate::runtime::cost::{compute_cost, format_usd};
+use crate::runtime::processor::{Processor, ProcessorState};
+use crate::runtime::turn_stream::StreamingPartTracker;
+use crate::types::event::{AgentEvent, Usage};
+use crate::types::message::{Message, MessageId, Role};
+use crate::types::session::SessionId;
+
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Runtime tunables. Plumbed from `openlet_core::config::Config` at boot.
+#[derive(Debug, Clone)]
+pub struct RuntimeConfig {
+    pub max_cost_per_session_usd: Decimal,
+    pub idle_timeout: Duration,
+    pub default_model: String,
+}
+
+impl RuntimeConfig {
+    #[must_use]
+    pub fn new(max_cost_per_session_usd: Decimal, default_model: String) -> Self {
+        Self {
+            max_cost_per_session_usd,
+            idle_timeout: DEFAULT_IDLE_TIMEOUT,
+            default_model,
+        }
+    }
+}
+
+/// Caller-supplied turn description. The runtime owns request building
+/// because (a) `tools` materialization needs the registry, (b) `messages`
+/// is the projected conversation, not raw `Part`s.
+#[derive(Debug, Clone)]
+pub struct TurnInput {
+    pub session_id: SessionId,
+    pub messages: Vec<LlmMessage>,
+    pub system_prompt: Option<String>,
+    pub model: Option<String>,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub tools: Vec<ToolSpec>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnOutcome {
+    pub assistant_message_id: MessageId,
+    pub finish_reason: FinishReason,
+    pub usage: Option<Usage>,
+    pub cost_usd: Option<Decimal>,
+}
+
+pub struct ConversationRuntime {
+    provider: Arc<dyn ModelProvider>,
+    memory: Arc<dyn MemoryStore>,
+    events: Arc<dyn EventSink>,
+    config: RuntimeConfig,
+    session_costs: Arc<DashMap<SessionId, Decimal>>,
+}
+
+impl ConversationRuntime {
+    #[must_use]
+    pub fn new(
+        provider: Arc<dyn ModelProvider>,
+        memory: Arc<dyn MemoryStore>,
+        events: Arc<dyn EventSink>,
+        config: RuntimeConfig,
+    ) -> Self {
+        Self {
+            provider,
+            memory,
+            events,
+            config,
+            session_costs: Arc::new(DashMap::new()),
+        }
+    }
+
+    /// Cumulative cost recorded across turns of `session_id`. Returns zero
+    /// for unknown sessions.
+    pub fn session_cost(&self, session_id: SessionId) -> Decimal {
+        self.session_costs
+            .get(&session_id)
+            .map(|v| *v)
+            .unwrap_or_default()
+    }
+
+    /// Drives one assistant turn. Caller owns `cancel` — pass a child token
+    /// of the session token so an external abort cascades into the
+    /// provider stream and any spawned work.
+    pub async fn run_turn(
+        &self,
+        input: TurnInput,
+        cancel: CancellationToken,
+    ) -> Result<TurnOutcome, CoreError> {
+        let session_id = input.session_id;
+        let model = input
+            .model
+            .clone()
+            .unwrap_or_else(|| self.config.default_model.clone());
+
+        let message_id = self.create_assistant_message(session_id).await?;
+
+        let req = ChatRequest {
+            model: model.clone(),
+            messages: input.messages,
+            system: input.system_prompt,
+            max_tokens: input.max_tokens,
+            temperature: input.temperature,
+            tools: input.tools,
+            stream: true,
+        };
+
+        let outcome = self
+            .drive_stream(session_id, message_id, model, req, cancel)
+            .await;
+
+        match outcome {
+            Ok(o) => Ok(o),
+            Err(e) => {
+                self.publish_error(session_id, &e).await;
+                Err(e)
+            }
+        }
+    }
+
+    async fn drive_stream(
+        &self,
+        session_id: SessionId,
+        message_id: MessageId,
+        model: String,
+        req: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<TurnOutcome, CoreError> {
+        let mut stream = self.provider.chat_stream(req, cancel.clone()).await?;
+        let mut state = ProcessorState::default();
+        let mut tracker = StreamingPartTracker::default();
+
+        loop {
+            let next = tokio::select! {
+                biased;
+                () = cancel.cancelled() => {
+                    return Err(CoreError::Provider(ProviderError::Cancelled));
+                }
+                slot = timeout(self.config.idle_timeout, stream.next()) => slot,
+            };
+
+            let item = match next {
+                Ok(Some(item)) => item,
+                Ok(None) => break,
+                Err(_) => {
+                    return Err(CoreError::Provider(ProviderError::Network(
+                        "stream idle timeout".into(),
+                    )));
+                }
+            };
+
+            let delta = item?;
+            let step = Processor::step(state, delta)?;
+            state = step.next;
+
+            for evt in step.events {
+                tracker
+                    .handle_event(&self.memory, &self.events, session_id, message_id, evt)
+                    .await?;
+            }
+
+            if !step.parts.is_empty() {
+                let cost_str = self
+                    .turn_cost(&model, state.usage.as_ref())
+                    .map(format_usd);
+                for part in step.parts {
+                    tracker
+                        .handle_part(
+                            &self.memory,
+                            &self.events,
+                            session_id,
+                            message_id,
+                            part,
+                            cost_str.clone(),
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        let finish = state.finish.unwrap_or(FinishReason::EndTurn);
+        let usage = state.usage.clone();
+        let cost = self.turn_cost(&model, usage.as_ref());
+        if let Some(c) = cost {
+            self.add_session_cost(session_id, c);
+        }
+
+        Ok(TurnOutcome {
+            assistant_message_id: message_id,
+            finish_reason: finish,
+            usage,
+            cost_usd: cost,
+        })
+    }
+
+    fn turn_cost(&self, model: &str, usage: Option<&Usage>) -> Option<Decimal> {
+        let usage = usage?;
+        let pricing = self.provider.pricing(model)?;
+        Some(compute_cost(usage, &pricing))
+    }
+
+    fn add_session_cost(&self, session_id: SessionId, cost: Decimal) {
+        self.session_costs
+            .entry(session_id)
+            .and_modify(|v| *v += cost)
+            .or_insert(cost);
+    }
+
+    async fn create_assistant_message(
+        &self,
+        session_id: SessionId,
+    ) -> Result<MessageId, CoreError> {
+        let msg = Message {
+            id: MessageId::new(),
+            session_id,
+            role: Role::Assistant,
+            created_at: Utc::now(),
+        };
+        let id = self.memory.append_message(session_id, msg).await?;
+        self.events
+            .publish(
+                AgentEvent::MessageCreated {
+                    session_id,
+                    message_id: id,
+                    at: Utc::now(),
+                },
+                Persistence::Durable,
+            )
+            .await?;
+        Ok(id)
+    }
+
+    async fn publish_error(&self, session_id: SessionId, err: &CoreError) {
+        let _ = self
+            .events
+            .publish(
+                AgentEvent::Error {
+                    session_id: Some(session_id),
+                    code: err.class().as_str().to_string(),
+                    message: err.to_string(),
+                },
+                Persistence::Durable,
+            )
+            .await;
+    }
+}

@@ -1,12 +1,16 @@
-//! Local-filesystem `ArtifactStore` impl.
+//! Local-filesystem adapters.
 //!
-//! Layout: `<root>/<session_id>/<sha256(key).hex>`. Metadata persisted in
-//! the `artifacts` SQLite table so listing is O(1) without directory scan.
-//! Keys are sanitized to refuse `..` and absolute paths so a malicious key
-//! cannot escape the per-session directory.
+//! - `LocalFsArtifactStore`: per-session blob bucket with SQLite-backed
+//!   metadata (sha256 key → file).
+//! - `LocalFilesystem`: workspace-scoped `Filesystem` impl backing the
+//!   file tools (`read`/`write`/`edit`/`list`/`glob`/`grep`) for laptop
+//!   or single-tenant deployments.
+//! - `SessionLogger`: per-session JSONL append log.
 
 pub mod artifact_store;
+pub mod filesystem;
 pub mod session_log;
 
 pub use artifact_store::LocalFsArtifactStore;
+pub use filesystem::LocalFilesystem;
 pub use session_log::SessionLogger;

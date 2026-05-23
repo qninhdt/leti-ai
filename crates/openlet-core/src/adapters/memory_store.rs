@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::error::MemoryError;
+use crate::types::agent::AgentId;
 use crate::types::message::{Message, MessageId};
 use crate::types::part::{Part, PartId};
+use crate::types::permission::PermissionMode;
 use crate::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
 
 /// Persists sessions, messages, parts, and read history.
@@ -16,7 +18,7 @@ use crate::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus
 pub trait MemoryStore: Send + Sync + 'static {
     async fn create_session(
         &self,
-        agent_id: &str,
+        agent_id: AgentId,
         parent: Option<SessionId>,
     ) -> Result<SessionId, MemoryError>;
 
@@ -33,6 +35,14 @@ pub trait MemoryStore: Send + Sync + 'static {
         session: SessionId,
         status: SessionStatus,
         reason: &str,
+    ) -> Result<(), MemoryError>;
+
+    /// Updates the per-session `permission_mode` (§A F27). Returns
+    /// `SessionNotFound` if the session does not exist or is soft-deleted.
+    async fn update_permission_mode(
+        &self,
+        session: SessionId,
+        mode: PermissionMode,
     ) -> Result<(), MemoryError>;
 
     /// Soft-delete: sets status=cancelled + deleted_at.
@@ -61,6 +71,16 @@ pub trait MemoryStore: Send + Sync + 'static {
 
     async fn list_messages(&self, session: SessionId)
         -> Result<Vec<Message>, MemoryError>;
+
+    /// Lists every persisted part for `msg`, in append order. Used by
+    /// the multi-step turn loop to harvest tool_calls from the latest
+    /// assistant message and by the projection layer to rebuild
+    /// LLM-shape messages between turns.
+    async fn list_parts(
+        &self,
+        session: SessionId,
+        msg: MessageId,
+    ) -> Result<Vec<Part>, MemoryError>;
 
     /// Records that the agent read a path during this session.
     /// Persisted to `session_reads` (Phase 2 schema, §F).

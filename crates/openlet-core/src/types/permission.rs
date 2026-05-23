@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::session::SessionId;
@@ -10,13 +11,27 @@ use super::session::SessionId;
 ///
 /// Coarse enum — the full ruleset lives in `permissions.toml`. Plan
 /// amendment §A makes this a session-level column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+///
+/// Ordering: `ReadOnly < WorkspaceWrite < Danger`. `mode.permits(required)`
+/// returns `true` iff the active mode is at least as permissive as `required`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionMode {
     ReadOnly,
     #[default]
     WorkspaceWrite,
     Danger,
+}
+
+impl PermissionMode {
+    /// `true` iff the active mode is at least as permissive as `required`.
+    #[must_use]
+    pub fn permits(self, required: Self) -> bool {
+        self >= required
+    }
 }
 
 /// One ruleset row — a permission pattern + the action to take.

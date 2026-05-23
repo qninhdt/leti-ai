@@ -1,38 +1,16 @@
 //! OpenAI-compat / OpenRouter `ModelProvider` impl.
 //!
-//! Phase 1 stub. Phase 3 fills in `chat_stream` against OpenRouter's
-//! standard OpenAI-compat endpoint.
+//! Three-layer split per phase-03 §Architecture:
+//!   1. `provider` — HTTP send + cancellation + status mapping
+//!   2. `wire`     — `ChatRequest` ↔ OpenAI JSON shape
+//!   3. `sse` + `chunk_decoder` — frame extraction + `ChatDelta` decode
+//!
+//! `pricing` is the static OpenRouter pricing table.
 
-use async_trait::async_trait;
-use futures::Stream;
-use openlet_core::adapters::model_provider::{ChatDelta, ChatRequest, ModelPricing, ModelProvider};
-use openlet_core::error::ProviderError;
-use tokio_util::sync::CancellationToken;
+pub mod chunk_decoder;
+pub mod pricing;
+pub mod provider;
+pub mod sse;
+pub mod wire;
 
-#[derive(Debug, Default)]
-pub struct OpenAiCompatProvider;
-
-impl OpenAiCompatProvider {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl ModelProvider for OpenAiCompatProvider {
-    async fn chat_stream(
-        &self,
-        _req: ChatRequest,
-        _cancel: CancellationToken,
-    ) -> Result<
-        Box<dyn Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin>,
-        ProviderError,
-    > {
-        Err(ProviderError::Unimplemented)
-    }
-
-    fn pricing(&self, _model: &str) -> Option<ModelPricing> {
-        None
-    }
-}
+pub use provider::{OpenAiCompatProvider, DEFAULT_BASE_URL};

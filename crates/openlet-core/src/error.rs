@@ -61,10 +61,16 @@ pub enum FailureClass {
     ProviderRateLimit,
     ProviderNetwork,
     ProviderDecode,
+    ProviderCancelled,
     ProviderUnimplemented,
     ContextWindow,
     ToolPathOutsideWorkspace,
     ToolPermissionDenied,
+    ToolReadBeforeWrite,
+    ToolBinaryFile,
+    ToolFileTooLarge,
+    ToolNotFound,
+    ToolInvalidInput,
     ToolTimeout,
     ToolIo,
     ToolUnimplemented,
@@ -83,10 +89,16 @@ impl FailureClass {
             Self::ProviderRateLimit => "provider_rate_limit",
             Self::ProviderNetwork => "provider_network",
             Self::ProviderDecode => "provider_decode",
+            Self::ProviderCancelled => "provider_cancelled",
             Self::ProviderUnimplemented => "provider_unimplemented",
             Self::ContextWindow => "context_window",
             Self::ToolPathOutsideWorkspace => "tool_path_outside_workspace",
             Self::ToolPermissionDenied => "tool_permission_denied",
+            Self::ToolReadBeforeWrite => "tool_read_before_write",
+            Self::ToolBinaryFile => "tool_binary_file",
+            Self::ToolFileTooLarge => "tool_file_too_large",
+            Self::ToolNotFound => "tool_not_found",
+            Self::ToolInvalidInput => "tool_invalid_input",
             Self::ToolTimeout => "tool_timeout",
             Self::ToolIo => "tool_io",
             Self::ToolUnimplemented => "tool_unimplemented",
@@ -111,6 +123,8 @@ pub enum ProviderError {
     Decode(String),
     #[error("context window exceeded: {used} > {limit}")]
     ContextWindowExceeded { used: u64, limit: u64 },
+    #[error("provider request cancelled")]
+    Cancelled,
     #[error("not implemented (Phase 1 stub)")]
     Unimplemented,
 }
@@ -124,6 +138,7 @@ impl ProviderError {
             Self::Network(_) => FailureClass::ProviderNetwork,
             Self::Decode(_) => FailureClass::ProviderDecode,
             Self::ContextWindowExceeded { .. } => FailureClass::ContextWindow,
+            Self::Cancelled => FailureClass::ProviderCancelled,
             Self::Unimplemented => FailureClass::ProviderUnimplemented,
         }
     }
@@ -153,10 +168,20 @@ pub enum ArtifactError {
 
 #[derive(Debug, Error)]
 pub enum ToolError {
-    #[error("path outside workspace")]
-    PathOutsideWorkspace,
-    #[error("permission denied")]
-    PermissionDenied,
+    #[error("path outside workspace: {0}")]
+    PathOutsideWorkspace(String),
+    #[error("permission denied: {0}")]
+    PermissionDenied(String),
+    #[error("read before write required: file {0} must be read with the read tool before edit/write")]
+    ReadBeforeWriteRequired(String),
+    #[error("binary file: {0}")]
+    BinaryFile(String),
+    #[error("file too large: {path} ({bytes} bytes > {limit} bytes)")]
+    FileTooLarge { path: String, bytes: u64, limit: u64 },
+    #[error("tool not found: {0}")]
+    NotFound(String),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
     #[error("tool execution timed out")]
     Timeout,
     #[error("tool io: {0}")]
@@ -165,12 +190,51 @@ pub enum ToolError {
     Unimplemented,
 }
 
+impl From<FsError> for ToolError {
+    fn from(e: FsError) -> Self {
+        match e {
+            FsError::OutsideWorkspace(p) => ToolError::PathOutsideWorkspace(p),
+            FsError::NotFound(p) => ToolError::Io(format!("not found: {p}")),
+            FsError::TooLarge { path, bytes, limit } => {
+                ToolError::FileTooLarge { path, bytes, limit }
+            }
+            FsError::Binary(p) => ToolError::BinaryFile(p),
+            FsError::InvalidInput(m) => ToolError::InvalidInput(m),
+            FsError::Io(m) => ToolError::Io(m),
+        }
+    }
+}
+
+/// Errors raised by `Filesystem` adapters. Mapped into `ToolError` at
+/// the tool boundary via the `From` impl above. Adapter authors only
+/// reach for this set; tools translate as needed.
+#[derive(Debug, Error)]
+pub enum FsError {
+    #[error("path outside workspace: {0}")]
+    OutsideWorkspace(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("file too large: {path} ({bytes} > {limit})")]
+    TooLarge { path: String, bytes: u64, limit: u64 },
+    #[error("binary file: {0}")]
+    Binary(String),
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    #[error("io: {0}")]
+    Io(String),
+}
+
 impl ToolError {
     #[must_use]
     pub fn class(&self) -> FailureClass {
         match self {
-            Self::PathOutsideWorkspace => FailureClass::ToolPathOutsideWorkspace,
-            Self::PermissionDenied => FailureClass::ToolPermissionDenied,
+            Self::PathOutsideWorkspace(_) => FailureClass::ToolPathOutsideWorkspace,
+            Self::PermissionDenied(_) => FailureClass::ToolPermissionDenied,
+            Self::ReadBeforeWriteRequired(_) => FailureClass::ToolReadBeforeWrite,
+            Self::BinaryFile(_) => FailureClass::ToolBinaryFile,
+            Self::FileTooLarge { .. } => FailureClass::ToolFileTooLarge,
+            Self::NotFound(_) => FailureClass::ToolNotFound,
+            Self::InvalidInput(_) => FailureClass::ToolInvalidInput,
             Self::Timeout => FailureClass::ToolTimeout,
             Self::Io(_) => FailureClass::ToolIo,
             Self::Unimplemented => FailureClass::ToolUnimplemented,

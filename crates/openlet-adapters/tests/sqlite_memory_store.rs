@@ -3,6 +3,7 @@
 use chrono::Utc;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory};
 use openlet_core::adapters::memory_store::MemoryStore;
+use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::session::{SessionFilter, SessionStatus};
@@ -12,14 +13,15 @@ async fn create_and_get_session() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);
 
-    let id = store.create_session("indexer", None).await.expect("create");
+    let agent = AgentId::new();
+    let id = store.create_session(agent, None).await.expect("create");
     let meta = store
         .get_session(id)
         .await
         .expect("get")
         .expect("session present");
     assert_eq!(meta.id, id);
-    assert_eq!(meta.agent_id, "indexer");
+    assert_eq!(meta.agent_id, agent);
     assert_eq!(meta.status, SessionStatus::Idle);
     assert!(meta.deleted_at.is_none());
 }
@@ -28,8 +30,9 @@ async fn create_and_get_session() {
 async fn list_filters_deleted() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);
-    let alive = store.create_session("a", None).await.unwrap();
-    let dead = store.create_session("a", None).await.unwrap();
+    let a = AgentId::new();
+    let alive = store.create_session(a, None).await.unwrap();
+    let dead = store.create_session(a, None).await.unwrap();
     store.delete_session(dead).await.unwrap();
 
     let live_only = store
@@ -53,7 +56,7 @@ async fn list_filters_deleted() {
 async fn append_messages_keeps_seq_order() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);
-    let session = store.create_session("a", None).await.unwrap();
+    let session = store.create_session(AgentId::new(), None).await.unwrap();
 
     for role in [Role::User, Role::Assistant, Role::Tool, Role::User] {
         let msg = Message {
@@ -77,7 +80,7 @@ async fn append_messages_keeps_seq_order() {
 async fn append_and_upsert_part() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);
-    let session = store.create_session("a", None).await.unwrap();
+    let session = store.create_session(AgentId::new(), None).await.unwrap();
 
     let mid = MessageId::new();
     let msg = Message {
@@ -106,7 +109,7 @@ async fn append_and_upsert_part() {
 async fn record_read_idempotent() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);
-    let session = store.create_session("a", None).await.unwrap();
+    let session = store.create_session(AgentId::new(), None).await.unwrap();
 
     let path = std::path::PathBuf::from("/tmp/file.rs");
     store.record_read(session, path.clone()).await.unwrap();

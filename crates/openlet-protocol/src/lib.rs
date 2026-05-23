@@ -4,4 +4,8 @@
 
 pub mod dto;
 
-pub use dto::HealthDto;
+pub use dto::{
+    AbortAckDto, AgentDto, CreateMessageDto, CreateSessionDto, DeltaKindDto, ErrorDto, EventDto,
+    HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind, PermissionRequestDto,
+    PromptAckDto, SessionDto, SetModeDto, UsageDto,
+};

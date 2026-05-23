@@ -2,8 +2,10 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::agent::AgentId;
 use super::permission::PermissionMode;
 
 /// Strongly-typed session identifier (UUIDv4).
@@ -42,7 +44,7 @@ impl From<Uuid> for SessionId {
 }
 
 /// Lifecycle status surfaced via `session.status` events.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Idle,
@@ -56,7 +58,7 @@ pub enum SessionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: SessionId,
-    pub agent_id: String,
+    pub agent_id: AgentId,
     pub status: SessionStatus,
     pub permission_mode: PermissionMode,
     pub parent_session_id: Option<SessionId>,
@@ -70,6 +72,6 @@ pub struct SessionMeta {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionFilter {
     pub status: Option<SessionStatus>,
-    pub agent_id: Option<String>,
+    pub agent_id: Option<AgentId>,
     pub include_deleted: bool,
 }

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::error::MemoryError;
+use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::PermissionMode;
@@ -113,7 +114,7 @@ fn parse_uuid(s: &str) -> Result<Uuid, MemoryError> {
 impl MemoryStore for SqliteMemoryStore {
     async fn create_session(
         &self,
-        agent_id: &str,
+        agent_id: AgentId,
         parent: Option<SessionId>,
     ) -> Result<SessionId, MemoryError> {
         let id = SessionId::new();
@@ -122,6 +123,7 @@ impl MemoryStore for SqliteMemoryStore {
         let parent_str = parent.map(|p| p.to_string());
         let status = status_str(SessionStatus::Idle);
         let mode = mode_str(PermissionMode::default());
+        let agent_str = agent_id.to_string();
 
         sqlx::query(
             r#"INSERT INTO sessions
@@ -130,7 +132,7 @@ impl MemoryStore for SqliteMemoryStore {
                VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL)"#,
         )
         .bind(&id_str)
-        .bind(agent_id)
+        .bind(&agent_str)
         .bind(parent_str)
         .bind(status)
         .bind(mode)
@@ -183,7 +185,8 @@ impl MemoryStore for SqliteMemoryStore {
         if let Some(s) = filter.status {
             q = q.bind(status_str(s));
         }
-        if let Some(a) = filter.agent_id.as_deref() {
+        let agent_str = filter.agent_id.as_ref().map(|a| a.to_string());
+        if let Some(a) = agent_str.as_deref() {
             q = q.bind(a);
         }
 
@@ -201,6 +204,28 @@ impl MemoryStore for SqliteMemoryStore {
             r#"UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"#,
         )
         .bind(status_str(status))
+        .bind(now_ms())
+        .bind(session.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        if res.rows_affected() == 0 {
+            return Err(MemoryError::SessionNotFound);
+        }
+        Ok(())
+    }
+
+    async fn update_permission_mode(
+        &self,
+        session: SessionId,
+        mode: PermissionMode,
+    ) -> Result<(), MemoryError> {
+        let res = sqlx::query(
+            r#"UPDATE sessions SET permission_mode = ?, updated_at = ?
+               WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(mode_str(mode))
         .bind(now_ms())
         .bind(session.to_string())
         .execute(&self.pool)
@@ -373,6 +398,29 @@ impl MemoryStore for SqliteMemoryStore {
         .map_err(map_io)?;
         Ok(())
     }
+
+    async fn list_parts(
+        &self,
+        _session: SessionId,
+        msg: MessageId,
+    ) -> Result<Vec<Part>, MemoryError> {
+        let rows = sqlx::query(
+            r#"SELECT payload FROM parts WHERE message_id = ? ORDER BY seq ASC"#,
+        )
+        .bind(msg.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let payload: String = row.try_get("payload").map_err(map_io)?;
+            let part: Part = serde_json::from_str(&payload)
+                .map_err(|e| MemoryError::Io(format!("decode part: {e}")))?;
+            out.push(part);
+        }
+        Ok(out)
+    }
 }
 
 fn part_kind(part: &Part) -> &'static str {
@@ -389,7 +437,7 @@ fn part_kind(part: &Part) -> &'static str {
 
 fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryError> {
     let id_str: String = row.try_get("id").map_err(map_io)?;
-    let agent_id: String = row.try_get("agent_id").map_err(map_io)?;
+    let agent_id_str: String = row.try_get("agent_id").map_err(map_io)?;
     let parent: Option<String> = row.try_get("parent_session_id").map_err(map_io)?;
     let status: String = row.try_get("status").map_err(map_io)?;
     let mode: String = row.try_get("permission_mode").map_err(map_io)?;
@@ -400,7 +448,7 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
-        agent_id,
+        agent_id: AgentId(parse_uuid(&agent_id_str)?),
         status: parse_status(&status)?,
         permission_mode: parse_mode(&mode)?,
         parent_session_id: parent

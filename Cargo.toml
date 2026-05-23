@@ -79,7 +79,15 @@ hex = "0.4"
 regex = "1.10"
 dirs = "5.0"
 
-# Test-only
+# HTTP client (provider streaming, phase 3)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+blake3 = "1.5"
+
+# Filesystem (phase 4 tools)
+walkdir = "2.5"
+ignore = "0.4"
+globset = "0.4"
+similar = "2.6"
 tempfile = "3.10"
 
 # Internal crates

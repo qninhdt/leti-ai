@@ -9,20 +9,33 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+blake3.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+dashmap.workspace = true
 futures.workspace = true
+globset.workspace = true
+ignore.workspace = true
+regex.workspace = true
+rust_decimal.workspace = true
+schemars.workspace = true
 secrecy.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+similar.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "fs", "process", "io-util"] }
 tokio-stream.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
+utoipa.workspace = true
+walkdir.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-rust_decimal.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+openlet-adapters = { path = "../openlet-adapters" }

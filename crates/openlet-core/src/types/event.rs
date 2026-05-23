@@ -83,11 +83,21 @@ pub enum DeltaKind {
 }
 
 /// Token + cost telemetry attached to `StepFinished` events.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// Fields cover the OpenAI-compat surface plus reasoning/cache breakdown
+/// (cross-check §2/§5: opencode `session.ts:378-441` charges reasoning at
+/// the output rate; OpenRouter returns `prompt_tokens_details.cached_tokens`
+/// separately, so we keep `cached_input_tokens` distinct from
+/// `input_tokens` to avoid double-counting on cost calc).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_input_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
 }
 
 /// Subscriber-side filter for `EventSink::subscribe`.

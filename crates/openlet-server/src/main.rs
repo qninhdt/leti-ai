@@ -4,33 +4,30 @@
 //! `AppState` with stub adapters → serve axum on `Config::bind_addr` with
 //! graceful Ctrl+C shutdown.
 
-mod app_state;
-mod cli;
-mod openapi;
-mod router;
-mod routes;
-
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
 use dashmap::DashMap;
 use openlet_adapters::{
-    bus::BroadcastBus, config_perm::ConfigPermissionMgr, localfs::LocalFsArtifactStore,
-    localshell::LocalShellToolExecutor, openai_compat::OpenAiCompatProvider,
-    sqlite::SqliteMemoryStore,
+    bus::BroadcastBus, config_perm::ConfigPermissionMgr,
+    localfs::{LocalFilesystem, LocalFsArtifactStore},
+    localshell::{LocalShellExecutor, LocalShellToolExecutor},
+    openai_compat::OpenAiCompatProvider, sqlite::SqliteMemoryStore,
 };
 use openlet_core::config::{Config, LogFormat};
+use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
+use openlet_core::tools::builtins::default_registry;
+use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_registry::PluginRegistry;
+use openlet_server::{AgentResources, AppState, build_router, cli::{Cli, Command}};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-
-use crate::app_state::AppState;
-use crate::cli::{Cli, Command};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -88,19 +85,98 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("create session log dir {}", session_log_root.display()))?;
 
+    let provider = OpenAiCompatProvider::new(
+        openlet_adapters::openai_compat::DEFAULT_BASE_URL,
+        config.openrouter_api_key.clone(),
+    );
+
+    let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(provider);
+    let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
+        Arc::new(SqliteMemoryStore::new(pool.clone()));
+    let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());
+    let events: Arc<dyn openlet_core::adapters::EventSink> =
+        Arc::new(BroadcastBus::with_repo(event_repo));
+
+    // §I: crash recovery — mark any leftover Running sessions as Errored.
+    let stale = memory
+        .list_sessions(openlet_core::types::session::SessionFilter {
+            status: Some(openlet_core::types::session::SessionStatus::Running),
+            ..Default::default()
+        })
+        .await
+        .context("listing stale running sessions")?;
+    for s in stale {
+        let _ = memory
+            .update_status(
+                s.id,
+                openlet_core::types::session::SessionStatus::Errored,
+                "crashed",
+            )
+            .await;
+        let _ = events
+            .publish(
+                openlet_core::types::event::AgentEvent::SessionStatus {
+                    session_id: s.id,
+                    status: openlet_core::types::session::SessionStatus::Errored,
+                    at: chrono::Utc::now(),
+                },
+                openlet_core::adapters::event_sink::Persistence::Durable,
+            )
+            .await;
+    }
+
+    let runtime = Arc::new(ConversationRuntime::new(
+        provider.clone(),
+        memory.clone(),
+        events.clone(),
+        RuntimeConfig::new(
+            config.max_cost_per_session_usd,
+            config.default_model.clone(),
+        ),
+    ));
+
+    let workspace_root = std::env::var("OPENLET_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config.data_dir.join("workspace"));
+    tokio::fs::create_dir_all(&workspace_root)
+        .await
+        .with_context(|| format!("create workspace dir {}", workspace_root.display()))?;
+
+    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
+    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
+    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
+    let tool_registry = default_registry(shell.clone());
+
+    let default_agent_id = AgentId::new();
+    let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
+    let mut agents = HashMap::new();
+    agents.insert(
+        default_agent_id,
+        AgentResources {
+            spec: agent_spec,
+            fs: fs_adapter.clone(),
+            shell: shell.clone(),
+        },
+    );
+
     let state = AppState {
-        provider: Arc::new(OpenAiCompatProvider::new()),
-        memory: Arc::new(SqliteMemoryStore::new(pool.clone())),
+        provider,
+        memory,
         artifacts: Arc::new(LocalFsArtifactStore::new(artifact_root, pool.clone())),
         tools: Arc::new(LocalShellToolExecutor::new()),
-        events: Arc::new(BroadcastBus::new()),
+        tool_registry,
+        read_histories: Arc::new(DashMap::new()),
+        events,
         permission: Arc::new(ConfigPermissionMgr::new()),
         config: Arc::new(config.clone()),
         plugin_registry: Arc::new(PluginRegistry::new()),
+        runtime,
         active_turns: Arc::new(DashMap::new()),
+        agents: Arc::new(agents),
+        default_agent_id,
     };
 
-    let app = router::build(state);
+    let app = build_router(state);
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;

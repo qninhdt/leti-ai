@@ -104,3 +104,7 @@ external/
 worktrees/
 
 temp
+
+# Local-only working files
+drafts/
+release-manifest.json

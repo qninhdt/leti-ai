@@ -4,24 +4,40 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::error::ToolError;
+use crate::tools::read_history::ReadHistory;
+use crate::types::agent::AgentId;
+use crate::types::message::MessageId;
 use crate::types::permission::PermissionMode;
 use crate::types::session::SessionId;
 
+use super::artifact_store::ArtifactStore;
 use super::event_sink::EventSink;
+use super::filesystem::Filesystem;
 use super::permission_manager::PermissionManager;
 
 /// Per-call context carrying handles a tool needs to enforce permissions
 /// and emit events. Per amendment §B, ToolCtx already used `Arc<dyn _>`,
-/// which is why moving AppState to dyn was free on the hot path.
+/// which is why moving AppState to dyn was free on the hot path. The
+/// filesystem is itself an `Arc<dyn Filesystem>` (Phase 4D) — built-in
+/// file tools (`read`/`write`/`edit`/`list`/`glob`/`grep`) call
+/// `ctx.fs.*` so a cloud impl can swap the workspace backing without
+/// touching tool code.
 #[derive(Clone)]
 pub struct ToolCtx {
     pub session_id: SessionId,
-    pub workspace_root: PathBuf,
+    pub agent_id: AgentId,
+    pub message_id: MessageId,
+    pub call_id: String,
     pub mode: PermissionMode,
+    pub fs: Arc<dyn Filesystem>,
     pub permission: Arc<dyn PermissionManager>,
     pub events: Arc<dyn EventSink>,
+    pub artifacts: Arc<dyn ArtifactStore>,
+    pub read_history: ReadHistory,
+    pub cancel: CancellationToken,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

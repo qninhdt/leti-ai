@@ -6,6 +6,7 @@ use openlet_adapters::sqlite::open_in_memory;
 use openlet_adapters::sqlite::SqliteMemoryStore;
 use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
 use openlet_core::adapters::memory_store::MemoryStore;
+use openlet_core::types::agent::AgentId;
 
 #[tokio::test]
 async fn put_then_get_round_trip() {
@@ -13,7 +14,7 @@ async fn put_then_get_round_trip() {
     let pool = open_in_memory().await.unwrap();
     let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
     let mem = SqliteMemoryStore::new(pool);
-    let session = mem.create_session("a", None).await.unwrap();
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
 
     let payload = Bytes::from_static(b"hello world");
     let r = store
@@ -33,7 +34,7 @@ async fn list_returns_session_keys() {
     let pool = open_in_memory().await.unwrap();
     let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
     let mem = SqliteMemoryStore::new(pool);
-    let session = mem.create_session("a", None).await.unwrap();
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
 
     store.put(session, "a.txt", Bytes::from_static(b"a")).await.unwrap();
     store.put(session, "b.txt", Bytes::from_static(b"bb")).await.unwrap();
@@ -51,7 +52,7 @@ async fn rejects_traversal_keys() {
     let pool = open_in_memory().await.unwrap();
     let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
     let mem = SqliteMemoryStore::new(pool);
-    let session = mem.create_session("a", None).await.unwrap();
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
 
     let bad_keys = ["../etc/passwd", "/etc/passwd", "..", "..\\..\\evil"];
     for k in bad_keys {
@@ -68,7 +69,7 @@ async fn get_missing_returns_not_found() {
     let pool = open_in_memory().await.unwrap();
     let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
     let mem = SqliteMemoryStore::new(pool);
-    let session = mem.create_session("a", None).await.unwrap();
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
 
     let r = ArtifactRef {
         session_id: session,
