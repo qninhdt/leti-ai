@@ -1,0 +1,91 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::session::SessionId;
+
+/// Permission mode (per-session, mutable via `POST /v1/session/:id/mode`).
+///
+/// Coarse enum — the full ruleset lives in `permissions.toml`. Plan
+/// amendment §A makes this a session-level column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionMode {
+    ReadOnly,
+    #[default]
+    WorkspaceWrite,
+    Danger,
+}
+
+/// One ruleset row — a permission pattern + the action to take.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRule {
+    pub permission: String, // e.g. "bash:rm -rf*", "file:write:/tmp/*"
+    pub action: PermissionAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionAction {
+    Allow,
+    Deny,
+    Ask,
+}
+
+/// Identifier for a pending ask (UUIDv4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct AskId(pub Uuid);
+
+impl AskId {
+    #[must_use]
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+impl Default for AskId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A request the runtime is asking the user (or a plugin) to decide on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionRequest {
+    pub permission: String,
+    pub reason: Option<String>,
+    pub timeout: Option<Duration>,
+}
+
+/// Outcome of a permission check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Decision {
+    Allow,
+    Deny {
+        feedback: Option<String>,
+    },
+    /// Pending user input — caller awaits via `PermissionManager::reply`.
+    Pending {
+        ask_id: AskId,
+    },
+}
+
+/// Per-call context attached to every `PermissionManager::check` call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionCtx {
+    pub session_id: SessionId,
+    pub mode: PermissionMode,
+}
+
+/// Scope at which an "always" rule is recorded (§A new method).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "scope", rename_all = "snake_case")]
+pub enum AlwaysScope {
+    Workspace { path: PathBuf },
+    Agent { id: String },
+    Session { id: SessionId },
+}

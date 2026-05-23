@@ -1,0 +1,26 @@
+[package]
+name = "openlet-adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+futures.workspace = true
+openlet-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "fs", "process"] }
+tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
