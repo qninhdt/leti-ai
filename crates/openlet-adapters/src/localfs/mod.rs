@@ -1,42 +1,12 @@
 //! Local-filesystem `ArtifactStore` impl.
 //!
-//! Phase 1 stub. Phase 2 implements with `<data_dir>/artifacts/<session>/<key>`.
+//! Layout: `<root>/<session_id>/<sha256(key).hex>`. Metadata persisted in
+//! the `artifacts` SQLite table so listing is O(1) without directory scan.
+//! Keys are sanitized to refuse `..` and absolute paths so a malicious key
+//! cannot escape the per-session directory.
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
-use openlet_core::error::ArtifactError;
-use openlet_core::types::session::SessionId;
+pub mod artifact_store;
+pub mod session_log;
 
-#[derive(Debug, Default)]
-pub struct LocalFsArtifactStore;
-
-impl LocalFsArtifactStore {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait]
-impl ArtifactStore for LocalFsArtifactStore {
-    async fn put(
-        &self,
-        _session: SessionId,
-        _key: &str,
-        _bytes: Bytes,
-    ) -> Result<ArtifactRef, ArtifactError> {
-        Err(ArtifactError::Unimplemented)
-    }
-
-    async fn get(&self, _r: &ArtifactRef) -> Result<Bytes, ArtifactError> {
-        Err(ArtifactError::Unimplemented)
-    }
-
-    async fn list(
-        &self,
-        _session: SessionId,
-    ) -> Result<Vec<ArtifactRef>, ArtifactError> {
-        Err(ArtifactError::Unimplemented)
-    }
-}
+pub use artifact_store::LocalFsArtifactStore;
+pub use session_log::SessionLogger;

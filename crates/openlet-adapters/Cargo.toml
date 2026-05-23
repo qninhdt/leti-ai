@@ -11,16 +11,26 @@ rust-version.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+dashmap.workspace = true
+dirs.workspace = true
 futures.workspace = true
+hex.workspace = true
 openlet-core.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "fs", "process"] }
+tokio = { workspace = true, features = ["sync", "fs", "process", "io-util"] }
 tokio-stream.workspace = true
 tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

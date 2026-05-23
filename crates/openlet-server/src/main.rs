@@ -70,10 +70,28 @@ fn init_tracing(format: LogFormat) {
 }
 
 async fn run_server(config: Config) -> anyhow::Result<()> {
+    let db_path = config.data_dir.join("db.sqlite");
+    let artifact_root = config.data_dir.join("artifacts");
+    let session_log_root = config.data_dir.join("sessions");
+
+    let pool = openlet_adapters::sqlite::open_pool(&db_path, 8)
+        .await
+        .with_context(|| format!("opening sqlite at {}", db_path.display()))?;
+    openlet_adapters::sqlite::run_migrations(&pool)
+        .await
+        .context("running sqlite migrations")?;
+
+    tokio::fs::create_dir_all(&artifact_root)
+        .await
+        .with_context(|| format!("create artifact dir {}", artifact_root.display()))?;
+    tokio::fs::create_dir_all(&session_log_root)
+        .await
+        .with_context(|| format!("create session log dir {}", session_log_root.display()))?;
+
     let state = AppState {
         provider: Arc::new(OpenAiCompatProvider::new()),
-        memory: Arc::new(SqliteMemoryStore::new()),
-        artifacts: Arc::new(LocalFsArtifactStore::new()),
+        memory: Arc::new(SqliteMemoryStore::new(pool.clone())),
+        artifacts: Arc::new(LocalFsArtifactStore::new(artifact_root, pool.clone())),
         tools: Arc::new(LocalShellToolExecutor::new()),
         events: Arc::new(BroadcastBus::new()),
         permission: Arc::new(ConfigPermissionMgr::new()),

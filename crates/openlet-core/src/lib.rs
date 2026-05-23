@@ -9,6 +9,7 @@
 pub mod adapters;
 pub mod config;
 pub mod error;
+pub mod projection;
 pub mod types;
 
 pub use error::{CoreError, FailureClass};
