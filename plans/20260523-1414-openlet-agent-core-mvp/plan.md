@@ -44,8 +44,8 @@ MVP for **openlet-ai** (Team 2): a standalone Rust agent runtime exposing REST +
 | 4 | [Tools and Permissions](./phase-04-tools-and-permissions.md) | Complete |
 | 4D | [Filesystem Adapter and Agent Invariant](./phase-04d-filesystem-adapter-and-agent-invariant.md) | Pending |
 | 5 | [HTTP API and SSE](./phase-05-http-api-and-sse.md) | Complete |
-| 6 | [Ink TUI](./phase-06-ink-tui.md) | Pending |
-| 7 | [Compaction and Polish](./phase-07-compaction-and-polish.md) | Pending |
+| 6 | [Ink TUI](./phase-06-ink-tui.md) | Complete |
+| 7 | [Compaction and Polish](./phase-07-compaction-and-polish.md) | Complete |
 | 8 | [Hardening](./phase-08-hardening.md) | Pending |
 
 ## Amendments
