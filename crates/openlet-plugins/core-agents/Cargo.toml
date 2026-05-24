@@ -18,6 +18,7 @@ serde_json.workspace = true
 
 [dev-dependencies]
 blake3.workspace = true
+rust_decimal.workspace = true
 tokio = { workspace = true, features = ["macros", "rt"] }
 
 [lints]

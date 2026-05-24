@@ -21,6 +21,7 @@ use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::registry::ToolRegistry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_core::types::session::SessionId;
+use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_registry::PluginRegistry;
 use tokio_util::sync::CancellationToken;
 
@@ -66,6 +67,7 @@ pub struct AppState {
     pub permission: Arc<dyn PermissionManager>,
     pub config: Arc<Config>,
     pub plugin_registry: Arc<PluginRegistry>,
+    pub hook_chains: Arc<HookChains>,
     pub runtime: Arc<ConversationRuntime>,
     pub active_turns: Arc<DashMap<SessionId, TurnHandle>>,
     pub agents: Arc<HashMap<AgentId, AgentResources>>,

@@ -10,7 +10,9 @@ use std::path::Path;
 use std::str::FromStr;
 
 use sqlx::ConnectOptions;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
 
 use openlet_core::error::MemoryError;
 

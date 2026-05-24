@@ -4,6 +4,7 @@
 //! signatures + `HookResult` define the entire extension contract.
 
 pub mod context;
+pub mod dispatch;
 pub mod hooks;
 pub mod manifest;
 pub mod plugin;

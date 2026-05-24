@@ -15,7 +15,7 @@ pub mod turn_loop;
 mod turn_stream;
 
 pub use compaction::{
-    CompactDecision, COMPACTION_REQUEST, PRESERVE_RECENT, build_compaction_projection,
+    COMPACTION_REQUEST, CompactDecision, PRESERVE_RECENT, build_compaction_projection,
     should_compact, superseded_messages,
 };
 pub use conversation::{ConversationRuntime, RuntimeConfig, TurnInput, TurnOutcome};

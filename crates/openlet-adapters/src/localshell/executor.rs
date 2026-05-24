@@ -21,16 +21,7 @@ const MAX_STDERR: usize = 64 * 1024;
 /// Env vars passed to subprocesses. Anything else is dropped so a
 /// command can't leak `OPENROUTER_API_KEY` or similar via `env`.
 const ENV_ALLOWLIST: &[&str] = &[
-    "PATH",
-    "HOME",
-    "USER",
-    "LANG",
-    "LC_ALL",
-    "LC_CTYPE",
-    "TERM",
-    "TZ",
-    "SHELL",
-    "TMPDIR",
+    "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "SHELL", "TMPDIR",
 ];
 
 #[derive(Debug, Clone)]
@@ -114,9 +105,10 @@ impl ShellExecutor for LocalShellExecutor {
             .map_err(|e| ToolError::Io(format!("stderr join: {e}")))?
             .map_err(|e| ToolError::Io(format!("stderr read: {e}")))?;
 
-        let exit_code = exit_status
-            .and_then(|s| s.code())
-            .unwrap_or(if timed_out { -1 } else { -2 });
+        let exit_code =
+            exit_status
+                .and_then(|s| s.code())
+                .unwrap_or(if timed_out { -1 } else { -2 });
 
         Ok(BashOutput {
             stdout: String::from_utf8_lossy(&stdout_bytes).into_owned(),

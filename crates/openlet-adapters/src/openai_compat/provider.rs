@@ -12,7 +12,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
 use tokio::sync::mpsc;
@@ -106,12 +106,14 @@ impl ModelProvider for OpenAiCompatProvider {
         req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, ProviderError> {
-        let api_key = self.inner.api_key.as_ref().ok_or_else(|| {
-            ProviderError::MissingCredentials {
-                provider: "openrouter",
-                env_var: "OPENROUTER_API_KEY",
-            }
-        })?;
+        let api_key =
+            self.inner
+                .api_key
+                .as_ref()
+                .ok_or_else(|| ProviderError::MissingCredentials {
+                    provider: "openrouter",
+                    env_var: "OPENROUTER_API_KEY",
+                })?;
 
         let body = to_wire(&req);
         let url = format!("{}/chat/completions", self.inner.base_url);
@@ -155,7 +157,9 @@ async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> Provider
         StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimit {
             retry_after_ms: 1_000,
         },
-        s if s.is_server_error() => ProviderError::Network(format!("{s}: {}", truncate(&body, 256))),
+        s if s.is_server_error() => {
+            ProviderError::Network(format!("{s}: {}", truncate(&body, 256)))
+        }
         s => ProviderError::Network(format!("{s}: {}", truncate(&body, 256))),
     }
 }

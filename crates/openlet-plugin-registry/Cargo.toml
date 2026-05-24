@@ -12,6 +12,8 @@ async-trait.workspace = true
 openlet-core.workspace = true
 openlet-plugin-api.workspace = true
 openlet-plugin-core-agents.workspace = true
+openlet-plugin-core-tools.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true

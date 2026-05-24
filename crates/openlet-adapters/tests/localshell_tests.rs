@@ -33,12 +33,24 @@ struct AllowAll;
 
 #[async_trait]
 impl PermissionManager for AllowAll {
-    async fn check(&self, _: PermissionCtx, _: PermissionRequest) -> Result<Decision, PermissionError> {
+    async fn check(
+        &self,
+        _: PermissionCtx,
+        _: PermissionRequest,
+    ) -> Result<Decision, PermissionError> {
         Ok(Decision::Allow)
     }
-    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> { Ok(()) }
-    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> { Ok(()) }
-    async fn record_always(&self, _: AlwaysScope, _: PermissionRule) -> Result<(), PermissionError> {
+    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn record_always(
+        &self,
+        _: AlwaysScope,
+        _: PermissionRule,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }
@@ -48,8 +60,13 @@ struct NoopBus;
 
 #[async_trait]
 impl EventSink for NoopBus {
-    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> { Ok(()) }
-    fn subscribe(&self, _: EventFilter) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> {
+        Ok(())
+    }
+    fn subscribe(
+        &self,
+        _: EventFilter,
+    ) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
         let (_, rx) = broadcast::channel(1);
         rx
     }
@@ -60,7 +77,12 @@ struct DiscardArtifacts;
 
 #[async_trait]
 impl ArtifactStore for DiscardArtifacts {
-    async fn put(&self, session: SessionId, key: &str, _: Bytes) -> Result<ArtifactRef, ArtifactError> {
+    async fn put(
+        &self,
+        session: SessionId,
+        key: &str,
+        _: Bytes,
+    ) -> Result<ArtifactRef, ArtifactError> {
         Ok(ArtifactRef {
             session_id: session,
             key: key.to_string(),
@@ -71,7 +93,9 @@ impl ArtifactStore for DiscardArtifacts {
     async fn get(&self, _: &ArtifactRef) -> Result<Bytes, ArtifactError> {
         Err(ArtifactError::NotFound("test".into()))
     }
-    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> { Ok(vec![]) }
+    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> {
+        Ok(vec![])
+    }
 }
 
 fn ctx(workspace: &Path, cancel: CancellationToken) -> ToolCtx {
@@ -95,7 +119,11 @@ async fn echo_runs_in_workspace() {
     let dir = TempDir::new().unwrap();
     let exec = LocalShellExecutor::new(dir.path().to_path_buf());
     let out = exec
-        .run(&ctx(dir.path(), CancellationToken::new()), "echo hi && pwd", 5_000)
+        .run(
+            &ctx(dir.path(), CancellationToken::new()),
+            "echo hi && pwd",
+            5_000,
+        )
         .await
         .unwrap();
     assert_eq!(out.exit_code, 0);
@@ -117,7 +145,10 @@ async fn timeout_kills_long_running_child() {
         .unwrap();
     let elapsed = started.elapsed();
     assert!(out.timed_out, "expected timed_out=true, got {out:?}");
-    assert!(elapsed < Duration::from_secs(2), "took too long: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took too long: {elapsed:?}"
+    );
     // exit code is -1 sentinel for timeout.
     assert_eq!(out.exit_code, -1);
 }
@@ -136,7 +167,10 @@ async fn cancel_token_aborts_child() {
     let res = exec.run(&ctx(dir.path(), cancel), "sleep 30", 30_000).await;
     let elapsed = started.elapsed();
     assert!(matches!(res, Err(ToolError::Timeout)), "got {res:?}");
-    assert!(elapsed < Duration::from_secs(2), "took too long: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took too long: {elapsed:?}"
+    );
 }
 
 #[tokio::test]
@@ -154,7 +188,11 @@ async fn stdout_caps_at_256_kib() {
         .unwrap();
     assert_eq!(out.exit_code, 0);
     assert!(out.stdout_truncated, "stdout should be truncated past cap");
-    assert!(out.stdout.len() <= 256 * 1024, "stdout length {} exceeds cap", out.stdout.len());
+    assert!(
+        out.stdout.len() <= 256 * 1024,
+        "stdout length {} exceeds cap",
+        out.stdout.len()
+    );
 }
 
 #[tokio::test]
@@ -211,7 +249,10 @@ async fn env_scrub_strips_disallowed_vars() {
         )
         .await
         .unwrap();
-    assert!(!out2.stdout.contains("path=MISSING"), "PATH should pass through");
+    assert!(
+        !out2.stdout.contains("path=MISSING"),
+        "PATH should pass through"
+    );
 }
 
 #[tokio::test]

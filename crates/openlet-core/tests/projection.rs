@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use chrono::Utc;
-use openlet_core::projection::{project_for_llm, LlmRole, ProjectionCaps};
+use openlet_core::projection::{LlmRole, ProjectionCaps, project_for_llm};
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::session::SessionId;

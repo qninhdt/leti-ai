@@ -1,0 +1,25 @@
+[package]
+name = "openlet-plugin-test-quota-stub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+openlet-core.workspace = true
+openlet-plugin-api.workspace = true
+rust_decimal.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+chrono.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

@@ -1524,6 +1524,7 @@ dependencies = [
  "hex",
  "ignore",
  "openlet-core",
+ "openlet-test-mock-provider",
  "regex",
  "reqwest",
  "rust_decimal",
@@ -1580,7 +1581,9 @@ name = "openlet-plugin-api"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "futures",
  "openlet-core",
+ "rust_decimal",
  "schemars",
  "secrecy",
  "semver",
@@ -1588,6 +1591,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1597,6 +1601,20 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
+ "openlet-core",
+ "openlet-plugin-api",
+ "rust_decimal",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "openlet-plugin-core-tools"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
  "openlet-core",
  "openlet-plugin-api",
  "semver",
@@ -1613,7 +1631,25 @@ dependencies = [
  "openlet-core",
  "openlet-plugin-api",
  "openlet-plugin-core-agents",
+ "openlet-plugin-core-tools",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "openlet-plugin-test-quota-stub"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "openlet-core",
+ "openlet-plugin-api",
+ "rust_decimal",
+ "semver",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -1649,11 +1685,13 @@ dependencies = [
  "openlet-plugin-api",
  "openlet-plugin-core-agents",
  "openlet-plugin-registry",
+ "openlet-plugin-test-quota-stub",
  "openlet-protocol",
  "rust_decimal",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -1665,6 +1703,14 @@ dependencies = [
  "utoipa-axum",
  "utoipa-swagger-ui",
  "uuid",
+]
+
+[[package]]
+name = "openlet-test-mock-provider"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,14 +1,32 @@
 //! Phase-07 agent-registration smoke test: installing the `core-agents`
 //! plugin populates the registry with `general` + `indexer`.
 
+use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::agent::{AgentRegistry, AgentSlug};
+use openlet_core::types::event::AgentEvent;
+use openlet_core::types::session::{SessionId, SessionMeta};
+use openlet_plugin_api::Plugin;
 use openlet_plugin_api::PluginContext;
 use openlet_plugin_api::context::CoreApi;
 use openlet_plugin_core_agents::CoreAgentsPlugin;
-use openlet_plugin_api::Plugin;
 
 struct StubCore;
-impl CoreApi for StubCore {}
+
+#[async_trait::async_trait]
+impl CoreApi for StubCore {
+    async fn current_session_meta(&self, _: SessionId) -> Option<SessionMeta> {
+        None
+    }
+    fn session_cost(&self, _: SessionId) -> rust_decimal::Decimal {
+        rust_decimal::Decimal::ZERO
+    }
+    fn record_cost(&self, _: SessionId, _: rust_decimal::Decimal) {}
+    async fn emit_event(&self, _: AgentEvent, _: Persistence) {}
+    fn read_config(&self, _: &str) -> Result<serde_json::Value, String> {
+        Ok(serde_json::Value::Null)
+    }
+    async fn cancel_session(&self, _: SessionId, _: String) {}
+}
 
 #[tokio::test]
 async fn core_agents_plugin_registers_general_and_indexer() {

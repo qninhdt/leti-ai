@@ -2,7 +2,7 @@
 
 use openlet_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
 use openlet_core::projection::{LlmMessage, LlmRole};
-use openlet_core::runtime::compaction::{CompactDecision, should_compact, PRESERVE_RECENT};
+use openlet_core::runtime::compaction::{CompactDecision, PRESERVE_RECENT, should_compact};
 
 fn agent_with_window(window: u32, threshold: f32) -> AgentDefinition {
     AgentDefinition {

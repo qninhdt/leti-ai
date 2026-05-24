@@ -17,6 +17,7 @@ async fn create_list_get_delete_session_round_trip() {
         agent_id: None,
         parent_session_id: None,
         permission_mode: None,
+        extensions: serde_json::Value::Null,
     })
     .unwrap();
     let resp = app
@@ -118,4 +119,52 @@ async fn permission_reply_unknown_ask_returns_404() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// `POST /v1/session` with `extensions` echoes the blob back via
+/// `GET /v1/session/:id`. Confirms slice 4-E round-trip — the auth
+/// blob the integrator sends survives the SQLite layer untouched.
+#[tokio::test]
+async fn create_session_with_extensions_round_trip() {
+    let harness = support::TestHarness::new().await;
+    let app = harness.router();
+    let extensions = json!({
+        "user_id": "u_123",
+        "tenant_id": "t_42",
+        "scopes": ["read", "write"],
+    });
+    let body = serde_json::to_vec(&CreateSessionDto {
+        agent_id: None,
+        parent_session_id: None,
+        permission_mode: None,
+        extensions: extensions.clone(),
+    })
+    .unwrap();
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/session")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let created: SessionDto = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(created.extensions, extensions);
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/v1/session/{}", created.id))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let fetched: SessionDto = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(fetched.extensions, extensions);
 }

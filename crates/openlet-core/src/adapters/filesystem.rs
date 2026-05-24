@@ -39,11 +39,7 @@ pub trait Filesystem: Send + Sync + 'static {
     /// `FsError::Binary` if the impl deems the content non-text and
     /// the caller did not opt in via `ReadOpts::allow_binary` (handled
     /// at the tool layer, not here — adapters return raw bytes).
-    async fn read(
-        &self,
-        path: &Path,
-        range: Option<ByteRange>,
-    ) -> Result<Bytes, FsError>;
+    async fn read(&self, path: &Path, range: Option<ByteRange>) -> Result<Bytes, FsError>;
 
     /// Stat a path. `FsError::NotFound` if absent.
     async fn stat(&self, path: &Path) -> Result<FileMeta, FsError>;
@@ -53,12 +49,7 @@ pub trait Filesystem: Send + Sync + 'static {
     async fn exists(&self, path: &Path) -> bool;
 
     /// Atomic-when-possible write. Creates parent dirs as needed.
-    async fn write(
-        &self,
-        path: &Path,
-        body: Bytes,
-        opts: WriteOpts,
-    ) -> Result<FileMeta, FsError>;
+    async fn write(&self, path: &Path, body: Bytes, opts: WriteOpts) -> Result<FileMeta, FsError>;
 
     /// Shallow directory listing — children of `path` only, no
     /// recursion. Sorted by name ascending.
@@ -68,11 +59,7 @@ pub trait Filesystem: Send + Sync + 'static {
     /// relative to the workspace root. Implementations honor
     /// `opts.respect_gitignore` on a best-effort basis (local impl
     /// does; cloud impl falls back to its index's view).
-    async fn glob(
-        &self,
-        pattern: &str,
-        opts: GlobOpts,
-    ) -> Result<Vec<PathBuf>, FsError>;
+    async fn glob(&self, pattern: &str, opts: GlobOpts) -> Result<Vec<PathBuf>, FsError>;
 
     /// Recursive content search. Hits are bounded by
     /// `args.max_hits`; lines longer than `args.max_line_chars` are

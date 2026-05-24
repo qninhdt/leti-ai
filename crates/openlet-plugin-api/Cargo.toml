@@ -9,7 +9,9 @@ rust-version.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+futures.workspace = true
 openlet-core.workspace = true
+rust_decimal.workspace = true
 schemars.workspace = true
 secrecy.workspace = true
 semver.workspace = true
@@ -17,6 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
 
 [lints]
 workspace = true

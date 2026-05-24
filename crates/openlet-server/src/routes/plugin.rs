@@ -61,10 +61,7 @@ pub async fn health(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<PluginHealthDto>, AppError> {
-    let found = state
-        .plugin_registry
-        .iter()
-        .any(|p| p.manifest().id == id);
+    let found = state.plugin_registry.iter().any(|p| p.manifest().id == id);
     if !found {
         let _ = state
             .events
@@ -79,10 +76,7 @@ pub async fn health(
             .await;
         return Err(AppError::not_found("plugin_not_found", "plugin not found"));
     }
-    Ok(Json(PluginHealthDto {
-        id,
-        healthy: true,
-    }))
+    Ok(Json(PluginHealthDto { id, healthy: true }))
 }
 
 #[allow(dead_code)]

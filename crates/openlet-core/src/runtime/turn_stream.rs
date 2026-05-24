@@ -46,7 +46,8 @@ impl StreamingPartTracker {
             ProcessorEvent::PartDelta { kind, delta } => {
                 let part_id = match kind {
                     DeltaKind::Text => {
-                        self.ensure_text(memory, events, session_id, message_id).await?
+                        self.ensure_text(memory, events, session_id, message_id)
+                            .await?
                     }
                     DeltaKind::Reasoning => {
                         self.ensure_reasoning(memory, events, session_id, message_id)
@@ -260,4 +261,3 @@ impl StreamingPartTracker {
         Ok(id)
     }
 }
-

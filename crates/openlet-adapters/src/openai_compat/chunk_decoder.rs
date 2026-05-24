@@ -170,7 +170,11 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
 }
 
 fn push_tool_delta(tc: ChunkToolCall, out: &mut Vec<ChatDelta>) {
-    let ChunkToolCall { index, id, function } = tc;
+    let ChunkToolCall {
+        index,
+        id,
+        function,
+    } = tc;
     let (name, arguments) = match function {
         Some(f) => (f.name, f.arguments),
         None => (None, None),
@@ -216,7 +220,7 @@ fn map_finish_reason(s: &str) -> FinishReason {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_chunk, FinishReason};
+    use super::{FinishReason, decode_chunk};
     use openlet_core::adapters::model_provider::ChatDelta;
 
     #[test]
@@ -247,7 +251,10 @@ mod tests {
         let deltas = decode_chunk(p).unwrap();
         assert!(matches!(
             &deltas[0],
-            ChatDelta::Finish { reason: FinishReason::EndTurn, usage: Some(_) }
+            ChatDelta::Finish {
+                reason: FinishReason::EndTurn,
+                usage: Some(_)
+            }
         ));
     }
 
@@ -267,7 +274,10 @@ mod tests {
         let deltas = decode_chunk(p).unwrap();
         assert!(matches!(
             &deltas[0],
-            ChatDelta::Finish { reason: FinishReason::ToolUse, .. }
+            ChatDelta::Finish {
+                reason: FinishReason::ToolUse,
+                ..
+            }
         ));
     }
 

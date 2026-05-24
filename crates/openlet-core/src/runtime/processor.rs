@@ -82,10 +82,7 @@ impl Processor {
     /// Apply one `ChatDelta`. Returns parts/events to persist+publish and
     /// the next state. Errors short-circuit the turn (the runtime should
     /// stop draining the stream and finalize with `reason=error`).
-    pub fn step(
-        mut state: ProcessorState,
-        delta: ChatDelta,
-    ) -> Result<StepOutcome, ProviderError> {
+    pub fn step(mut state: ProcessorState, delta: ChatDelta) -> Result<StepOutcome, ProviderError> {
         let mut parts: Vec<ProcessorPart> = Vec::new();
         let mut events: Vec<ProcessorEvent> = Vec::new();
 
@@ -223,5 +220,6 @@ fn finish_reason_label(reason: FinishReason) -> &'static str {
         FinishReason::ContentFilter => "content_filter",
         FinishReason::Error => "error",
         FinishReason::Cancelled => "cancelled",
+        FinishReason::Halted => "halted",
     }
 }

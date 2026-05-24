@@ -8,9 +8,9 @@
 
 use std::path::PathBuf;
 
+use crate::adapters::filesystem::WriteOpts;
 use async_trait::async_trait;
 use bytes::Bytes;
-use crate::adapters::filesystem::WriteOpts;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -61,7 +61,9 @@ impl Tool for EditTool {
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
         if input.find.is_empty() {
-            return Err(ToolError::InvalidInput("find string must not be empty".into()));
+            return Err(ToolError::InvalidInput(
+                "find string must not be empty".into(),
+            ));
         }
         if input.find == input.replace {
             return Err(ToolError::InvalidInput(

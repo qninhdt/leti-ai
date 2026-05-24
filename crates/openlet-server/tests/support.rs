@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use axum::Router;
-use dashmap::DashMap;
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
@@ -20,9 +19,9 @@ use openlet_core::adapters::model_provider::{ChatRequest, ChatStream, ModelPrici
 use openlet_core::config::{Config, LogFormat, PluginsConfig};
 use openlet_core::error::ProviderError;
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
-use openlet_core::tools::builtins::default_registry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
-use openlet_plugin_registry::PluginRegistry;
+use openlet_plugin_api::context::CoreApi;
+use openlet_plugin_registry::{PluginRegistry, install_all};
 use rust_decimal::Decimal;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +36,10 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    pub async fn new() -> Self {
+    /// Build a wired-up `AppState` plus the tempdir guard it depends on.
+    /// Shared by `new()` (which then mounts the default router) and the
+    /// `RouterBuilder` composability tests (which mount a subset).
+    pub async fn build_state() -> (openlet_server::AppState, TempDir) {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let workspace_root = tempdir.path().join("ws");
         let artifact_root = tempdir.path().join("artifacts");
@@ -50,12 +52,10 @@ impl TestHarness {
             Arc::new(SqliteMemoryStore::new(pool.clone()));
         let events: Arc<dyn openlet_core::adapters::EventSink> =
             Arc::new(BroadcastBus::with_repo(event_repo));
-        let memory_handle = memory.clone();
-        let events_handle = events.clone();
 
         let provider: Arc<dyn ModelProvider> = Arc::new(StubProvider);
 
-        let mut config = Config {
+        let config = Config {
             bind_addr: "127.0.0.1:0".to_string(),
             data_dir: tempdir.path().to_path_buf(),
             openrouter_api_key: None,
@@ -65,7 +65,6 @@ impl TestHarness {
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
         };
-        config.data_dir = tempdir.path().to_path_buf();
 
         let runtime = Arc::new(ConversationRuntime::new(
             provider.clone(),
@@ -77,7 +76,23 @@ impl TestHarness {
         let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
         let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
         let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
-        let tool_registry = default_registry(shell.clone());
+
+        // Install plugins so the test harness exercises the same
+        // tool-registration path as the server binary. Keeps the harness
+        // and `main.rs` in lockstep — any drift would surface as a test
+        // that passes locally but fails in production wiring.
+        let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
+        let plugins = openlet_plugin_registry::all_plugins(shell.clone());
+        let configs = std::collections::HashMap::new();
+        let installed = install_all(plugins, &configs, core_api)
+            .await
+            .expect("install plugins");
+
+        let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
+        for tool in installed.tools {
+            tool_builder = tool_builder.register_erased(tool);
+        }
+        let tool_registry = tool_builder.build();
 
         let default_agent_id = AgentId::new();
         let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
@@ -91,24 +106,41 @@ impl TestHarness {
             },
         );
 
-        let state = openlet_server::AppState {
-            provider,
-            memory,
-            artifacts: Arc::new(LocalFsArtifactStore::new(artifact_root, pool.clone())),
-            tools: Arc::new(LocalShellToolExecutor::new()),
-            tool_registry,
-            read_histories: Arc::new(DashMap::new()),
-            events,
-            permission: Arc::new(ConfigPermissionMgr::new()),
-            config: Arc::new(config),
-            plugin_registry: Arc::new(PluginRegistry::new()),
-            runtime,
-            active_turns: Arc::new(DashMap::new()),
-            agents: Arc::new(agents),
-            default_agent_id,
-            agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
-        };
+        let state = openlet_server::AppStateBuilder::new()
+            .provider(provider)
+            .memory(memory)
+            .artifacts(Arc::new(LocalFsArtifactStore::new(
+                artifact_root,
+                pool.clone(),
+            )))
+            .tools(Arc::new(LocalShellToolExecutor::new()))
+            .tool_registry(tool_registry)
+            .events(events)
+            .permission(Arc::new(ConfigPermissionMgr::new()))
+            .config(Arc::new(config))
+            .plugin_registry(Arc::new(PluginRegistry::new()))
+            .runtime(runtime)
+            .agents(agents)
+            .default_agent_id(default_agent_id)
+            .agent_registry(Arc::new(openlet_core::agent::AgentRegistry::new()))
+            .build()
+            .expect("build app state");
 
+        (state, tempdir)
+    }
+
+    /// Just the wired-up `AppState`. The tempdir's drop guard is
+    /// released so paths inside `state` stay valid for the test process.
+    /// Cheap because tests are short-lived.
+    pub async fn raw_state() -> openlet_server::AppState {
+        let (state, tempdir) = Self::build_state().await;
+        let _ = tempdir.keep();
+        state
+    }
+    pub async fn new() -> Self {
+        let (state, tempdir) = Self::build_state().await;
+        let memory_handle = state.memory.clone();
+        let events_handle = state.events.clone();
         let router = openlet_server::build_router(state);
 
         Self {
@@ -125,6 +157,35 @@ impl TestHarness {
 }
 
 pub struct AgentResourcesBag;
+
+/// Minimal `CoreApi` impl for the test harness. Plugin install needs an
+/// `Arc<dyn CoreApi>` so closures can capture it; tests don't drive any
+/// hook code paths that read these methods, so noop is sufficient.
+struct NoopCoreApi;
+
+#[async_trait]
+impl CoreApi for NoopCoreApi {
+    async fn current_session_meta(
+        &self,
+        _: openlet_core::types::session::SessionId,
+    ) -> Option<openlet_core::types::session::SessionMeta> {
+        None
+    }
+    fn session_cost(&self, _: openlet_core::types::session::SessionId) -> Decimal {
+        Decimal::ZERO
+    }
+    fn record_cost(&self, _: openlet_core::types::session::SessionId, _: Decimal) {}
+    async fn emit_event(
+        &self,
+        _: openlet_core::types::event::AgentEvent,
+        _: openlet_core::adapters::event_sink::Persistence,
+    ) {
+    }
+    fn read_config(&self, _: &str) -> Result<serde_json::Value, String> {
+        Ok(serde_json::Value::Null)
+    }
+    async fn cancel_session(&self, _: openlet_core::types::session::SessionId, _: String) {}
+}
 
 /// Provider stub that errors on every call — runtime tests for SSE
 /// and cancel don't actually need real LLM output to verify the wire.

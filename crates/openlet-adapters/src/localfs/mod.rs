@@ -13,4 +13,4 @@ pub mod session_log;
 
 pub use artifact_store::LocalFsArtifactStore;
 pub use filesystem::LocalFilesystem;
-pub use session_log::SessionLogger;
+pub use session_log::{SecretRedactor, SessionLogger};

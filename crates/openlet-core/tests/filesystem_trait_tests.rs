@@ -25,7 +25,10 @@ async fn write_then_read_round_trip() {
     let path = PathBuf::from("hello.txt");
     let body = bytes::Bytes::from_static(b"hello world\n");
 
-    let meta = fs.write(&path, body.clone(), WriteOpts::default()).await.unwrap();
+    let meta = fs
+        .write(&path, body.clone(), WriteOpts::default())
+        .await
+        .unwrap();
     assert_eq!(meta.size, body.len() as u64);
 
     let read_back = fs.read(&path, None).await.unwrap();
@@ -40,7 +43,10 @@ async fn read_with_byte_range_returns_slice() {
     let body = bytes::Bytes::from_static(b"abcdefghij");
     fs.write(&path, body, WriteOpts::default()).await.unwrap();
 
-    let slice = fs.read(&path, Some(ByteRange { start: 2, len: 3 })).await.unwrap();
+    let slice = fs
+        .read(&path, Some(ByteRange { start: 2, len: 3 }))
+        .await
+        .unwrap();
     assert_eq!(slice.as_ref(), b"cde");
 }
 
@@ -51,12 +57,20 @@ async fn stat_reports_size_and_binary_flag() {
     let text_path = PathBuf::from("text.txt");
     let bin_path = PathBuf::from("bin.dat");
 
-    fs.write(&text_path, bytes::Bytes::from_static(b"plain"), WriteOpts::default())
-        .await
-        .unwrap();
-    fs.write(&bin_path, bytes::Bytes::from_static(b"x\0y\0z\0bin"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &text_path,
+        bytes::Bytes::from_static(b"plain"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
+    fs.write(
+        &bin_path,
+        bytes::Bytes::from_static(b"x\0y\0z\0bin"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
 
     let text_meta = fs.stat(&text_path).await.unwrap();
     assert_eq!(text_meta.size, 5);
@@ -70,9 +84,13 @@ async fn stat_reports_size_and_binary_flag() {
 async fn exists_distinguishes_present_from_absent() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
-    fs.write(&PathBuf::from("there.txt"), bytes::Bytes::from_static(b"x"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &PathBuf::from("there.txt"),
+        bytes::Bytes::from_static(b"x"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
     assert!(fs.exists(&PathBuf::from("there.txt")).await);
     assert!(!fs.exists(&PathBuf::from("missing.txt")).await);
 }
@@ -98,9 +116,13 @@ async fn list_returns_immediate_children_sorted() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
     for name in ["c.txt", "a.txt", "b.txt"] {
-        fs.write(&PathBuf::from(name), bytes::Bytes::from_static(b"x"), WriteOpts::default())
-            .await
-            .unwrap();
+        fs.write(
+            &PathBuf::from(name),
+            bytes::Bytes::from_static(b"x"),
+            WriteOpts::default(),
+        )
+        .await
+        .unwrap();
     }
     let entries = fs.list(&PathBuf::from(".")).await.unwrap();
     let names: Vec<_> = entries.iter().map(|e| e.name.clone()).collect();
@@ -111,17 +133,33 @@ async fn list_returns_immediate_children_sorted() {
 async fn glob_respects_gitignore() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
-    fs.write(&PathBuf::from(".gitignore"), bytes::Bytes::from_static(b"ignored.txt\n"), WriteOpts::default())
-        .await
-        .unwrap();
-    fs.write(&PathBuf::from("kept.txt"), bytes::Bytes::from_static(b"x"), WriteOpts::default())
-        .await
-        .unwrap();
-    fs.write(&PathBuf::from("ignored.txt"), bytes::Bytes::from_static(b"x"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &PathBuf::from(".gitignore"),
+        bytes::Bytes::from_static(b"ignored.txt\n"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
+    fs.write(
+        &PathBuf::from("kept.txt"),
+        bytes::Bytes::from_static(b"x"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
+    fs.write(
+        &PathBuf::from("ignored.txt"),
+        bytes::Bytes::from_static(b"x"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
 
-    let opts = GlobOpts { respect_gitignore: true, max_results: 100, sort: GlobSort::PathAsc };
+    let opts = GlobOpts {
+        respect_gitignore: true,
+        max_results: 100,
+        sort: GlobSort::PathAsc,
+    };
     let hits = fs.glob("*.txt", opts).await.unwrap();
     let names: Vec<String> = hits.iter().map(|p| p.display().to_string()).collect();
     assert!(names.iter().any(|n| n.ends_with("kept.txt")));
@@ -132,12 +170,20 @@ async fn glob_respects_gitignore() {
 async fn grep_matches_regex_with_path_glob() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
-    fs.write(&PathBuf::from("a.rs"), bytes::Bytes::from_static(b"fn alpha() {}\nfn beta() {}\n"), WriteOpts::default())
-        .await
-        .unwrap();
-    fs.write(&PathBuf::from("b.txt"), bytes::Bytes::from_static(b"fn gamma() {}\n"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &PathBuf::from("a.rs"),
+        bytes::Bytes::from_static(b"fn alpha() {}\nfn beta() {}\n"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
+    fs.write(
+        &PathBuf::from("b.txt"),
+        bytes::Bytes::from_static(b"fn gamma() {}\n"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
 
     let hits = fs
         .grep(GrepArgs {
@@ -159,9 +205,13 @@ async fn grep_matches_regex_with_path_glob() {
 async fn grep_case_insensitive_flag() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
-    fs.write(&PathBuf::from("note.txt"), bytes::Bytes::from_static(b"Hello\nhello\nHELLO\n"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &PathBuf::from("note.txt"),
+        bytes::Bytes::from_static(b"Hello\nhello\nHELLO\n"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
 
     let hits = fs
         .grep(GrepArgs {
@@ -181,8 +231,12 @@ async fn write_creates_parent_directories() {
     let dir = TempDir::new().unwrap();
     let fs = fs_at(&dir);
     let nested = PathBuf::from("a/b/c/leaf.txt");
-    fs.write(&nested, bytes::Bytes::from_static(b"deep"), WriteOpts::default())
-        .await
-        .unwrap();
+    fs.write(
+        &nested,
+        bytes::Bytes::from_static(b"deep"),
+        WriteOpts::default(),
+    )
+    .await
+    .unwrap();
     assert!(fs.exists(&nested).await);
 }

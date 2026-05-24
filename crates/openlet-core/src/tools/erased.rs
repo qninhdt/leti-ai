@@ -67,8 +67,8 @@ where
     }
 
     async fn run_json(&self, ctx: ToolCtx, input: Value) -> Result<Value, ToolError> {
-        let typed: T::Input = serde_json::from_value(input)
-            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        let typed: T::Input =
+            serde_json::from_value(input).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
         let out = Tool::run(self, ctx, typed).await?;
         serde_json::to_value(out).map_err(|e| ToolError::Io(e.to_string()))
     }

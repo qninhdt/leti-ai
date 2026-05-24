@@ -13,4 +13,4 @@ pub mod provider;
 pub mod sse;
 pub mod wire;
 
-pub use provider::{OpenAiCompatProvider, DEFAULT_BASE_URL};
+pub use provider::{DEFAULT_BASE_URL, OpenAiCompatProvider};

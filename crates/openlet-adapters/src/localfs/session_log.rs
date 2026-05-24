@@ -38,7 +38,9 @@ pub struct SessionLogger {
 
 impl std::fmt::Debug for SessionLogger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SessionLogger").field("root", &self.root).finish()
+        f.debug_struct("SessionLogger")
+            .field("root", &self.root)
+            .finish()
     }
 }
 
@@ -63,11 +65,7 @@ impl SessionLogger {
         self.root.join(format!("{session}.jsonl"))
     }
 
-    pub async fn append(
-        &self,
-        session: SessionId,
-        ev: &AgentEvent,
-    ) -> std::io::Result<()> {
+    pub async fn append(&self, session: SessionId, ev: &AgentEvent) -> std::io::Result<()> {
         tokio::fs::create_dir_all(&self.root).await?;
 
         let mut value = serde_json::to_value(ev)

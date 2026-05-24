@@ -6,7 +6,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use dashmap::DashMap;
 use openlet_core::adapters::permission_manager::PermissionManager;
+use openlet_core::dispatch::{DispatchOutcome, HookChains, dispatch};
 use openlet_core::error::PermissionError;
+use openlet_core::hooks::io::OnPermissionAskCtx;
 use openlet_core::permission::{Deferred, DeferredSender, deferred_pair};
 use openlet_core::types::permission::{
     AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionMode,
@@ -41,6 +43,7 @@ fn fallback_for_mode(mode: PermissionMode) -> PermissionAction {
 pub struct ConfigPermissionMgr {
     inner: Arc<RwLock<CompiledRuleset>>,
     pending: Arc<DashMap<AskId, PendingAsk>>,
+    hook_chains: Option<Arc<HookChains>>,
 }
 
 impl ConfigPermissionMgr {
@@ -49,13 +52,23 @@ impl ConfigPermissionMgr {
         Self::default()
     }
 
+    /// Attach plugin hook chains so `on_permission_ask` runs before the
+    /// configured ruleset. `Replace` overrides the decision; `Continue`
+    /// falls through to the ruleset; `Deny` short-circuits the request.
+    #[must_use]
+    pub fn with_hook_chains(mut self, hook_chains: Arc<HookChains>) -> Self {
+        self.hook_chains = Some(hook_chains);
+        self
+    }
+
     /// Construct from raw rules. Errors propagate from glob compilation.
     pub fn with_rules(rules: Vec<PermissionRule>) -> Result<Self, PermissionError> {
-        let compiled = CompiledRuleset::from_rules(rules)
-            .map_err(|e| PermissionError::Io(e.to_string()))?;
+        let compiled =
+            CompiledRuleset::from_rules(rules).map_err(|e| PermissionError::Io(e.to_string()))?;
         Ok(Self {
             inner: Arc::new(RwLock::new(compiled)),
             pending: Arc::new(DashMap::new()),
+            hook_chains: None,
         })
     }
 
@@ -81,6 +94,34 @@ impl PermissionManager for ConfigPermissionMgr {
         ctx: PermissionCtx,
         req: PermissionRequest,
     ) -> Result<Decision, PermissionError> {
+        // OnPermissionAsk hook chain runs BEFORE the ruleset. Replace
+        // overrides the decision; Continue falls through to the ruleset.
+        let req = if let Some(chains) = self.hook_chains.as_ref() {
+            let hook_ctx = OnPermissionAskCtx {
+                request: Some(req.clone()),
+                decision: None,
+            };
+            match dispatch(&chains.on_permission_ask, hook_ctx).await {
+                DispatchOutcome::Completed(c) => {
+                    if let Some(decision) = c.decision {
+                        return Ok(decision);
+                    }
+                    c.request.unwrap_or(req)
+                }
+                DispatchOutcome::Stopped(c) => {
+                    if let Some(decision) = c.decision {
+                        return Ok(decision);
+                    }
+                    c.request.unwrap_or(req)
+                }
+                DispatchOutcome::Denied { feedback, .. } => {
+                    return Ok(Decision::Deny { feedback });
+                }
+            }
+        } else {
+            req
+        };
+
         let action = {
             let g = self.inner.read().await;
             g.evaluate(&req.permission)
@@ -114,11 +155,7 @@ impl PermissionManager for ConfigPermissionMgr {
         }
     }
 
-    async fn reply(
-        &self,
-        ask_id: AskId,
-        decision: Decision,
-    ) -> Result<(), PermissionError> {
+    async fn reply(&self, ask_id: AskId, decision: Decision) -> Result<(), PermissionError> {
         let (_, ask) = self
             .pending
             .remove(&ask_id)
@@ -144,8 +181,8 @@ impl PermissionManager for ConfigPermissionMgr {
         _scope: AlwaysScope,
         rule: PermissionRule,
     ) -> Result<(), PermissionError> {
-        let compiled = CompiledRule::from_rule(rule)
-            .map_err(|e| PermissionError::Io(e.to_string()))?;
+        let compiled =
+            CompiledRule::from_rule(rule).map_err(|e| PermissionError::Io(e.to_string()))?;
         let mut g = self.inner.write().await;
         g.push(compiled);
         Ok(())

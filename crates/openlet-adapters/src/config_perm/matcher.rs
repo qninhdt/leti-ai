@@ -54,10 +54,8 @@ mod tests {
 
     #[test]
     fn extracts_command_first() {
-        let s = build_permission_subject(
-            "bash",
-            &json!({"command": "git status", "path": "ignored"}),
-        );
+        let s =
+            build_permission_subject("bash", &json!({"command": "git status", "path": "ignored"}));
         assert_eq!(s, "bash:git status");
     }
 

@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # rsa 0.9.x — Marvin timing-sidechannel. No fix upstream.
+    # Reaches us only via sqlx-mysql, which we never instantiate (SQLite-only).
+    "RUSTSEC-2023-0071",
+    # paste 1.x — unmaintained. Transitive via utoipa-axum macros. No security impact.
+    "RUSTSEC-2024-0436",
+]

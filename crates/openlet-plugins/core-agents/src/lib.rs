@@ -8,7 +8,7 @@ mod indexer;
 
 use async_trait::async_trait;
 use openlet_plugin_api::manifest::Capability;
-use openlet_plugin_api::{Plugin, PluginContext, PluginManifest, PluginError};
+use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
 use semver::{Version, VersionReq};
 
 pub use general::{GENERAL_CACHEABLE, general_agent};

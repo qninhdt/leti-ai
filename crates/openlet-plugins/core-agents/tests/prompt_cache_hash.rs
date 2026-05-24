@@ -17,7 +17,9 @@ const GENERAL_PROMPT_CACHE_LOCK: &str =
 
 #[test]
 fn general_prompt_cacheable_hash_locked() {
-    let actual = blake3::hash(GENERAL_CACHEABLE.as_bytes()).to_hex().to_string();
+    let actual = blake3::hash(GENERAL_CACHEABLE.as_bytes())
+        .to_hex()
+        .to_string();
     assert_eq!(
         actual, GENERAL_PROMPT_CACHE_LOCK,
         "general agent cacheable prompt drifted; bump `# version:` header AND \

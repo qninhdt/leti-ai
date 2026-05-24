@@ -35,6 +35,7 @@ async fn prompt_then_abort_marks_cancelling() {
         agent_id: None,
         parent_session_id: None,
         permission_mode: None,
+        extensions: serde_json::Value::Null,
     })
     .unwrap();
     let resp = app
@@ -47,7 +48,9 @@ async fn prompt_then_abort_marks_cancelling() {
         )
         .await
         .unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let session: SessionDto = serde_json::from_slice(&bytes).unwrap();
 
     // Fire prompt — provider stub errors immediately, but we still
@@ -81,7 +84,9 @@ async fn prompt_then_abort_marks_cancelling() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let _ack: AbortAckDto = serde_json::from_slice(&bytes).unwrap();
 }
 
@@ -93,6 +98,7 @@ async fn empty_prompt_rejected() {
         agent_id: None,
         parent_session_id: None,
         permission_mode: None,
+        extensions: serde_json::Value::Null,
     })
     .unwrap();
     let resp = app
@@ -105,7 +111,9 @@ async fn empty_prompt_rejected() {
         )
         .await
         .unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let session: SessionDto = serde_json::from_slice(&bytes).unwrap();
 
     let prompt = CreateMessageDto { parts: vec![] };

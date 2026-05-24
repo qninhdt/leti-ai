@@ -86,10 +86,7 @@ pub fn project_for_llm(
             }
             continue;
         }
-        let parts = parts_by_msg
-            .get(&msg.id)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
+        let parts = parts_by_msg.get(&msg.id).map(Vec::as_slice).unwrap_or(&[]);
         match msg.role {
             Role::System => project_system(parts, &mut out),
             Role::User => project_user(parts, &mut out),
@@ -174,11 +171,7 @@ fn project_user(parts: &[Part], out: &mut Vec<LlmMessage>) {
     });
 }
 
-fn project_assistant(
-    parts: &[Part],
-    caps: ProjectionCaps,
-    out: &mut Vec<LlmMessage>,
-) {
+fn project_assistant(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>) {
     let mut content = String::new();
     let mut reasoning = String::new();
     let mut tool_calls: Vec<LlmToolCall> = Vec::new();
@@ -197,7 +190,12 @@ fn project_assistant(
                 }
                 reasoning.push_str(text);
             }
-            Part::ToolCall { call_id, name, args, .. } => {
+            Part::ToolCall {
+                call_id,
+                name,
+                args,
+                ..
+            } => {
                 tool_calls.push(LlmToolCall {
                     id: call_id.clone(),
                     name: name.clone(),
@@ -215,7 +213,11 @@ fn project_assistant(
     out.push(LlmMessage {
         role: LlmRole::Assistant,
         content,
-        reasoning: if reasoning.is_empty() { None } else { Some(reasoning) },
+        reasoning: if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning)
+        },
         tool_calls,
         tool_call_id: None,
     });
@@ -223,7 +225,14 @@ fn project_assistant(
 
 fn project_tool(parts: &[Part], out: &mut Vec<LlmMessage>) {
     for p in parts {
-        if let Part::ToolResult { call_id, ok, text, error, .. } = p {
+        if let Part::ToolResult {
+            call_id,
+            ok,
+            text,
+            error,
+            ..
+        } = p
+        {
             let body = if *ok {
                 text.clone().unwrap_or_default()
             } else {

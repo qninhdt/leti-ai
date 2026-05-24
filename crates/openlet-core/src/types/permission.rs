@@ -15,7 +15,17 @@ use super::session::SessionId;
 /// Ordering: `ReadOnly < WorkspaceWrite < Danger`. `mode.permits(required)`
 /// returns `true` iff the active mode is at least as permissive as `required`.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Default,
+    Serialize,
+    Deserialize,
     ToSchema,
 )]
 #[serde(rename_all = "snake_case")]

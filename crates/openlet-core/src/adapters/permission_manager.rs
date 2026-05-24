@@ -18,8 +18,7 @@ pub trait PermissionManager: Send + Sync + 'static {
     ) -> Result<Decision, PermissionError>;
 
     /// Reply to an outstanding ask (e.g. user clicked Allow in TUI).
-    async fn reply(&self, ask_id: AskId, decision: Decision)
-        -> Result<(), PermissionError>;
+    async fn reply(&self, ask_id: AskId, decision: Decision) -> Result<(), PermissionError>;
 
     /// Cancel a pending ask (used by §E timeout path).
     async fn cancel_ask(&self, ask_id: AskId) -> Result<(), PermissionError>;

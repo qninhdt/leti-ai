@@ -28,11 +28,7 @@ pub struct DeliveredEvent {
 /// two-tier publisher (in-memory broadcast + SQLite write for durable).
 #[async_trait]
 pub trait EventSink: Send + Sync + 'static {
-    async fn publish(
-        &self,
-        ev: AgentEvent,
-        persistence: Persistence,
-    ) -> Result<(), EventError>;
+    async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError>;
 
     /// Returns a fresh broadcast receiver. The caller filters as it reads.
     fn subscribe(&self, filter: EventFilter) -> broadcast::Receiver<DeliveredEvent>;

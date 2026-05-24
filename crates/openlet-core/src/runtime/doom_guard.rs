@@ -124,7 +124,7 @@ pub fn check(history: &[TurnSummary], threshold: usize) -> DoomVerdict {
 
 #[cfg(test)]
 mod tests {
-    use super::{check, DoomVerdict, ToolCallSig, TurnSummary, DEFAULT_THRESHOLD};
+    use super::{DEFAULT_THRESHOLD, DoomVerdict, ToolCallSig, TurnSummary, check};
     use std::collections::BTreeSet;
 
     fn turn(sigs: &[(&str, &str)]) -> TurnSummary {

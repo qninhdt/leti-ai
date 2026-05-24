@@ -58,7 +58,10 @@ async fn replay_resumes_after_last_event_id() {
     let bytes = read_until_or_timeout(body, 3).await;
     let text = String::from_utf8_lossy(&bytes);
     let frames = text.matches("event: part.created").count();
-    assert!(frames >= 3, "expected ≥3 part.created replay frames, got: {text}");
+    assert!(
+        frames >= 3,
+        "expected ≥3 part.created replay frames, got: {text}"
+    );
 }
 
 /// Pull from the body up to ~3 frames or 500ms, whichever first. The

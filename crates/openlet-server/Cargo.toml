@@ -26,8 +26,10 @@ openlet-plugin-api.workspace = true
 openlet-plugin-registry.workspace = true
 openlet-plugin-core-agents.workspace = true
 openlet-protocol.workspace = true
+rust_decimal.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true, features = ["rt"] }
@@ -45,6 +47,7 @@ workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+openlet-plugin-test-quota-stub.workspace = true
 tempfile.workspace = true
 rust_decimal.workspace = true
 tokio = { workspace = true, features = ["full"] }

@@ -113,9 +113,10 @@ fn synthetic_request_and_verbatim_summary_substituted() {
 
     // Expect: 1 system summary + 1 user (recent) = 2.
     assert_eq!(projected.len(), 2, "got {projected:?}");
-    let any_synth_leak = projected
-        .iter()
-        .any(|m| m.content.contains("Summarize the conversation history above"));
+    let any_synth_leak = projected.iter().any(|m| {
+        m.content
+            .contains("Summarize the conversation history above")
+    });
     assert!(!any_synth_leak, "synthetic request leaked: {projected:?}");
     // The summary appears exactly once (in the substituted system message).
     let summary_hits: usize = projected

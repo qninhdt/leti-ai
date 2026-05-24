@@ -70,11 +70,7 @@ impl EventSink for BroadcastBus {
     ///   - `Durable` → repo.append (assigns Last-Event-ID), then broadcast
     ///   - `Transient` → broadcast only
     /// Broadcast `Err` is suppressed: a turn may run with no subscribers.
-    async fn publish(
-        &self,
-        ev: AgentEvent,
-        persistence: Persistence,
-    ) -> Result<(), EventError> {
+    async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError> {
         let event_id = if matches!(persistence, Persistence::Durable) {
             if let Some(repo) = &self.repo {
                 let session_id = session_id_of(&ev);
@@ -126,7 +122,9 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         | AgentEvent::PartUpdated { session_id, .. }
         | AgentEvent::StepFinished { session_id, .. }
         | AgentEvent::PermissionAsked { session_id, .. } => Some(*session_id),
-        AgentEvent::Error { session_id, .. } => *session_id,
+        AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
+            *session_id
+        }
         AgentEvent::PermissionResolved { .. } | AgentEvent::Heartbeat => None,
     }
 }

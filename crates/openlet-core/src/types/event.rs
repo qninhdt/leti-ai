@@ -59,14 +59,20 @@ pub enum AgentEvent {
         request: PermissionRequest,
     },
     /// `permission.resolved` — durable.
-    PermissionResolved {
-        ask_id: AskId,
-        decision: Decision,
-    },
+    PermissionResolved { ask_id: AskId, decision: Decision },
     /// `error` — durable.
     Error {
         session_id: Option<SessionId>,
         code: String,
+        message: String,
+    },
+    /// `plugin.error` — durable. Emitted when a plugin hook panics,
+    /// times out, or is denied at construction. Cloud users grep this
+    /// to monitor plugin health without parsing structured logs.
+    PluginError {
+        session_id: Option<SessionId>,
+        plugin_id: String,
+        hook: String,
         message: String,
     },
     /// `heartbeat` — TRANSIENT.

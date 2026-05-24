@@ -98,9 +98,8 @@ impl SqlitePermissionRepo {
             .map(|(ask, perm, dec)| {
                 let ask_uuid = Uuid::parse_str(&ask)
                     .map_err(|e| PermissionError::Io(format!("ask uuid: {e}")))?;
-                let decision = PersistedDecision::parse(&dec).ok_or_else(|| {
-                    PermissionError::Io(format!("unknown decision {dec}"))
-                })?;
+                let decision = PersistedDecision::parse(&dec)
+                    .ok_or_else(|| PermissionError::Io(format!("unknown decision {dec}")))?;
                 Ok(PermissionRecord {
                     session_id,
                     ask_id: AskId(ask_uuid),

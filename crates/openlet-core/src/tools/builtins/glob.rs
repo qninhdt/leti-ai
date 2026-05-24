@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use async_trait::async_trait;
 use crate::adapters::filesystem::{GlobOpts, GlobSort};
+use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -62,7 +62,10 @@ impl Tool for GlobTool {
         let mut hits = ctx.fs.glob(&input.pattern, opts).await?;
         let truncated = hits.len() > MAX_RESULTS;
         hits.truncate(MAX_RESULTS);
-        let matches: Vec<String> = hits.into_iter().map(|p: PathBuf| p.display().to_string()).collect();
+        let matches: Vec<String> = hits
+            .into_iter()
+            .map(|p: PathBuf| p.display().to_string())
+            .collect();
         Ok(GlobOutput { matches, truncated })
     }
 }

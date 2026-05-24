@@ -72,8 +72,8 @@ impl ArtifactStore for LocalFsArtifactStore {
         tokio::fs::write(&path, &bytes).await.map_err(map_io)?;
 
         let size = bytes.len() as i64;
-        let rel: PathBuf = Path::new(&session.to_string())
-            .join(path.file_name().expect("artifact filename"));
+        let rel: PathBuf =
+            Path::new(&session.to_string()).join(path.file_name().expect("artifact filename"));
         let rel_str = rel.to_string_lossy().to_string();
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().timestamp_millis();
@@ -115,10 +115,7 @@ impl ArtifactStore for LocalFsArtifactStore {
         Ok(Bytes::from(bytes))
     }
 
-    async fn list(
-        &self,
-        session: SessionId,
-    ) -> Result<Vec<ArtifactRef>, ArtifactError> {
+    async fn list(&self, session: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> {
         let rows = sqlx::query(
             r#"SELECT key, size_bytes, mime FROM artifacts
                WHERE session_id = ? ORDER BY created_at ASC"#,

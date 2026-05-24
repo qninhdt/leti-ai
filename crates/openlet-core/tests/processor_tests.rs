@@ -3,13 +3,12 @@
 
 use openlet_core::adapters::model_provider::{ChatDelta, FinishReason};
 use openlet_core::error::ProviderError;
-use openlet_core::runtime::processor::{
-    Processor, ProcessorEvent, ProcessorPart, ProcessorState,
-};
+use openlet_core::runtime::processor::{Processor, ProcessorEvent, ProcessorPart, ProcessorState};
 use openlet_core::types::event::{DeltaKind, Usage};
 
-fn drive(deltas: Vec<ChatDelta>) -> Result<(Vec<ProcessorPart>, Vec<ProcessorEvent>), ProviderError>
-{
+fn drive(
+    deltas: Vec<ChatDelta>,
+) -> Result<(Vec<ProcessorPart>, Vec<ProcessorEvent>), ProviderError> {
     let mut state = ProcessorState::default();
     let mut all_parts = Vec::new();
     let mut all_events = Vec::new();
@@ -151,11 +150,17 @@ fn reasoning_then_text() {
 
     assert!(matches!(
         &events[0],
-        ProcessorEvent::PartDelta { kind: DeltaKind::Reasoning, .. }
+        ProcessorEvent::PartDelta {
+            kind: DeltaKind::Reasoning,
+            ..
+        }
     ));
     assert!(matches!(
         &events[1],
-        ProcessorEvent::PartDelta { kind: DeltaKind::Text, .. }
+        ProcessorEvent::PartDelta {
+            kind: DeltaKind::Text,
+            ..
+        }
     ));
     // Reasoning emitted before Text in flush order
     assert!(matches!(
@@ -207,7 +212,9 @@ fn duplicate_tool_call_index_rejected_per_amendment_t() {
             index: 0,
         },
     ]);
-    assert!(matches!(res, Err(ProviderError::Decode(msg)) if msg.contains("duplicate tool_call index")));
+    assert!(
+        matches!(res, Err(ProviderError::Decode(msg)) if msg.contains("duplicate tool_call index"))
+    );
 }
 
 #[test]

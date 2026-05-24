@@ -21,11 +21,13 @@ use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::FinishReason;
 use crate::adapters::permission_manager::PermissionManager;
 use crate::adapters::tool_executor::ToolCtx;
+use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::CoreError;
-use crate::projection::LlmMessage;
-use crate::tools::{
-    ReadHistory, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch,
+use crate::hooks::io::{
+    AfterTurnCtx, BeforeTurnCtx, CompactionPhase, OnCompactionCtx, OnStepFinishCtx,
 };
+use crate::projection::LlmMessage;
+use crate::tools::{ReadHistory, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch};
 use crate::types::agent::AgentId;
 use crate::types::event::AgentEvent;
 use crate::types::message::{Message, MessageId, Role};
@@ -53,6 +55,9 @@ pub struct LoopContext {
     /// at the top of each loop iteration once projected tokens cross
     /// `agent.context_window * agent.compaction_threshold`.
     pub agent: Option<Arc<crate::agent::AgentDefinition>>,
+    /// Sorted plugin hook chains. `Arc::new(HookChains::new())` when no
+    /// plugins register hooks — dispatch is O(1) skip on empty chains.
+    pub hook_chains: Arc<HookChains>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -76,8 +81,8 @@ impl ConversationRuntime {
         cancel: CancellationToken,
     ) -> Result<LoopOutcome, CoreError> {
         use crate::runtime::compaction::{
-            CompactDecision, append_compaction_part, append_synthetic_request,
-            should_compact, superseded_messages,
+            CompactDecision, append_compaction_part, append_synthetic_request, should_compact,
+            superseded_messages,
         };
         let session_id = input.session_id;
         let mut last_assistant_id: Option<MessageId> = None;
@@ -99,6 +104,24 @@ impl ConversationRuntime {
                     let decision = should_compact(&input.messages, agent, last_actual_tokens);
                     if let CompactDecision::Run { keep } = decision {
                         compacted_this_loop = true;
+                        let pre_msg_count = input.messages.len();
+                        // OnCompaction Before — Stop halts compaction; the
+                        // outer loop continues with the un-compacted projection.
+                        let before_ctx = OnCompactionCtx {
+                            session_id: Some(session_id),
+                            phase: CompactionPhase::Before,
+                            message_count: pre_msg_count,
+                        };
+                        let before_outcome =
+                            dispatch(&loop_ctx.hook_chains.on_compaction, before_ctx).await;
+                        publish_fault_if_any(&loop_ctx.events, Some(session_id), &before_outcome)
+                            .await;
+                        if matches!(
+                            before_outcome,
+                            DispatchOutcome::Stopped(_) | DispatchOutcome::Denied { .. }
+                        ) {
+                            continue;
+                        }
                         // Determine which existing messages will be superseded.
                         let messages = memory.list_messages(session_id).await?;
                         let mut superseded = superseded_messages(&messages, keep);
@@ -118,10 +141,11 @@ impl ConversationRuntime {
                         // Build a one-shot compaction projection and run a
                         // turn. The result text becomes Part::Compaction.
                         let mut compact_input = input.clone();
-                        compact_input.messages = crate::runtime::compaction::build_compaction_projection(
-                            &input.messages,
-                            keep,
-                        );
+                        compact_input.messages =
+                            crate::runtime::compaction::build_compaction_projection(
+                                &input.messages,
+                                keep,
+                            );
                         compact_input.tools = Vec::new();
                         let outcome = self.run_turn(compact_input, cancel.clone()).await?;
                         // Drain the freshly produced assistant text into a Compaction part.
@@ -153,12 +177,69 @@ impl ConversationRuntime {
                         // Reset provider-actual anchor — last value referred
                         // to the pre-compaction prompt and is now stale.
                         last_actual_tokens = None;
+                        // OnCompaction After — observation; plugins emit
+                        // metrics or post-process the new projection. Stop
+                        // does not unwind the compaction (already durable).
+                        let after_ctx = OnCompactionCtx {
+                            session_id: Some(session_id),
+                            phase: CompactionPhase::After,
+                            message_count: input.messages.len(),
+                        };
+                        let after_outcome =
+                            dispatch(&loop_ctx.hook_chains.on_compaction, after_ctx).await;
+                        publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome)
+                            .await;
                         // Post-compaction overflow check (amendment §P).
                         let post = should_compact(&input.messages, agent, None);
                         if matches!(post, CompactDecision::Run { .. }) {
                             return Err(CoreError::ContextOverflowAfterCompaction);
                         }
                         continue;
+                    }
+                }
+            }
+            // BeforeTurn hook chain — Stop halts the loop with finish_reason=Halted;
+            // Deny short-circuits via a synthetic tool-result on the next turn.
+            // O(1) skip when empty.
+            if !loop_ctx.hook_chains.before_turn.is_empty() {
+                let before_ctx = BeforeTurnCtx {
+                    session_id: Some(session_id),
+                    turn_index: model_steps as u32,
+                    message_count: input.messages.len(),
+                };
+                match dispatch(&loop_ctx.hook_chains.before_turn, before_ctx).await {
+                    DispatchOutcome::Completed(_) => {}
+                    DispatchOutcome::Stopped(_) => {
+                        return Ok(LoopOutcome {
+                            steps: model_steps,
+                            finish_reason: FinishReason::Halted,
+                            final_assistant_message_id: last_assistant_id.unwrap_or_default(),
+                        });
+                    }
+                    DispatchOutcome::Denied {
+                        reason,
+                        feedback,
+                        plugin_fault,
+                    } => {
+                        if let Some(fault) = plugin_fault.as_ref() {
+                            let _ = loop_ctx
+                                .events
+                                .publish(
+                                    crate::dispatch::plugin_error_event(Some(session_id), fault),
+                                    crate::adapters::event_sink::Persistence::Durable,
+                                )
+                                .await;
+                        }
+                        tracing::warn!(
+                            reason = %reason,
+                            feedback = ?feedback,
+                            "before_turn denied; halting loop",
+                        );
+                        return Ok(LoopOutcome {
+                            steps: model_steps,
+                            finish_reason: FinishReason::Halted,
+                            final_assistant_message_id: last_assistant_id.unwrap_or_default(),
+                        });
                     }
                 }
             }
@@ -171,6 +252,36 @@ impl ConversationRuntime {
             // Reset the per-loop compaction guard after a real model turn
             // — subsequent turns may need to compact again.
             compacted_this_loop = false;
+
+            // AfterTurn hook chain — observation only; does not change loop control flow.
+            // O(1) skip when empty.
+            if !loop_ctx.hook_chains.after_turn.is_empty() {
+                let after_ctx = AfterTurnCtx {
+                    session_id: Some(session_id),
+                    turn_index: model_steps as u32,
+                    finish_reason: Some(outcome.finish_reason),
+                    usage: outcome.usage.clone(),
+                    cost_usd: outcome.cost_usd,
+                };
+                let after_outcome = dispatch(&loop_ctx.hook_chains.after_turn, after_ctx).await;
+                publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome).await;
+            }
+
+            // OnStepFinish — fires once per loop iteration so audit/quota
+            // plugins can roll up usage even when the model continues
+            // with a tool turn (AfterTurn fires too, but observers may
+            // care about the per-step granularity). O(1) skip when empty.
+            if !loop_ctx.hook_chains.on_step_finish.is_empty() {
+                let step_ctx = OnStepFinishCtx {
+                    session_id: Some(session_id),
+                    step_index: model_steps as u32,
+                    finish_reason: Some(outcome.finish_reason),
+                    usage: outcome.usage.clone(),
+                };
+                let step_outcome = dispatch(&loop_ctx.hook_chains.on_step_finish, step_ctx).await;
+                publish_fault_if_any(&loop_ctx.events, Some(session_id), &step_outcome).await;
+            }
+
             if !matches!(outcome.finish_reason, FinishReason::ToolUse) {
                 return Ok(LoopOutcome {
                     steps: model_steps,
@@ -214,6 +325,9 @@ impl ConversationRuntime {
             let results = dispatch_batch(
                 &loop_ctx.registry,
                 &loop_ctx.permission,
+                &loop_ctx.hook_chains,
+                &loop_ctx.events,
+                session_id,
                 ctx_for,
                 perm_ctx,
                 invocations,
@@ -221,8 +335,8 @@ impl ConversationRuntime {
             .await;
 
             // Append a tool-role message holding all results.
-            let tool_msg_id = append_tool_message(memory, &loop_ctx.events, session_id, &results)
-                .await?;
+            let tool_msg_id =
+                append_tool_message(memory, &loop_ctx.events, session_id, &results).await?;
             // Project all messages so far into the next LLM input.
             input.messages = project_session_messages(memory, session_id).await?;
             let _ = tool_msg_id;
@@ -351,5 +465,9 @@ async fn project_session_messages(
         let parts = memory.list_parts(session_id, m.id).await?;
         parts_by_msg.insert(m.id, parts);
     }
-    Ok(project_for_llm(&messages, &parts_by_msg, ProjectionCaps::default()))
+    Ok(project_for_llm(
+        &messages,
+        &parts_by_msg,
+        ProjectionCaps::default(),
+    ))
 }

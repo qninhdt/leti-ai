@@ -47,16 +47,13 @@ impl Config {
     /// Loads config with precedence: env > defaults.
     /// TOML file support lands in Phase 8.
     pub fn load() -> Result<Self, ConfigError> {
-        let bind_addr = env::var("OPENLET_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8787".to_string());
+        let bind_addr = env::var("OPENLET_BIND").unwrap_or_else(|_| "127.0.0.1:8787".to_string());
 
         let data_dir = env::var("OPENLET_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_data_dir());
 
-        let openrouter_api_key = env::var("OPENROUTER_API_KEY")
-            .ok()
-            .map(SecretString::from);
+        let openrouter_api_key = env::var("OPENROUTER_API_KEY").ok().map(SecretString::from);
 
         let default_model = env::var("OPENLET_DEFAULT_MODEL")
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".to_string());

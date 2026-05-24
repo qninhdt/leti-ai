@@ -55,6 +55,10 @@ pub enum SessionStatus {
 }
 
 /// Session-level metadata persisted in the memory store.
+///
+/// `extensions` is an opaque JSON blob the integrator owns. Core stays
+/// auth-blind — `extensions["user_id"]` (or any other shape) is the
+/// integrator's responsibility, not core's. Default = `Value::Null`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: SessionId,
@@ -66,6 +70,8 @@ pub struct SessionMeta {
     pub updated_at: DateTime<Utc>,
     pub deleted_at: Option<DateTime<Utc>>,
     pub version: String,
+    #[serde(default)]
+    pub extensions: serde_json::Value,
 }
 
 /// Filter for `MemoryStore::list_sessions` (added in §A).

@@ -18,9 +18,14 @@ use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
 use openlet_core::adapters::event_sink::{EventSink, Persistence};
 use openlet_core::adapters::permission_manager::PermissionManager;
 use openlet_core::adapters::tool_executor::ToolCtx;
+use openlet_core::dispatch::{HookChains, HookEntry};
 use openlet_core::error::{ArtifactError, EventError, PermissionError, ToolError};
+use openlet_core::hooks::{
+    HookKind, HookResult, Priority,
+    io::{AfterToolCallCtx, BeforeToolCallCtx},
+};
 use openlet_core::tools::{
-    ReadHistory, Tool, ToolInvocation, ToolRegistry, dispatch_batch,
+    ReadHistory, Tool, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch,
 };
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, EventFilter};
@@ -41,12 +46,24 @@ struct AllowAll;
 
 #[async_trait]
 impl PermissionManager for AllowAll {
-    async fn check(&self, _: PermissionCtx, _: PermissionRequest) -> Result<Decision, PermissionError> {
+    async fn check(
+        &self,
+        _: PermissionCtx,
+        _: PermissionRequest,
+    ) -> Result<Decision, PermissionError> {
         Ok(Decision::Allow)
     }
-    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> { Ok(()) }
-    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> { Ok(()) }
-    async fn record_always(&self, _: AlwaysScope, _: PermissionRule) -> Result<(), PermissionError> {
+    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn record_always(
+        &self,
+        _: AlwaysScope,
+        _: PermissionRule,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }
@@ -56,8 +73,13 @@ struct NoopBus;
 
 #[async_trait]
 impl EventSink for NoopBus {
-    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> { Ok(()) }
-    fn subscribe(&self, _: EventFilter) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> {
+        Ok(())
+    }
+    fn subscribe(
+        &self,
+        _: EventFilter,
+    ) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
         let (_, rx) = broadcast::channel(1);
         rx
     }
@@ -68,13 +90,25 @@ struct DiscardArtifacts;
 
 #[async_trait]
 impl ArtifactStore for DiscardArtifacts {
-    async fn put(&self, session: SessionId, key: &str, _: Bytes) -> Result<ArtifactRef, ArtifactError> {
-        Ok(ArtifactRef { session_id: session, key: key.to_string(), size: 0, mime: None })
+    async fn put(
+        &self,
+        session: SessionId,
+        key: &str,
+        _: Bytes,
+    ) -> Result<ArtifactRef, ArtifactError> {
+        Ok(ArtifactRef {
+            session_id: session,
+            key: key.to_string(),
+            size: 0,
+            mime: None,
+        })
     }
     async fn get(&self, _: &ArtifactRef) -> Result<Bytes, ArtifactError> {
         Err(ArtifactError::NotFound("test".into()))
     }
-    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> { Ok(vec![]) }
+    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> {
+        Ok(vec![])
+    }
 }
 
 fn ctx(workspace: &Path) -> ToolCtx {
@@ -113,17 +147,30 @@ impl Tool for SlowRead {
     type Input = Empty;
     type Output = Tagged;
 
-    fn name(&self) -> &'static str { self.name }
-    fn description(&self) -> &'static str { "slow parallel-safe read for tests" }
-    fn parallel_safe(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn description(&self) -> &'static str {
+        "slow parallel-safe read for tests"
+    }
+    fn parallel_safe(&self) -> bool {
+        true
+    }
     fn permission(&self, _: &Self::Input) -> PermissionRequest {
-        PermissionRequest { permission: format!("read:{}", self.name), reason: None, timeout: None }
+        PermissionRequest {
+            permission: format!("read:{}", self.name),
+            reason: None,
+            timeout: None,
+        }
     }
 
     async fn run(&self, _: ToolCtx, _: Self::Input) -> Result<Self::Output, ToolError> {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let finished_at_ms = self.started_at.elapsed().as_millis();
-        Ok(Tagged { tag: self.name.to_string(), finished_at_ms })
+        Ok(Tagged {
+            tag: self.name.to_string(),
+            finished_at_ms,
+        })
     }
 }
 
@@ -140,11 +187,21 @@ impl Tool for OrderingWrite {
     type Input = Empty;
     type Output = Tagged;
 
-    fn name(&self) -> &'static str { self.name }
-    fn description(&self) -> &'static str { "non-parallel write for tests" }
-    fn parallel_safe(&self) -> bool { false }
+    fn name(&self) -> &'static str {
+        self.name
+    }
+    fn description(&self) -> &'static str {
+        "non-parallel write for tests"
+    }
+    fn parallel_safe(&self) -> bool {
+        false
+    }
     fn permission(&self, _: &Self::Input) -> PermissionRequest {
-        PermissionRequest { permission: format!("write:{}", self.name), reason: None, timeout: None }
+        PermissionRequest {
+            permission: format!("write:{}", self.name),
+            reason: None,
+            timeout: None,
+        }
     }
 
     async fn run(&self, _: ToolCtx, _: Self::Input) -> Result<Self::Output, ToolError> {
@@ -155,7 +212,10 @@ impl Tool for OrderingWrite {
             .store(self.safe_finished.load(Ordering::SeqCst), Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(50)).await;
         let finished_at_ms = self.started_at.elapsed().as_millis();
-        Ok(Tagged { tag: self.name.to_string(), finished_at_ms })
+        Ok(Tagged {
+            tag: self.name.to_string(),
+            finished_at_ms,
+        })
     }
 }
 
@@ -174,10 +234,18 @@ async fn parallel_safe_reads_overlap_write_runs_after() {
     impl Tool for CountingRead {
         type Input = Empty;
         type Output = Tagged;
-        fn name(&self) -> &'static str { self.inner.name() }
-        fn description(&self) -> &'static str { self.inner.description() }
-        fn parallel_safe(&self) -> bool { self.inner.parallel_safe() }
-        fn permission(&self, i: &Self::Input) -> PermissionRequest { self.inner.permission(i) }
+        fn name(&self) -> &'static str {
+            self.inner.name()
+        }
+        fn description(&self) -> &'static str {
+            self.inner.description()
+        }
+        fn parallel_safe(&self) -> bool {
+            self.inner.parallel_safe()
+        }
+        fn permission(&self, i: &Self::Input) -> PermissionRequest {
+            self.inner.permission(i)
+        }
         async fn run(&self, ctx: ToolCtx, i: Self::Input) -> Result<Self::Output, ToolError> {
             let r = self.inner.run(ctx, i).await;
             self.counter.fetch_add(1, Ordering::SeqCst);
@@ -187,15 +255,24 @@ async fn parallel_safe_reads_overlap_write_runs_after() {
 
     let registry = ToolRegistry::builder()
         .register(CountingRead {
-            inner: SlowRead { name: "read_a", started_at: Arc::clone(&started) },
+            inner: SlowRead {
+                name: "read_a",
+                started_at: Arc::clone(&started),
+            },
             counter: Arc::clone(&safe_finished),
         })
         .register(CountingRead {
-            inner: SlowRead { name: "read_b", started_at: Arc::clone(&started) },
+            inner: SlowRead {
+                name: "read_b",
+                started_at: Arc::clone(&started),
+            },
             counter: Arc::clone(&safe_finished),
         })
         .register(CountingRead {
-            inner: SlowRead { name: "read_c", started_at: Arc::clone(&started) },
+            inner: SlowRead {
+                name: "read_c",
+                started_at: Arc::clone(&started),
+            },
             counter: Arc::clone(&safe_finished),
         })
         .register(OrderingWrite {
@@ -210,18 +287,49 @@ async fn parallel_safe_reads_overlap_write_runs_after() {
     let dir = TempDir::new().unwrap();
 
     let invocations = vec![
-        ToolInvocation { call_id: "1".into(), name: "read_a".into(), args: json!({}) },
-        ToolInvocation { call_id: "2".into(), name: "write_x".into(), args: json!({}) },
-        ToolInvocation { call_id: "3".into(), name: "read_b".into(), args: json!({}) },
-        ToolInvocation { call_id: "4".into(), name: "read_c".into(), args: json!({}) },
+        ToolInvocation {
+            call_id: "1".into(),
+            name: "read_a".into(),
+            args: json!({}),
+        },
+        ToolInvocation {
+            call_id: "2".into(),
+            name: "write_x".into(),
+            args: json!({}),
+        },
+        ToolInvocation {
+            call_id: "3".into(),
+            name: "read_b".into(),
+            args: json!({}),
+        },
+        ToolInvocation {
+            call_id: "4".into(),
+            name: "read_c".into(),
+            args: json!({}),
+        },
     ];
 
-    let perm_ctx = PermissionCtx { session_id: SessionId::new(), mode: PermissionMode::Danger };
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::Danger,
+    };
     let workspace = dir.path().to_path_buf();
     let ctx_for = move |_inv: &ToolInvocation| ctx(&workspace);
 
+    let hook_chains = std::sync::Arc::new(HookChains::new());
+    let events: Arc<dyn EventSink> = Arc::new(NoopBus);
     let wallclock_start = Instant::now();
-    let results = dispatch_batch(&registry, &permission, ctx_for, perm_ctx, invocations).await;
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &hook_chains,
+        &events,
+        perm_ctx.session_id,
+        ctx_for,
+        perm_ctx,
+        invocations,
+    )
+    .await;
     let wallclock = wallclock_start.elapsed();
 
     // 4 results, returned in input order (call_id 1..4).
@@ -249,4 +357,216 @@ async fn parallel_safe_reads_overlap_write_runs_after() {
         3,
         "write started before safe set drained"
     );
+}
+
+/// Trivial tool used by hook-wired tests below — returns its input tag.
+struct EchoTool;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct EchoIn {
+    tag: String,
+}
+
+#[async_trait]
+impl Tool for EchoTool {
+    type Input = EchoIn;
+    type Output = Tagged;
+    fn name(&self) -> &'static str {
+        "echo"
+    }
+    fn description(&self) -> &'static str {
+        "echo for hook tests"
+    }
+    fn parallel_safe(&self) -> bool {
+        true
+    }
+    fn permission(&self, _: &Self::Input) -> PermissionRequest {
+        PermissionRequest {
+            permission: "read:echo".into(),
+            reason: None,
+            timeout: None,
+        }
+    }
+    async fn run(&self, _: ToolCtx, i: Self::Input) -> Result<Self::Output, ToolError> {
+        Ok(Tagged {
+            tag: i.tag,
+            finished_at_ms: 0,
+        })
+    }
+}
+
+#[tokio::test]
+async fn before_tool_call_replace_mutates_invocation() {
+    let registry = ToolRegistry::builder().register(EchoTool).build();
+    let permission: Arc<dyn PermissionManager> = Arc::new(AllowAll);
+    let dir = TempDir::new().unwrap();
+
+    let mut chains = HookChains::new();
+    chains
+        .before_tool_call
+        .push(HookEntry::<BeforeToolCallCtx> {
+            manifest_id: "rewriter".into(),
+            priority: Priority(50),
+            registration_index: 0,
+            kind: HookKind::BeforeToolCall,
+            func: Arc::new(|mut c: BeforeToolCallCtx| {
+                Box::pin(async move {
+                    if let Some(inv) = c.invocation.as_mut() {
+                        inv.args = json!({ "tag": "rewritten" });
+                    }
+                    HookResult::Replace(c)
+                })
+            }),
+        });
+
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::Danger,
+    };
+    let workspace = dir.path().to_path_buf();
+    let ctx_for = move |_inv: &ToolInvocation| ctx(&workspace);
+
+    let invocations = vec![ToolInvocation {
+        call_id: "1".into(),
+        name: "echo".into(),
+        args: json!({ "tag": "original" }),
+    }];
+
+    let chains_arc = Arc::new(chains);
+    let events: Arc<dyn EventSink> = Arc::new(NoopBus);
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &chains_arc,
+        &events,
+        perm_ctx.session_id,
+        ctx_for,
+        perm_ctx,
+        invocations,
+    )
+    .await;
+
+    let value = results[0].outcome.as_ref().expect("ok");
+    let tag = value.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(tag, "rewritten");
+}
+
+#[tokio::test]
+async fn before_tool_call_deny_short_circuits_with_permission_denied() {
+    let registry = ToolRegistry::builder().register(EchoTool).build();
+    let permission: Arc<dyn PermissionManager> = Arc::new(AllowAll);
+    let dir = TempDir::new().unwrap();
+
+    let mut chains = HookChains::new();
+    chains
+        .before_tool_call
+        .push(HookEntry::<BeforeToolCallCtx> {
+            manifest_id: "blocker".into(),
+            priority: Priority(50),
+            registration_index: 0,
+            kind: HookKind::BeforeToolCall,
+            func: Arc::new(|_c: BeforeToolCallCtx| {
+                Box::pin(async move {
+                    HookResult::Deny {
+                        reason: "policy".into(),
+                        feedback: Some("blocked by plugin".into()),
+                    }
+                })
+            }),
+        });
+
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::Danger,
+    };
+    let workspace = dir.path().to_path_buf();
+    let ctx_for = move |_inv: &ToolInvocation| ctx(&workspace);
+
+    let invocations = vec![ToolInvocation {
+        call_id: "1".into(),
+        name: "echo".into(),
+        args: json!({ "tag": "x" }),
+    }];
+
+    let chains_arc = Arc::new(chains);
+    let events: Arc<dyn EventSink> = Arc::new(NoopBus);
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &chains_arc,
+        &events,
+        perm_ctx.session_id,
+        ctx_for,
+        perm_ctx,
+        invocations,
+    )
+    .await;
+
+    match &results[0].outcome {
+        Err(ToolError::PermissionDenied(msg)) => {
+            assert!(msg.contains("blocked by plugin"), "msg: {msg}");
+        }
+        other => panic!("expected PermissionDenied from before-tool Deny, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn after_tool_call_replace_swaps_result() {
+    let registry = ToolRegistry::builder().register(EchoTool).build();
+    let permission: Arc<dyn PermissionManager> = Arc::new(AllowAll);
+    let dir = TempDir::new().unwrap();
+
+    let mut chains = HookChains::new();
+    chains.after_tool_call.push(HookEntry::<AfterToolCallCtx> {
+        manifest_id: "redactor".into(),
+        priority: Priority(50),
+        registration_index: 0,
+        kind: HookKind::AfterToolCall,
+        func: Arc::new(|mut c: AfterToolCallCtx| {
+            Box::pin(async move {
+                let (call_id, name) = c
+                    .result
+                    .as_ref()
+                    .map(|r| (r.call_id.clone(), r.name.clone()))
+                    .unwrap_or_default();
+                c.result = Some(ToolDispatchResult {
+                    call_id,
+                    name,
+                    outcome: Ok(json!({ "tag": "redacted", "finished_at_ms": 0 })),
+                });
+                HookResult::Replace(c)
+            })
+        }),
+    });
+
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::Danger,
+    };
+    let workspace = dir.path().to_path_buf();
+    let ctx_for = move |_inv: &ToolInvocation| ctx(&workspace);
+
+    let invocations = vec![ToolInvocation {
+        call_id: "1".into(),
+        name: "echo".into(),
+        args: json!({ "tag": "secret" }),
+    }];
+
+    let chains_arc = Arc::new(chains);
+    let events: Arc<dyn EventSink> = Arc::new(NoopBus);
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &chains_arc,
+        &events,
+        perm_ctx.session_id,
+        ctx_for,
+        perm_ctx,
+        invocations,
+    )
+    .await;
+
+    let value = results[0].outcome.as_ref().expect("ok");
+    let tag = value.get("tag").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(tag, "redacted");
 }

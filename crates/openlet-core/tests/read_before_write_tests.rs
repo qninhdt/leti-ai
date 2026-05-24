@@ -12,11 +12,11 @@ use openlet_core::adapters::event_sink::{EventSink, Persistence};
 use openlet_core::adapters::permission_manager::PermissionManager;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::error::{ArtifactError, EventError, PermissionError, ToolError};
-use openlet_core::tools::{ReadHistory, Tool};
-use openlet_core::tools::builtins::{EditTool, ReadTool, WriteTool};
 use openlet_core::tools::builtins::edit::EditInput;
 use openlet_core::tools::builtins::read::ReadInput;
 use openlet_core::tools::builtins::write::WriteInput;
+use openlet_core::tools::builtins::{EditTool, ReadTool, WriteTool};
+use openlet_core::tools::{ReadHistory, Tool};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, EventFilter};
 use openlet_core::types::message::MessageId;
@@ -33,7 +33,11 @@ struct AllowAll;
 
 #[async_trait]
 impl PermissionManager for AllowAll {
-    async fn check(&self, _: PermissionCtx, _: PermissionRequest) -> Result<Decision, PermissionError> {
+    async fn check(
+        &self,
+        _: PermissionCtx,
+        _: PermissionRequest,
+    ) -> Result<Decision, PermissionError> {
         Ok(Decision::Allow)
     }
     async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> {
@@ -42,7 +46,11 @@ impl PermissionManager for AllowAll {
     async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> {
         Ok(())
     }
-    async fn record_always(&self, _: AlwaysScope, _: PermissionRule) -> Result<(), PermissionError> {
+    async fn record_always(
+        &self,
+        _: AlwaysScope,
+        _: PermissionRule,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }
@@ -55,7 +63,10 @@ impl EventSink for NoopBus {
     async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> {
         Ok(())
     }
-    fn subscribe(&self, _: EventFilter) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+    fn subscribe(
+        &self,
+        _: EventFilter,
+    ) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
         let (_, rx) = broadcast::channel(1);
         rx
     }
@@ -66,7 +77,12 @@ struct DiscardArtifacts;
 
 #[async_trait]
 impl ArtifactStore for DiscardArtifacts {
-    async fn put(&self, session: SessionId, key: &str, _: Bytes) -> Result<ArtifactRef, ArtifactError> {
+    async fn put(
+        &self,
+        session: SessionId,
+        key: &str,
+        _: Bytes,
+    ) -> Result<ArtifactRef, ArtifactError> {
         Ok(ArtifactRef {
             session_id: session,
             key: key.to_string(),
@@ -107,29 +123,38 @@ async fn write_blocked_until_read() {
     let c = ctx(dir.path(), PermissionMode::WorkspaceWrite, history.clone());
 
     let res = WriteTool
-        .run(c.clone(), WriteInput {
-            path: "foo.txt".into(),
-            content: "new".into(),
-        })
+        .run(
+            c.clone(),
+            WriteInput {
+                path: "foo.txt".into(),
+                content: "new".into(),
+            },
+        )
         .await;
     assert!(matches!(res, Err(ToolError::ReadBeforeWriteRequired(_))));
 
     // Read it.
     ReadTool
-        .run(c.clone(), ReadInput {
-            path: "foo.txt".into(),
-            offset: None,
-            limit: None,
-        })
+        .run(
+            c.clone(),
+            ReadInput {
+                path: "foo.txt".into(),
+                offset: None,
+                limit: None,
+            },
+        )
         .await
         .unwrap();
 
     // Write succeeds now.
     let ok = WriteTool
-        .run(c, WriteInput {
-            path: "foo.txt".into(),
-            content: "new".into(),
-        })
+        .run(
+            c,
+            WriteInput {
+                path: "foo.txt".into(),
+                content: "new".into(),
+            },
+        )
         .await
         .unwrap();
     assert_eq!(ok.kind, "update");
@@ -144,31 +169,40 @@ async fn edit_blocked_until_read() {
     let c = ctx(dir.path(), PermissionMode::WorkspaceWrite, history.clone());
 
     let res = EditTool
-        .run(c.clone(), EditInput {
-            path: "a.md".into(),
-            find: "world".into(),
-            replace: "rust".into(),
-            replace_all: false,
-        })
+        .run(
+            c.clone(),
+            EditInput {
+                path: "a.md".into(),
+                find: "world".into(),
+                replace: "rust".into(),
+                replace_all: false,
+            },
+        )
         .await;
     assert!(matches!(res, Err(ToolError::ReadBeforeWriteRequired(_))));
 
     ReadTool
-        .run(c.clone(), ReadInput {
-            path: "a.md".into(),
-            offset: None,
-            limit: None,
-        })
+        .run(
+            c.clone(),
+            ReadInput {
+                path: "a.md".into(),
+                offset: None,
+                limit: None,
+            },
+        )
         .await
         .unwrap();
 
     let ok = EditTool
-        .run(c, EditInput {
-            path: "a.md".into(),
-            find: "world".into(),
-            replace: "rust".into(),
-            replace_all: false,
-        })
+        .run(
+            c,
+            EditInput {
+                path: "a.md".into(),
+                find: "world".into(),
+                replace: "rust".into(),
+                replace_all: false,
+            },
+        )
         .await
         .unwrap();
     assert_eq!(ok.replacements, 1);
@@ -183,10 +217,13 @@ async fn danger_mode_bypasses_read_gate() {
     tokio::fs::write(&target, b"x").await.unwrap();
     let c = ctx(dir.path(), PermissionMode::Danger, ReadHistory::new());
     let ok = WriteTool
-        .run(c, WriteInput {
-            path: "p.txt".into(),
-            content: "yyy".into(),
-        })
+        .run(
+            c,
+            WriteInput {
+                path: "p.txt".into(),
+                content: "yyy".into(),
+            },
+        )
         .await
         .unwrap();
     assert_eq!(ok.bytes_written, 3);
@@ -197,10 +234,13 @@ async fn write_rejects_path_escape() {
     let dir = TempDir::new().unwrap();
     let c = ctx(dir.path(), PermissionMode::Danger, ReadHistory::new());
     let res = WriteTool
-        .run(c, WriteInput {
-            path: "../escape.txt".into(),
-            content: "x".into(),
-        })
+        .run(
+            c,
+            WriteInput {
+                path: "../escape.txt".into(),
+                content: "x".into(),
+            },
+        )
         .await;
     assert!(matches!(res, Err(ToolError::PathOutsideWorkspace(_))));
 }
@@ -213,12 +253,15 @@ async fn edit_rejects_ambiguous_match() {
     let history = ReadHistory::new();
     let c = ctx(dir.path(), PermissionMode::Danger, history.clone());
     let res = EditTool
-        .run(c, EditInput {
-            path: "dup.txt".into(),
-            find: "foo".into(),
-            replace: "bar".into(),
-            replace_all: false,
-        })
+        .run(
+            c,
+            EditInput {
+                path: "dup.txt".into(),
+                find: "foo".into(),
+                replace: "bar".into(),
+                replace_all: false,
+            },
+        )
         .await;
     assert!(matches!(res, Err(ToolError::InvalidInput(_))));
 }

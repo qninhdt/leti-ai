@@ -57,21 +57,47 @@ pub enum PartDto {
 impl From<Part> for PartDto {
     fn from(p: Part) -> Self {
         match p {
-            Part::Text { id, text } => Self::Text { id: id.as_uuid(), text },
-            Part::Reasoning { id, text } => Self::Reasoning { id: id.as_uuid(), text },
-            Part::ToolCall { id, call_id, name, args } => {
-                Self::ToolCall { id: id.as_uuid(), call_id, name, args }
-            }
-            Part::ToolResult { id, call_id, ok, text, error } => Self::ToolResult {
+            Part::Text { id, text } => Self::Text {
+                id: id.as_uuid(),
+                text,
+            },
+            Part::Reasoning { id, text } => Self::Reasoning {
+                id: id.as_uuid(),
+                text,
+            },
+            Part::ToolCall {
+                id,
+                call_id,
+                name,
+                args,
+            } => Self::ToolCall {
+                id: id.as_uuid(),
+                call_id,
+                name,
+                args,
+            },
+            Part::ToolResult {
+                id,
+                call_id,
+                ok,
+                text,
+                error,
+            } => Self::ToolResult {
                 id: id.as_uuid(),
                 call_id,
                 ok,
                 text,
                 error,
             },
-            Part::Image { id, mime, .. } => Self::Image { id: id.as_uuid(), mime },
+            Part::Image { id, mime, .. } => Self::Image {
+                id: id.as_uuid(),
+                mime,
+            },
             Part::StepStart { id } => Self::StepStart { id: id.as_uuid() },
-            Part::StepFinish { id, reason } => Self::StepFinish { id: id.as_uuid(), reason },
+            Part::StepFinish { id, reason } => Self::StepFinish {
+                id: id.as_uuid(),
+                reason,
+            },
             Part::Compaction {
                 id,
                 summary,
@@ -93,8 +119,14 @@ impl PartDto {
     #[must_use]
     pub fn into_part_for_user_input(self) -> Option<Part> {
         match self {
-            Self::Text { id, text } => Some(Part::Text { id: PartId(id), text }),
-            Self::Reasoning { id, text } => Some(Part::Reasoning { id: PartId(id), text }),
+            Self::Text { id, text } => Some(Part::Text {
+                id: PartId(id),
+                text,
+            }),
+            Self::Reasoning { id, text } => Some(Part::Reasoning {
+                id: PartId(id),
+                text,
+            }),
             // The remaining variants are produced by the runtime, not
             // by user input. `prompt_async` only accepts Text/Reasoning.
             _ => None,

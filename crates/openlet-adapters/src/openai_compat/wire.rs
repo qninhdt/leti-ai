@@ -101,9 +101,9 @@ pub fn to_wire<'a>(req: &'a ChatRequest) -> OpenAiRequest<'a> {
         temperature: req.temperature,
         tools,
         stream: req.stream,
-        stream_options: req
-            .stream
-            .then_some(StreamOptions { include_usage: true }),
+        stream_options: req.stream.then_some(StreamOptions {
+            include_usage: true,
+        }),
     }
 }
 

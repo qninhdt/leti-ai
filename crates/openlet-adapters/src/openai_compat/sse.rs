@@ -133,7 +133,7 @@ fn parse_frame(frame: &str) -> Option<SseFrame> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_frame, SseFrame, SseParser};
+    use super::{SseFrame, SseParser, parse_frame};
 
     #[test]
     fn parses_single_data_frame() {

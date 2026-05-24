@@ -16,9 +16,7 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::PermissionMode;
-use openlet_core::types::session::{
-    SessionFilter, SessionId, SessionMeta, SessionStatus,
-};
+use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemoryStore {
@@ -42,7 +40,9 @@ fn now_ms() -> i64 {
 }
 
 fn from_ms(ms: i64) -> DateTime<Utc> {
-    Utc.timestamp_millis_opt(ms).single().unwrap_or_else(Utc::now)
+    Utc.timestamp_millis_opt(ms)
+        .single()
+        .unwrap_or_else(Utc::now)
 }
 
 fn map_io(e: sqlx::Error) -> MemoryError {
@@ -128,8 +128,8 @@ impl MemoryStore for SqliteMemoryStore {
         sqlx::query(
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
-                 version, created_at, updated_at, deleted_at)
-               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL)"#,
+                 version, created_at, updated_at, deleted_at, extensions)
+               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null')"#,
         )
         .bind(&id_str)
         .bind(&agent_str)
@@ -145,13 +145,10 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(id)
     }
 
-    async fn get_session(
-        &self,
-        session: SessionId,
-    ) -> Result<Option<SessionMeta>, MemoryError> {
+    async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
-                      version, created_at, updated_at, deleted_at
+                      version, created_at, updated_at, deleted_at, extensions
                FROM sessions WHERE id = ?"#,
         )
         .bind(session.to_string())
@@ -162,13 +159,11 @@ impl MemoryStore for SqliteMemoryStore {
         row.map(row_to_session).transpose()
     }
 
-    async fn list_sessions(
-        &self,
-        filter: SessionFilter,
-    ) -> Result<Vec<SessionMeta>, MemoryError> {
+    async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {
         let mut sql = String::from(
             "SELECT id, agent_id, parent_session_id, status, permission_mode, \
-             version, created_at, updated_at, deleted_at FROM sessions WHERE 1=1",
+             version, created_at, updated_at, deleted_at, extensions \
+             FROM sessions WHERE 1=1",
         );
         if !filter.include_deleted {
             sql.push_str(" AND deleted_at IS NULL");
@@ -200,15 +195,13 @@ impl MemoryStore for SqliteMemoryStore {
         status: SessionStatus,
         _reason: &str,
     ) -> Result<(), MemoryError> {
-        let res = sqlx::query(
-            r#"UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"#,
-        )
-        .bind(status_str(status))
-        .bind(now_ms())
-        .bind(session.to_string())
-        .execute(&self.pool)
-        .await
-        .map_err(map_io)?;
+        let res = sqlx::query(r#"UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"#)
+            .bind(status_str(status))
+            .bind(now_ms())
+            .bind(session.to_string())
+            .execute(&self.pool)
+            .await
+            .map_err(map_io)?;
 
         if res.rows_affected() == 0 {
             return Err(MemoryError::SessionNotFound);
@@ -226,6 +219,30 @@ impl MemoryStore for SqliteMemoryStore {
                WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(mode_str(mode))
+        .bind(now_ms())
+        .bind(session.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        if res.rows_affected() == 0 {
+            return Err(MemoryError::SessionNotFound);
+        }
+        Ok(())
+    }
+
+    async fn update_session_extensions(
+        &self,
+        session: SessionId,
+        extensions: serde_json::Value,
+    ) -> Result<(), MemoryError> {
+        let json = serde_json::to_string(&extensions)
+            .map_err(|e| MemoryError::Io(format!("extensions json: {e}")))?;
+        let res = sqlx::query(
+            r#"UPDATE sessions SET extensions = ?, updated_at = ?
+               WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(json)
         .bind(now_ms())
         .bind(session.to_string())
         .execute(&self.pool)
@@ -297,11 +314,7 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(id)
     }
 
-    async fn append_part(
-        &self,
-        msg: MessageId,
-        part: Part,
-    ) -> Result<PartId, MemoryError> {
+    async fn append_part(&self, msg: MessageId, part: Part) -> Result<PartId, MemoryError> {
         let id = part.id();
         let kind = part_kind(&part);
         let payload = serde_json::to_string(&part)
@@ -363,10 +376,7 @@ impl MemoryStore for SqliteMemoryStore {
         }
     }
 
-    async fn list_messages(
-        &self,
-        session: SessionId,
-    ) -> Result<Vec<Message>, MemoryError> {
+    async fn list_messages(&self, session: SessionId) -> Result<Vec<Message>, MemoryError> {
         let rows = sqlx::query(
             r#"SELECT id, session_id, role, created_at FROM messages
                WHERE session_id = ? ORDER BY seq ASC"#,
@@ -379,11 +389,7 @@ impl MemoryStore for SqliteMemoryStore {
         rows.into_iter().map(row_to_message).collect()
     }
 
-    async fn record_read(
-        &self,
-        session: SessionId,
-        path: PathBuf,
-    ) -> Result<(), MemoryError> {
+    async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError> {
         let path_str = path.to_string_lossy().to_string();
         sqlx::query(
             r#"INSERT INTO session_reads (session_id, path, read_at)
@@ -404,13 +410,12 @@ impl MemoryStore for SqliteMemoryStore {
         _session: SessionId,
         msg: MessageId,
     ) -> Result<Vec<Part>, MemoryError> {
-        let rows = sqlx::query(
-            r#"SELECT payload FROM parts WHERE message_id = ? ORDER BY seq ASC"#,
-        )
-        .bind(msg.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_io)?;
+        let rows =
+            sqlx::query(r#"SELECT payload FROM parts WHERE message_id = ? ORDER BY seq ASC"#)
+                .bind(msg.to_string())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_io)?;
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
@@ -446,19 +451,21 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
     let created_at: i64 = row.try_get("created_at").map_err(map_io)?;
     let updated_at: i64 = row.try_get("updated_at").map_err(map_io)?;
     let deleted_at: Option<i64> = row.try_get("deleted_at").map_err(map_io)?;
+    let extensions: String = row.try_get("extensions").map_err(map_io)?;
+    let extensions = serde_json::from_str(&extensions)
+        .map_err(|e| MemoryError::Io(format!("extensions json: {e}")))?;
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
         agent_id: AgentId(parse_uuid(&agent_id_str)?),
         status: parse_status(&status)?,
         permission_mode: parse_mode(&mode)?,
-        parent_session_id: parent
-            .map(|p| parse_uuid(&p).map(SessionId))
-            .transpose()?,
+        parent_session_id: parent.map(|p| parse_uuid(&p).map(SessionId)).transpose()?,
         created_at: from_ms(created_at),
         updated_at: from_ms(updated_at),
         deleted_at: deleted_at.map(from_ms),
         version,
+        extensions,
     })
 }
 

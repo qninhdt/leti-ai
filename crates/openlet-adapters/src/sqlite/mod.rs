@@ -9,4 +9,4 @@ pub mod permission_repo;
 pub mod pool;
 
 pub use memory_store::SqliteMemoryStore;
-pub use pool::{open_in_memory, open_pool, run_migrations, MIGRATOR};
+pub use pool::{MIGRATOR, open_in_memory, open_pool, run_migrations};

@@ -1,7 +1,7 @@
 //! `grep` tool — line-anchored regex search via `ctx.fs.grep`.
 
-use async_trait::async_trait;
 use crate::adapters::filesystem::GrepArgs as FsGrepArgs;
+use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

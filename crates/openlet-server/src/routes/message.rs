@@ -48,7 +48,10 @@ pub async fn prompt_async(
         .get_session(sid)
         .await?
         .ok_or_else(|| AppError::not_found("session_not_found", "session not found"))?;
-    if matches!(meta.status, SessionStatus::Cancelled | SessionStatus::Errored) {
+    if matches!(
+        meta.status,
+        SessionStatus::Cancelled | SessionStatus::Errored
+    ) {
         return Err(AppError::conflict(
             "session_terminal",
             format!("session is {:?}", meta.status),
@@ -204,28 +207,20 @@ async fn drive_loop(
     let tools: Vec<openlet_core::adapters::model_provider::ToolSpec> = state
         .tool_registry
         .iter()
-        .map(|(name, handle)| {
-            openlet_core::adapters::model_provider::ToolSpec {
+        .map(
+            |(name, handle)| openlet_core::adapters::model_provider::ToolSpec {
                 name: name.to_string(),
                 description: handle.description().to_string(),
                 parameters: handle.input_schema(),
-            }
-        })
+            },
+        )
         .collect();
 
-    let session_meta = state
-        .memory
-        .get_session(session_id)
-        .await?
-        .ok_or(openlet_core::error::CoreError::Memory(
-            openlet_core::error::MemoryError::SessionNotFound,
-        ))?;
+    let session_meta = state.memory.get_session(session_id).await?.ok_or(
+        openlet_core::error::CoreError::Memory(openlet_core::error::MemoryError::SessionNotFound),
+    )?;
 
-    let read_history = state
-        .read_histories
-        .entry(session_id)
-        .or_default()
-        .clone();
+    let read_history = state.read_histories.entry(session_id).or_default().clone();
 
     let loop_ctx = LoopContext {
         agent_id,
@@ -242,6 +237,7 @@ async fn drive_loop(
             .and_then(|slug| state.agent_registry.get(&slug))
             .cloned()
             .map(std::sync::Arc::new),
+        hook_chains: state.hook_chains.clone(),
     };
 
     let input = TurnInput {

@@ -2,8 +2,8 @@
 
 use bytes::Bytes;
 use openlet_adapters::localfs::LocalFsArtifactStore;
-use openlet_adapters::sqlite::open_in_memory;
 use openlet_adapters::sqlite::SqliteMemoryStore;
+use openlet_adapters::sqlite::open_in_memory;
 use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::types::agent::AgentId;
@@ -36,8 +36,14 @@ async fn list_returns_session_keys() {
     let mem = SqliteMemoryStore::new(pool);
     let session = mem.create_session(AgentId::new(), None).await.unwrap();
 
-    store.put(session, "a.txt", Bytes::from_static(b"a")).await.unwrap();
-    store.put(session, "b.txt", Bytes::from_static(b"bb")).await.unwrap();
+    store
+        .put(session, "a.txt", Bytes::from_static(b"a"))
+        .await
+        .unwrap();
+    store
+        .put(session, "b.txt", Bytes::from_static(b"bb"))
+        .await
+        .unwrap();
 
     let listed = store.list(session).await.unwrap();
     assert_eq!(listed.len(), 2);
@@ -56,9 +62,7 @@ async fn rejects_traversal_keys() {
 
     let bad_keys = ["../etc/passwd", "/etc/passwd", "..", "..\\..\\evil"];
     for k in bad_keys {
-        let res = store
-            .put(session, k, Bytes::from_static(b"x"))
-            .await;
+        let res = store.put(session, k, Bytes::from_static(b"x")).await;
         assert!(res.is_err(), "key {k} should be rejected");
     }
 }

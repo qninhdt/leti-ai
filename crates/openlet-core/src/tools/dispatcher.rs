@@ -16,10 +16,14 @@ use std::sync::Arc;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::Value;
 
+use crate::adapters::event_sink::EventSink;
 use crate::adapters::tool_executor::ToolCtx;
+use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::ToolError;
+use crate::hooks::io::{AfterToolCallCtx, BeforeToolCallCtx};
 use crate::tools::ToolRegistry;
 use crate::types::permission::{Decision, PermissionCtx, PermissionRequest};
+use crate::types::session::SessionId;
 
 use crate::adapters::permission_manager::PermissionManager;
 
@@ -41,9 +45,18 @@ pub struct ToolDispatchResult {
 
 /// Dispatch a batch of tool calls. Permission is checked per call; safe
 /// tools run concurrently; non-safe tools serialize. Order preserved.
+///
+/// Plugin hook chains: `before_tool_call` runs before permission check
+/// (Deny short-circuits to a synthetic `PermissionDenied`-style result;
+/// Replace mutates the invocation's args). `after_tool_call` runs after
+/// the tool produces output (Replace swaps the result).
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_batch(
     registry: &Arc<ToolRegistry>,
     permission: &Arc<dyn PermissionManager>,
+    hook_chains: &Arc<HookChains>,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
     ctx_for: impl Fn(&ToolInvocation) -> ToolCtx,
     perm_ctx: PermissionCtx,
     invocations: Vec<ToolInvocation>,
@@ -51,9 +64,7 @@ pub async fn dispatch_batch(
     let len = invocations.len();
     let mut indexed: Vec<(usize, ToolInvocation, bool)> = Vec::with_capacity(len);
     for (i, inv) in invocations.into_iter().enumerate() {
-        let parallel_safe = registry
-            .get(&inv.name)
-            .is_some_and(|t| t.parallel_safe());
+        let parallel_safe = registry.get(&inv.name).is_some_and(|t| t.parallel_safe());
         indexed.push((i, inv, parallel_safe));
     }
 
@@ -65,10 +76,22 @@ pub async fn dispatch_batch(
     for (idx, inv, _) in safe {
         let registry = Arc::clone(registry);
         let permission = Arc::clone(permission);
+        let hooks = Arc::clone(hook_chains);
+        let events = Arc::clone(events);
         let ctx = ctx_for(&inv);
         let pctx = perm_ctx.clone();
         futs.push(async move {
-            let result = run_one(&registry, &permission, ctx, pctx, &inv).await;
+            let result = run_one_with_hooks(
+                &registry,
+                &permission,
+                &hooks,
+                &events,
+                session_id,
+                ctx,
+                pctx,
+                &inv,
+            )
+            .await;
             (idx, inv, result)
         });
     }
@@ -83,7 +106,17 @@ pub async fn dispatch_batch(
     // Run non-safe set serially.
     for (idx, inv, _) in indexed.into_iter().filter(|(_, _, s)| !*s) {
         let ctx = ctx_for(&inv);
-        let result = run_one(registry, permission, ctx, perm_ctx.clone(), &inv).await;
+        let result = run_one_with_hooks(
+            registry,
+            permission,
+            hook_chains,
+            events,
+            session_id,
+            ctx,
+            perm_ctx.clone(),
+            &inv,
+        )
+        .await;
         out[idx] = Some(ToolDispatchResult {
             call_id: inv.call_id,
             name: inv.name,
@@ -94,6 +127,78 @@ pub async fn dispatch_batch(
     out.into_iter()
         .map(|o| o.expect("every slot filled"))
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_one_with_hooks(
+    registry: &Arc<ToolRegistry>,
+    permission: &Arc<dyn PermissionManager>,
+    hook_chains: &Arc<HookChains>,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
+    ctx: ToolCtx,
+    perm_ctx: PermissionCtx,
+    inv: &ToolInvocation,
+) -> Result<Value, ToolError> {
+    // BeforeToolCall — Replace mutates args; Deny short-circuits to a
+    // synthetic error result fed back to the model. Skip ctx clone
+    // entirely when no plugin registered the chain (O(1) empty path).
+    let mutated = if hook_chains.before_tool_call.is_empty() {
+        inv.clone()
+    } else {
+        let before_ctx = BeforeToolCallCtx {
+            session_id: Some(session_id),
+            invocation: Some(inv.clone()),
+        };
+        let outcome = dispatch(&hook_chains.before_tool_call, before_ctx).await;
+        publish_fault_if_any(events, Some(session_id), &outcome).await;
+        match outcome {
+            DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => {
+                c.invocation.unwrap_or_else(|| inv.clone())
+            }
+            DispatchOutcome::Denied {
+                reason, feedback, ..
+            } => {
+                return Err(ToolError::PermissionDenied(format!(
+                    "{reason}{}",
+                    feedback.map(|f| format!(": {f}")).unwrap_or_default()
+                )));
+            }
+        }
+    };
+
+    let outcome = run_one(registry, permission, ctx, perm_ctx, &mutated).await;
+
+    // AfterToolCall — Replace swaps the result; Stop/Deny preserve the
+    // original outcome. Same O(1) empty-chain skip as above.
+    if hook_chains.after_tool_call.is_empty() {
+        return outcome;
+    }
+    let result_for_hook = ToolDispatchResult {
+        call_id: mutated.call_id.clone(),
+        name: mutated.name.clone(),
+        outcome: match &outcome {
+            Ok(v) => Ok(v.clone()),
+            Err(e) => Err(e.clone()),
+        },
+    };
+    let after_ctx = AfterToolCallCtx {
+        session_id: Some(session_id),
+        invocation: Some(mutated),
+        result: Some(result_for_hook),
+    };
+    let after_outcome = dispatch(&hook_chains.after_tool_call, after_ctx).await;
+    publish_fault_if_any(events, Some(session_id), &after_outcome).await;
+    match after_outcome {
+        DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => {
+            if let Some(replaced) = c.result {
+                replaced.outcome
+            } else {
+                outcome
+            }
+        }
+        DispatchOutcome::Denied { .. } => outcome,
+    }
 }
 
 async fn run_one(

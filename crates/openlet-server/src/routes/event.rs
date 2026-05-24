@@ -116,9 +116,10 @@ pub async fn stream(
 fn encode_frame(d: DeliveredEvent) -> Result<Event, Infallible> {
     let kind = event_kind(&d.event);
     let dto = EventDto::from(d.event);
-    let mut frame = Event::default().event(kind).json_data(&dto).unwrap_or_else(|_| {
-        Event::default().event("error").data("event encode failure")
-    });
+    let mut frame = Event::default()
+        .event(kind)
+        .json_data(&dto)
+        .unwrap_or_else(|_| Event::default().event("error").data("event encode failure"));
     if let Some(id) = d.event_id {
         frame = frame.id(id.to_string());
     }
@@ -136,6 +137,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionAsked { .. } => "permission.asked",
         AgentEvent::PermissionResolved { .. } => "permission.resolved",
         AgentEvent::Error { .. } => "error",
+        AgentEvent::PluginError { .. } => "plugin.error",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }
@@ -149,7 +151,9 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         | AgentEvent::PartUpdated { session_id, .. }
         | AgentEvent::StepFinished { session_id, .. }
         | AgentEvent::PermissionAsked { session_id, .. } => Some(*session_id),
-        AgentEvent::Error { session_id, .. } => *session_id,
+        AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
+            *session_id
+        }
         AgentEvent::PermissionResolved { .. } | AgentEvent::Heartbeat => None,
     }
 }

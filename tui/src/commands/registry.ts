@@ -1,0 +1,95 @@
+// Slash command registry — single source of truth for /help.
+// Per amendment §C `/danger` toggles permission mode; per plugin §6
+// `/plugins` lists installed plugins.
+
+export type Suggestion = {
+  display: string;
+  description: string;
+  insert: string;
+};
+
+export interface CommandContext {
+  setView: (view: { kind: string; askId?: string }) => void;
+  cancelTurn: () => Promise<void>;
+  newSession: () => Promise<void>;
+  setMode: (mode: "read_only" | "workspace_write" | "danger") => Promise<void>;
+  exit: () => void;
+}
+
+export interface Command {
+  name: string;
+  aliases?: string[];
+  category: "Session" | "Tools" | "Config" | "Debug";
+  summary: string;
+  run: (ctx: CommandContext) => void | Promise<void>;
+}
+
+export const commands: Command[] = [
+  {
+    name: "help",
+    category: "Debug",
+    summary: "Show available commands",
+    run: (ctx) => ctx.setView({ kind: "help" }),
+  },
+  {
+    name: "agents",
+    category: "Session",
+    summary: "Open agent picker",
+    run: (ctx) => ctx.setView({ kind: "agent_picker" }),
+  },
+  {
+    name: "sessions",
+    aliases: ["resume"],
+    category: "Session",
+    summary: "List recent sessions",
+    run: (ctx) => ctx.setView({ kind: "session_picker" }),
+  },
+  {
+    name: "new",
+    category: "Session",
+    summary: "Start a new session",
+    run: (ctx) => ctx.newSession(),
+  },
+  {
+    name: "cancel",
+    category: "Session",
+    summary: "Abort current turn",
+    run: (ctx) => ctx.cancelTurn(),
+  },
+  {
+    name: "danger",
+    category: "Config",
+    summary: "Toggle DANGER permission mode (skips all asks)",
+    run: (ctx) => ctx.setMode("danger"),
+  },
+  {
+    name: "plugins",
+    category: "Debug",
+    summary: "List installed plugins",
+    run: (ctx) => ctx.setView({ kind: "plugins" }),
+  },
+  {
+    name: "quit",
+    aliases: ["exit", "q"],
+    category: "Session",
+    summary: "Quit openlet TUI",
+    run: (ctx) => ctx.exit(),
+  },
+];
+
+export function findCommand(query: string): Command | undefined {
+  const q = query.toLowerCase().replace(/^\//, "");
+  return commands.find((c) => c.name === q || c.aliases?.includes(q));
+}
+
+export function complete(query: string): Suggestion[] {
+  const q = query.toLowerCase().replace(/^\//, "");
+  if (!q) return commands.map(asSuggestion);
+  return commands
+    .filter((c) => c.name.startsWith(q) || c.aliases?.some((a) => a.startsWith(q)))
+    .map(asSuggestion);
+}
+
+function asSuggestion(c: Command): Suggestion {
+  return { display: `/${c.name}`, description: c.summary, insert: `/${c.name} ` };
+}

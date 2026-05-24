@@ -9,8 +9,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use openlet_core::error::{
-    ArtifactError, ConfigError, EventError, MemoryError, PermissionError, ProviderError,
-    ToolError,
+    ArtifactError, ConfigError, EventError, MemoryError, PermissionError, ProviderError, ToolError,
 };
 use openlet_protocol::ErrorDto;
 use serde_json::Value;
@@ -61,12 +60,19 @@ impl AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        let status = self.status;
+        let class = self.code;
+        if status.is_server_error() {
+            tracing::error!(class = class, status = status.as_u16(), message = %self.message, "request failed");
+        } else if status.is_client_error() {
+            tracing::warn!(class = class, status = status.as_u16(), message = %self.message, "request rejected");
+        }
         let body = ErrorDto {
             code: self.code.to_string(),
             message: self.message,
             details: self.details,
         };
-        (self.status, Json(body)).into_response()
+        (status, Json(body)).into_response()
     }
 }
 
@@ -143,26 +149,20 @@ impl From<ConfigError> for AppError {
 impl From<ProviderError> for AppError {
     fn from(e: ProviderError) -> Self {
         match e {
-            ProviderError::MissingCredentials { .. } | ProviderError::Auth(_) => Self::new(
-                StatusCode::UNAUTHORIZED,
-                "provider_auth",
-                e.to_string(),
-            ),
+            ProviderError::MissingCredentials { .. } | ProviderError::Auth(_) => {
+                Self::new(StatusCode::UNAUTHORIZED, "provider_auth", e.to_string())
+            }
             ProviderError::RateLimit { .. } => Self::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "provider_rate_limit",
                 e.to_string(),
             ),
-            ProviderError::Network(_) => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "provider_network",
-                e.to_string(),
-            ),
-            ProviderError::Decode(_) => Self::new(
-                StatusCode::BAD_GATEWAY,
-                "provider_decode",
-                e.to_string(),
-            ),
+            ProviderError::Network(_) => {
+                Self::new(StatusCode::BAD_GATEWAY, "provider_network", e.to_string())
+            }
+            ProviderError::Decode(_) => {
+                Self::new(StatusCode::BAD_GATEWAY, "provider_decode", e.to_string())
+            }
             ProviderError::ContextWindowExceeded { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "context_window",
@@ -171,10 +171,9 @@ impl From<ProviderError> for AppError {
             ProviderError::Cancelled => {
                 Self::conflict("provider_cancelled", "provider request cancelled")
             }
-            ProviderError::Unimplemented => Self::internal(
-                "provider_unimplemented",
-                "provider not implemented",
-            ),
+            ProviderError::Unimplemented => {
+                Self::internal("provider_unimplemented", "provider not implemented")
+            }
         }
     }
 }

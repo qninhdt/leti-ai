@@ -42,12 +42,7 @@ impl ToolRegistry {
 
     /// Convenience — look up + dispatch. Returns `ToolError::NotFound` if
     /// the name isn't registered.
-    pub async fn run(
-        &self,
-        name: &str,
-        ctx: ToolCtx,
-        input: Value,
-    ) -> Result<Value, ToolError> {
+    pub async fn run(&self, name: &str, ctx: ToolCtx, input: Value) -> Result<Value, ToolError> {
         let tool = self
             .get(name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
@@ -56,11 +51,7 @@ impl ToolRegistry {
 
     /// Permission-request preview — used by the runtime to perform the
     /// permission check before dispatching `run`.
-    pub fn permission(
-        &self,
-        name: &str,
-        input: &Value,
-    ) -> Result<PermissionRequest, ToolError> {
+    pub fn permission(&self, name: &str, input: &Value) -> Result<PermissionRequest, ToolError> {
         let tool = self
             .get(name)
             .ok_or_else(|| ToolError::NotFound(name.to_string()))?;

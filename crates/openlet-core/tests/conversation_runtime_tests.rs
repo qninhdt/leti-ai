@@ -29,9 +29,7 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, DeltaKind, EventFilter, Usage};
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::part::{Part, PartId};
-use openlet_core::types::session::{
-    SessionFilter, SessionId, SessionMeta, SessionStatus,
-};
+use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
 
 #[derive(Default)]
 struct MockMemoryStore {
@@ -69,21 +67,29 @@ impl MemoryStore for MockMemoryStore {
     ) -> Result<(), MemoryError> {
         Ok(())
     }
+    async fn update_session_extensions(
+        &self,
+        _: SessionId,
+        _: serde_json::Value,
+    ) -> Result<(), MemoryError> {
+        Ok(())
+    }
     async fn delete_session(&self, _: SessionId) -> Result<(), MemoryError> {
         Ok(())
     }
-    async fn append_message(
-        &self,
-        sid: SessionId,
-        msg: Message,
-    ) -> Result<MessageId, MemoryError> {
+    async fn append_message(&self, sid: SessionId, msg: Message) -> Result<MessageId, MemoryError> {
         let id = msg.id;
         self.messages.lock().unwrap().push((sid, msg));
         Ok(id)
     }
     async fn append_part(&self, mid: MessageId, part: Part) -> Result<PartId, MemoryError> {
         let pid = part.id();
-        self.parts.lock().unwrap().entry(mid).or_default().push(part);
+        self.parts
+            .lock()
+            .unwrap()
+            .entry(mid)
+            .or_default()
+            .push(part);
         Ok(pid)
     }
     async fn upsert_part(
@@ -144,13 +150,18 @@ impl Default for MockEventSink {
 impl EventSink for MockEventSink {
     async fn publish(&self, ev: AgentEvent, p: Persistence) -> Result<(), EventError> {
         self.captured.lock().unwrap().push((ev.clone(), p));
-        let _ = self.tx.send(openlet_core::adapters::event_sink::DeliveredEvent {
-            event_id: None,
-            event: ev,
-        });
+        let _ = self
+            .tx
+            .send(openlet_core::adapters::event_sink::DeliveredEvent {
+                event_id: None,
+                event: ev,
+            });
         Ok(())
     }
-    fn subscribe(&self, _: EventFilter) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+    fn subscribe(
+        &self,
+        _: EventFilter,
+    ) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
         self.tx.subscribe()
     }
 }
@@ -309,10 +320,17 @@ async fn streaming_text_persists_and_publishes_events() {
         .iter()
         .map(|(e, _)| e.clone())
         .collect();
-    assert!(matches!(captured.first(), Some(AgentEvent::MessageCreated { .. })));
-    assert!(captured
-        .iter()
-        .any(|e| matches!(e, AgentEvent::PartDelta { delta_kind: DeltaKind::Text, .. })));
+    assert!(matches!(
+        captured.first(),
+        Some(AgentEvent::MessageCreated { .. })
+    ));
+    assert!(captured.iter().any(|e| matches!(
+        e,
+        AgentEvent::PartDelta {
+            delta_kind: DeltaKind::Text,
+            ..
+        }
+    )));
     assert!(captured.iter().any(|e| matches!(
         e,
         AgentEvent::StepFinished {

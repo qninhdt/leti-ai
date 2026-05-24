@@ -3,13 +3,13 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::session::{SessionFilter, SessionId};
 use openlet_protocol::{CreateSessionDto, SessionDto, SetModeDto};
 use uuid::Uuid;
-use chrono::Utc;
 
 use crate::app_state::AppState;
 use crate::error::AppError;
@@ -41,6 +41,12 @@ pub async fn create(
     }
     let parent = body.parent_session_id.map(SessionId::from);
     let id = state.memory.create_session(agent_id, parent).await?;
+    if !body.extensions.is_null() {
+        state
+            .memory
+            .update_session_extensions(id, body.extensions)
+            .await?;
+    }
     let meta = state
         .memory
         .get_session(id)
@@ -135,10 +141,7 @@ pub async fn set_mode(
     Json(body): Json<SetModeDto>,
 ) -> Result<Json<SessionDto>, AppError> {
     let sid = SessionId::from(id);
-    state
-        .memory
-        .update_permission_mode(sid, body.mode)
-        .await?;
+    state.memory.update_permission_mode(sid, body.mode).await?;
     let meta = state
         .memory
         .get_session(sid)

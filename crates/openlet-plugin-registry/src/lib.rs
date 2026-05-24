@@ -7,15 +7,26 @@
 
 use std::sync::Arc;
 
-use openlet_plugin_api::Plugin;
+use openlet_core::adapters::model_provider::ModelProvider;
+use openlet_core::agent::AgentDefinition;
+use openlet_core::tools::ToolHandle;
+use openlet_core::tools::builtins::bash::ShellExecutor;
+use openlet_plugin_api::context::{CoreApi, PluginContext};
+use openlet_plugin_api::dispatch::HookChains;
+use openlet_plugin_api::manifest::PluginManifest;
+use openlet_plugin_api::plugin::{Plugin, PluginError};
 
 /// Returns the compile-time list of plugins shipped in this build.
 ///
-/// Phase 7 ships `core-agents`. Phase 4 deferred `core-tools` + `quota`
-/// (still hardcoded). Phase 8 introduces `audit-log`.
+/// `shell` flows into `core-tools::CoreToolsPlugin` so the `bash` tool
+/// can dispatch into the host's `LocalShellExecutor`. The same shell
+/// stays available to other plugins through `CoreApi` if they need it.
 #[must_use]
-pub fn all_plugins() -> Vec<Arc<dyn Plugin>> {
-    vec![Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new())]
+pub fn all_plugins(shell: Arc<dyn ShellExecutor>) -> Vec<Arc<dyn Plugin>> {
+    vec![
+        Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new()),
+        Arc::new(openlet_plugin_core_tools::CoreToolsPlugin::new(shell)),
+    ]
 }
 
 /// Registry of resolved plugin handles + sorted hook chains.
@@ -52,4 +63,91 @@ impl PluginRegistry {
     pub fn iter(&self) -> impl Iterator<Item = &Arc<dyn Plugin>> {
         self.plugins.iter()
     }
+}
+
+/// Output of [`install_all`] — every plugin's drained registrations
+/// merged + chains canonically sorted, ready to plumb into `AppState`.
+pub struct FinalizedRegistry {
+    pub plugins: Vec<Arc<dyn Plugin>>,
+    pub manifests: Vec<PluginManifest>,
+    pub agents: Vec<AgentDefinition>,
+    pub tools: Vec<ToolHandle>,
+    pub provider: Option<Arc<dyn ModelProvider>>,
+    pub chains: HookChains,
+}
+
+/// Drive every plugin's `install` hook, drain its [`PluginContext`],
+/// merge into a single [`FinalizedRegistry`], and sort all hook chains.
+///
+/// `configs` maps `manifest.id -> per-plugin config block`. Plugins
+/// without an entry receive `serde_json::Value::Null`. The first
+/// plugin to register a provider wins; subsequent registrations log a
+/// warning (provider conflict surfaces as `PluginError::Runtime` here).
+pub async fn install_all(
+    plugins: Vec<Arc<dyn Plugin>>,
+    configs: &std::collections::HashMap<String, serde_json::Value>,
+    core_api: Arc<dyn CoreApi>,
+) -> Result<FinalizedRegistry, PluginError> {
+    let mut manifests = Vec::with_capacity(plugins.len());
+    let mut agents = Vec::new();
+    let mut tools = Vec::new();
+    let mut provider: Option<Arc<dyn ModelProvider>> = None;
+    let mut chains = HookChains::new();
+
+    for plugin in &plugins {
+        let manifest = plugin.manifest();
+        let raw_cfg = configs
+            .get(&manifest.id)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let mut ctx = PluginContext::new(manifest.clone(), raw_cfg, Arc::clone(&core_api));
+        plugin.install(&mut ctx).await?;
+        let regs = ctx.into_registrations();
+
+        if let Some(new_provider) = regs.provider {
+            if provider.is_some() {
+                tracing::warn!(
+                    plugin = %manifest.id,
+                    "provider already registered by an earlier plugin; ignoring later registration",
+                );
+            } else {
+                provider = Some(new_provider);
+            }
+        }
+
+        agents.extend(regs.agents);
+        tools.extend(regs.tools);
+
+        chains.before_turn.extend(regs.chains.before_turn);
+        chains.after_turn.extend(regs.chains.after_turn);
+        chains.on_chat_params.extend(regs.chains.on_chat_params);
+        chains.on_chat_messages.extend(regs.chains.on_chat_messages);
+        chains.on_chat_headers.extend(regs.chains.on_chat_headers);
+        chains.before_tool_call.extend(regs.chains.before_tool_call);
+        chains.after_tool_call.extend(regs.chains.after_tool_call);
+        chains
+            .on_permission_ask
+            .extend(regs.chains.on_permission_ask);
+        chains.on_message.extend(regs.chains.on_message);
+        chains.on_cost_tick.extend(regs.chains.on_cost_tick);
+        chains.on_step_finish.extend(regs.chains.on_step_finish);
+        chains.on_compaction.extend(regs.chains.on_compaction);
+        chains
+            .on_session_status
+            .extend(regs.chains.on_session_status);
+        chains.on_event.extend(regs.chains.on_event);
+
+        manifests.push(manifest.clone());
+    }
+
+    chains.sort_all();
+
+    Ok(FinalizedRegistry {
+        plugins,
+        manifests,
+        agents,
+        tools,
+        provider,
+        chains,
+    })
 }

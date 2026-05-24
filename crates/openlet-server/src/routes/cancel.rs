@@ -34,7 +34,10 @@ pub async fn abort(
 ) -> Result<Json<AbortAckDto>, AppError> {
     let sid = SessionId::from(id);
     if state.memory.get_session(sid).await?.is_none() {
-        return Err(AppError::not_found("session_not_found", "session not found"));
+        return Err(AppError::not_found(
+            "session_not_found",
+            "session not found",
+        ));
     }
 
     let aborted = if let Some((_, handle)) = state.active_turns.remove(&sid) {

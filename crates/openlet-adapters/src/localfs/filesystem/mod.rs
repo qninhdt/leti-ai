@@ -52,12 +52,7 @@ impl Filesystem for LocalFilesystem {
         operations::exists(&self.root, path).await
     }
 
-    async fn write(
-        &self,
-        path: &Path,
-        body: Bytes,
-        opts: WriteOpts,
-    ) -> Result<FileMeta, FsError> {
+    async fn write(&self, path: &Path, body: Bytes, opts: WriteOpts) -> Result<FileMeta, FsError> {
         operations::write(&self.root, path, body, opts).await
     }
 

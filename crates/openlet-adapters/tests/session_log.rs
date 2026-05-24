@@ -41,6 +41,9 @@ async fn redacts_sensitive_keys_and_bearer_tokens() {
     let body = tokio::fs::read_to_string(dir.path().join(format!("{session}.jsonl")))
         .await
         .unwrap();
-    assert!(body.contains("<redacted>"), "expected redaction marker: {body}");
+    assert!(
+        body.contains("<redacted>"),
+        "expected redaction marker: {body}"
+    );
     assert!(!body.contains("sk-abc1234567890ABCDEFG"));
 }

@@ -42,7 +42,7 @@ pub struct ToolSpec {
 }
 
 /// Closed-set finish reason. Loop termination policy:
-/// - `EndTurn | MaxTokens | Error | Cancelled` → terminate the loop
+/// - `EndTurn | MaxTokens | Error | Cancelled | Halted` → terminate the loop
 /// - `ToolUse` → run tools then continue
 /// - `Length | ContentFilter` → terminate (treated as error-ish; bubble up)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +55,9 @@ pub enum FinishReason {
     ContentFilter,
     Error,
     Cancelled,
+    /// A `before_turn` / `on_cost_tick` plugin returned `HookResult::Stop`.
+    /// Loop terminates without emitting a regular `EndTurn`.
+    Halted,
 }
 
 /// Streaming chunk emitted by `chat_stream`.

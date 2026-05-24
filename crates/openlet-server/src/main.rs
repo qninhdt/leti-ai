@@ -9,20 +9,25 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
-use dashmap::DashMap;
 use openlet_adapters::{
-    bus::BroadcastBus, config_perm::ConfigPermissionMgr,
+    bus::BroadcastBus,
+    config_perm::ConfigPermissionMgr,
     localfs::{LocalFilesystem, LocalFsArtifactStore},
     localshell::{LocalShellExecutor, LocalShellToolExecutor},
-    openai_compat::OpenAiCompatProvider, sqlite::SqliteMemoryStore,
+    openai_compat::OpenAiCompatProvider,
+    sqlite::SqliteMemoryStore,
 };
+use openlet_core::adapters::hooked_event_sink::HookedEventSink;
+use openlet_core::adapters::hooked_memory_store::HookedMemoryStore;
 use openlet_core::config::{Config, LogFormat};
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
-use openlet_core::tools::builtins::default_registry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
-use openlet_plugin_api::{PluginContext, context::CoreApi};
-use openlet_plugin_registry::PluginRegistry;
-use openlet_server::{AgentResources, AppState, build_router, cli::{Cli, Command}};
+use openlet_plugin_api::context::CoreApi;
+use openlet_plugin_registry::{FinalizedRegistry, install_all};
+use openlet_server::{
+    AgentResources, AppStateBuilder, RouterBuilder,
+    cli::{Cli, Command},
+};
 use tokio::net::TcpListener;
 use tokio::signal;
 use tracing::info;
@@ -43,10 +48,7 @@ async fn main() -> anyhow::Result<()> {
             }
             run_server(config).await
         }
-        Command::Audit(_) => {
-            tracing::warn!("audit subcommand reserved for Phase 8");
-            Ok(())
-        }
+        Command::Audit(args) => openlet_server::audit::run(args, &config.data_dir).await,
     }
 }
 
@@ -92,11 +94,55 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     );
 
     let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(provider);
-    let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
+    let inner_memory: Arc<dyn openlet_core::adapters::MemoryStore> =
         Arc::new(SqliteMemoryStore::new(pool.clone()));
     let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());
-    let events: Arc<dyn openlet_core::adapters::EventSink> =
+    let inner_events: Arc<dyn openlet_core::adapters::EventSink> =
         Arc::new(BroadcastBus::with_repo(event_repo));
+
+    // Workspace + shell built BEFORE install_plugins so `core-tools`
+    // can take ownership of the shell at registration time.
+    let workspace_root = std::env::var("OPENLET_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config.data_dir.join("workspace"));
+    tokio::fs::create_dir_all(&workspace_root)
+        .await
+        .with_context(|| format!("create workspace dir {}", workspace_root.display()))?;
+
+    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
+    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
+    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
+
+    // Drain every plugin's registrations through `install_all`. Returns
+    // sorted hook chains, agents, tools, and an optional provider. The
+    // resulting `Arc<HookChains>` is shared by HookedEventSink, the
+    // permission manager, the conversation runtime, and the turn loop —
+    // any of those sites can then dispatch real plugin hooks.
+    //
+    // CoreApi is constructed BEFORE install_plugins so plugin hook
+    // closures can capture it; the runtime is bound late via
+    // `set_runtime` after we build it below.
+    let config_arc = Arc::new(config.clone());
+    let core_api_impl = Arc::new(openlet_server::core_api_impl::CoreApiImpl::new(
+        inner_memory.clone(),
+        inner_events.clone(),
+        config_arc.clone(),
+    ));
+    let core_api: Arc<dyn CoreApi> = core_api_impl.clone();
+    let installed = install_plugins(core_api, shell.clone()).await?;
+    let hook_chains = Arc::new(installed.chains);
+    // First plugin to register a provider wins; otherwise fall back to
+    // the OpenAI-compat provider built from `Config`.
+    let provider = installed.provider.unwrap_or(provider);
+
+    let memory: Arc<dyn openlet_core::adapters::MemoryStore> = Arc::new(HookedMemoryStore::new(
+        inner_memory.clone(),
+        hook_chains.clone(),
+    ));
+    let events: Arc<dyn openlet_core::adapters::EventSink> = Arc::new(HookedEventSink::new(
+        inner_events.clone(),
+        hook_chains.clone(),
+    ));
 
     // §I: crash recovery — mark any leftover Running sessions as Errored.
     let stale = memory
@@ -126,7 +172,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             .await;
     }
 
-    let runtime = Arc::new(ConversationRuntime::new(
+    let runtime = Arc::new(ConversationRuntime::with_hook_chains(
         provider.clone(),
         memory.clone(),
         events.clone(),
@@ -134,19 +180,21 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             config.max_cost_per_session_usd,
             config.default_model.clone(),
         ),
+        hook_chains.clone(),
     ));
+    // Late-bind the runtime into the CoreApi handed to plugins above.
+    // Hook closures only invoke CoreApi from inside dispatch sites, so
+    // the runtime is guaranteed to be set before any plugin call.
+    core_api_impl.set_runtime(runtime.clone());
 
-    let workspace_root = std::env::var("OPENLET_WORKSPACE")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| config.data_dir.join("workspace"));
-    tokio::fs::create_dir_all(&workspace_root)
-        .await
-        .with_context(|| format!("create workspace dir {}", workspace_root.display()))?;
-
-    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
-    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
-    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
-    let tool_registry = default_registry(shell.clone());
+    // Tool registry rebuilt from plugin-drained handles. `core-tools`
+    // is the first plugin contributor (the eight built-ins); downstream
+    // integrators add their own tools through the same surface.
+    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
+    for tool in installed.tools {
+        tool_builder = tool_builder.register_erased(tool);
+    }
+    let tool_registry = tool_builder.build();
 
     let default_agent_id = AgentId::new();
     let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
@@ -160,25 +208,42 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         },
     );
 
-    let state = AppState {
-        provider,
-        memory,
-        artifacts: Arc::new(LocalFsArtifactStore::new(artifact_root, pool.clone())),
-        tools: Arc::new(LocalShellToolExecutor::new()),
-        tool_registry,
-        read_histories: Arc::new(DashMap::new()),
-        events,
-        permission: Arc::new(ConfigPermissionMgr::new()),
-        config: Arc::new(config.clone()),
-        plugin_registry: Arc::new(PluginRegistry::new()),
-        runtime,
-        active_turns: Arc::new(DashMap::new()),
-        agents: Arc::new(agents),
-        default_agent_id,
-        agent_registry: Arc::new(install_agents(&config).await?),
-    };
+    // Build the agent registry from plugin-drained AgentDefinitions.
+    let mut agent_registry = openlet_core::agent::AgentRegistry::new();
+    for def in installed.agents {
+        agent_registry
+            .insert(def)
+            .context("inserting plugin-drained agent definition")?;
+    }
 
-    let app = build_router(state);
+    let state = AppStateBuilder::new()
+        .provider(provider)
+        .memory(memory)
+        .artifacts(Arc::new(LocalFsArtifactStore::new(
+            artifact_root,
+            pool.clone(),
+        )))
+        .tools(Arc::new(LocalShellToolExecutor::new()))
+        .tool_registry(tool_registry)
+        .events(events)
+        .permission(Arc::new(
+            ConfigPermissionMgr::new().with_hook_chains(hook_chains.clone()),
+        ))
+        .config(Arc::new(config.clone()))
+        .hook_chains(hook_chains.clone())
+        .runtime(runtime)
+        .agents(agents)
+        .default_agent_id(default_agent_id)
+        .agent_registry(Arc::new(agent_registry))
+        .build()
+        .context("building app state")?;
+
+    // Late-bind active_turns into CoreApi so plugins can call
+    // `cancel_session` from inside hook closures. Same OnceLock pattern
+    // as `set_runtime` — idempotent, fires once at boot.
+    core_api_impl.set_active_turns(state.active_turns.clone());
+
+    let app = RouterBuilder::default().build(state);
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
@@ -198,40 +263,29 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Install all compile-time plugins and drain their registered agents into
-/// a single `AgentRegistry`. Called once during boot.
-async fn install_agents(
-    _config: &Config,
-) -> anyhow::Result<openlet_core::agent::AgentRegistry> {
-    struct StubCore;
-    impl CoreApi for StubCore {}
-
-    let mut registry = openlet_core::agent::AgentRegistry::new();
-    for plugin in openlet_plugin_registry::all_plugins() {
-        let manifest = plugin.manifest().clone();
-        let mut ctx = PluginContext::new(
-            manifest.clone(),
-            serde_json::Value::Null,
-            Arc::new(StubCore) as Arc<dyn CoreApi>,
-        );
-        plugin
-            .install(&mut ctx)
-            .await
-            .with_context(|| format!("installing plugin {}", manifest.id))?;
-        for def in ctx.take_registered_agents() {
-            registry
-                .insert(def)
-                .with_context(|| format!("registering agent from {}", manifest.id))?;
-        }
-    }
-    Ok(registry)
+/// Install all compile-time plugins via `install_all` and return the
+/// fully-drained registry. Called once during boot. The returned chains
+/// are sorted; provider/agents/tools are ready to plumb into AppState.
+///
+/// `core_api` is the late-bound `CoreApiImpl` constructed before this
+/// call: its `runtime` slot is filled by [`CoreApiImpl::set_runtime`]
+/// after the conversation runtime is built. Plugin hook closures
+/// receive `Arc<dyn CoreApi>` and only invoke it from inside dispatch
+/// sites, well after boot has bound the runtime.
+async fn install_plugins(
+    core_api: Arc<dyn CoreApi>,
+    shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
+) -> anyhow::Result<FinalizedRegistry> {
+    let plugins = openlet_plugin_registry::all_plugins(shell);
+    let configs = std::collections::HashMap::new();
+    install_all(plugins, &configs, core_api)
+        .await
+        .context("draining plugin registrations")
 }
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("install Ctrl+C handler");
+        signal::ctrl_c().await.expect("install Ctrl+C handler");
     };
 
     #[cfg(unix)]

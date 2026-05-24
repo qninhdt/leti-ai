@@ -18,7 +18,9 @@ use tokio_util::sync::CancellationToken;
 use crate::adapters::event_sink::{EventSink, Persistence};
 use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::{ChatRequest, FinishReason, ModelProvider, ToolSpec};
+use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::{CoreError, ProviderError};
+use crate::hooks::io::{OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx, OnCostTickCtx};
 use crate::projection::LlmMessage;
 use crate::runtime::cost::{compute_cost, format_usd};
 use crate::runtime::processor::{Processor, ProcessorState};
@@ -76,6 +78,7 @@ pub struct ConversationRuntime {
     events: Arc<dyn EventSink>,
     config: RuntimeConfig,
     session_costs: Arc<DashMap<SessionId, Decimal>>,
+    hook_chains: Arc<HookChains>,
 }
 
 impl ConversationRuntime {
@@ -86,12 +89,33 @@ impl ConversationRuntime {
         events: Arc<dyn EventSink>,
         config: RuntimeConfig,
     ) -> Self {
+        Self::with_hook_chains(
+            provider,
+            memory,
+            events,
+            config,
+            Arc::new(HookChains::new()),
+        )
+    }
+
+    /// Same as [`Self::new`] but accepts a pre-built [`HookChains`] so
+    /// `on_cost_tick` (and slice-3c hooks) fire on every turn. Existing
+    /// callers without plugin support keep using [`Self::new`].
+    #[must_use]
+    pub fn with_hook_chains(
+        provider: Arc<dyn ModelProvider>,
+        memory: Arc<dyn MemoryStore>,
+        events: Arc<dyn EventSink>,
+        config: RuntimeConfig,
+        hook_chains: Arc<HookChains>,
+    ) -> Self {
         Self {
             provider,
             memory,
             events,
             config,
             session_costs: Arc::new(DashMap::new()),
+            hook_chains,
         }
     }
 
@@ -120,18 +144,104 @@ impl ConversationRuntime {
 
         let message_id = self.create_assistant_message(session_id).await?;
 
+        // OnChatParams — plugins mutate model / max_tokens / temperature.
+        // O(1) skip when no plugin registered the chain.
+        let params = if self.hook_chains.on_chat_params.is_empty() {
+            OnChatParamsCtx {
+                model,
+                max_tokens: input.max_tokens,
+                temperature: input.temperature,
+            }
+        } else {
+            let params_ctx = OnChatParamsCtx {
+                model: model.clone(),
+                max_tokens: input.max_tokens,
+                temperature: input.temperature,
+            };
+            match dispatch(&self.hook_chains.on_chat_params, params_ctx).await {
+                DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => c,
+                DispatchOutcome::Denied {
+                    reason,
+                    feedback,
+                    plugin_fault,
+                } => {
+                    if let Some(fault) = plugin_fault.as_ref() {
+                        let _ = self
+                            .events
+                            .publish(
+                                crate::dispatch::plugin_error_event(Some(session_id), fault),
+                                Persistence::Durable,
+                            )
+                            .await;
+                    }
+                    tracing::warn!(reason = %reason, feedback = ?feedback, "on_chat_params denied; halting turn");
+                    return Err(CoreError::Provider(ProviderError::Cancelled));
+                }
+            }
+        };
+
+        // OnChatMessages — plugins rewrite the message list (compaction,
+        // ablation, prompt-prefix injection). O(1) skip when empty.
+        let messages = if self.hook_chains.on_chat_messages.is_empty() {
+            OnChatMessagesCtx {
+                model: params.model.clone(),
+                system_prompt: input.system_prompt,
+                messages: input.messages,
+            }
+        } else {
+            let messages_ctx = OnChatMessagesCtx {
+                model: params.model.clone(),
+                system_prompt: input.system_prompt,
+                messages: input.messages,
+            };
+            match dispatch(&self.hook_chains.on_chat_messages, messages_ctx).await {
+                DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => c,
+                DispatchOutcome::Denied {
+                    reason,
+                    feedback,
+                    plugin_fault,
+                } => {
+                    if let Some(fault) = plugin_fault.as_ref() {
+                        let _ = self
+                            .events
+                            .publish(
+                                crate::dispatch::plugin_error_event(Some(session_id), fault),
+                                Persistence::Durable,
+                            )
+                            .await;
+                    }
+                    tracing::warn!(reason = %reason, feedback = ?feedback, "on_chat_messages denied; halting turn");
+                    return Err(CoreError::Provider(ProviderError::Cancelled));
+                }
+            }
+        };
+
+        // OnChatHeaders — auth/tracing headers per provider call. Phase
+        // 4 widens `ModelProvider::chat_stream` to consume the headers;
+        // for now plugins can register and observe (audit logs, metrics)
+        // but any `Replace` mutation is silently dropped until phase 4.
+        // O(1) skip when empty.
+        if !self.hook_chains.on_chat_headers.is_empty() {
+            let headers_ctx = OnChatHeadersCtx {
+                model: params.model.clone(),
+                headers: Vec::new(),
+            };
+            let headers_outcome = dispatch(&self.hook_chains.on_chat_headers, headers_ctx).await;
+            publish_fault_if_any(&self.events, Some(session_id), &headers_outcome).await;
+        }
+
         let req = ChatRequest {
-            model: model.clone(),
-            messages: input.messages,
-            system: input.system_prompt,
-            max_tokens: input.max_tokens,
-            temperature: input.temperature,
+            model: params.model.clone(),
+            messages: messages.messages,
+            system: messages.system_prompt,
+            max_tokens: params.max_tokens,
+            temperature: params.temperature,
             tools: input.tools,
             stream: true,
         };
 
         let outcome = self
-            .drive_stream(session_id, message_id, model, req, cancel)
+            .drive_stream(session_id, message_id, params.model, req, cancel)
             .await;
 
         match outcome {
@@ -185,9 +295,7 @@ impl ConversationRuntime {
             }
 
             if !step.parts.is_empty() {
-                let cost_str = self
-                    .turn_cost(&model, state.usage.as_ref())
-                    .map(format_usd);
+                let cost_str = self.turn_cost(&model, state.usage.as_ref()).map(format_usd);
                 for part in step.parts {
                     tracker
                         .handle_part(
@@ -209,10 +317,27 @@ impl ConversationRuntime {
         if let Some(c) = cost {
             self.add_session_cost(session_id, c);
         }
+        let total_cost = self.session_cost(session_id);
+
+        // OnCostTick — Stop here forces FinishReason::Halted so the
+        // turn loop terminates without continuing into another step.
+        let cost_ctx = OnCostTickCtx {
+            session_id: Some(session_id),
+            model: model.clone(),
+            delta_usd: cost,
+            total_usd: total_cost,
+            usage: usage.clone(),
+        };
+        let cost_outcome = dispatch(&self.hook_chains.on_cost_tick, cost_ctx).await;
+        publish_fault_if_any(&self.events, Some(session_id), &cost_outcome).await;
+        let final_finish = match cost_outcome {
+            DispatchOutcome::Completed(_) => finish,
+            DispatchOutcome::Stopped(_) | DispatchOutcome::Denied { .. } => FinishReason::Halted,
+        };
 
         Ok(TurnOutcome {
             assistant_message_id: message_id,
-            finish_reason: finish,
+            finish_reason: final_finish,
             usage,
             cost_usd: cost,
         })
@@ -229,6 +354,14 @@ impl ConversationRuntime {
             .entry(session_id)
             .and_modify(|v| *v += cost)
             .or_insert(cost);
+    }
+
+    /// Public additive cost recorder used by integrator plugins
+    /// (typically a `CoreApi::record_cost` callback). Same DashMap
+    /// update as [`Self::add_session_cost`] but exposed across crate
+    /// boundaries.
+    pub fn add_session_cost_external(&self, session_id: SessionId, delta: Decimal) {
+        self.add_session_cost(session_id, delta);
     }
 
     async fn create_assistant_message(

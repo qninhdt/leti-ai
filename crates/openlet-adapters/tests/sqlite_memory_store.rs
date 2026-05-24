@@ -35,10 +35,7 @@ async fn list_filters_deleted() {
     let dead = store.create_session(a, None).await.unwrap();
     store.delete_session(dead).await.unwrap();
 
-    let live_only = store
-        .list_sessions(SessionFilter::default())
-        .await
-        .unwrap();
+    let live_only = store.list_sessions(SessionFilter::default()).await.unwrap();
     assert!(live_only.iter().any(|m| m.id == alive));
     assert!(!live_only.iter().any(|m| m.id == dead));
 

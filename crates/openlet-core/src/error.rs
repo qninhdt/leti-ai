@@ -170,18 +170,24 @@ pub enum ArtifactError {
     Unimplemented,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ToolError {
     #[error("path outside workspace: {0}")]
     PathOutsideWorkspace(String),
     #[error("permission denied: {0}")]
     PermissionDenied(String),
-    #[error("read before write required: file {0} must be read with the read tool before edit/write")]
+    #[error(
+        "read before write required: file {0} must be read with the read tool before edit/write"
+    )]
     ReadBeforeWriteRequired(String),
     #[error("binary file: {0}")]
     BinaryFile(String),
     #[error("file too large: {path} ({bytes} bytes > {limit} bytes)")]
-    FileTooLarge { path: String, bytes: u64, limit: u64 },
+    FileTooLarge {
+        path: String,
+        bytes: u64,
+        limit: u64,
+    },
     #[error("tool not found: {0}")]
     NotFound(String),
     #[error("invalid input: {0}")]
@@ -219,7 +225,11 @@ pub enum FsError {
     #[error("not found: {0}")]
     NotFound(String),
     #[error("file too large: {path} ({bytes} > {limit})")]
-    TooLarge { path: String, bytes: u64, limit: u64 },
+    TooLarge {
+        path: String,
+        bytes: u64,
+        limit: u64,
+    },
     #[error("binary file: {0}")]
     Binary(String),
     #[error("invalid input: {0}")]

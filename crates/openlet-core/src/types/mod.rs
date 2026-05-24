@@ -14,7 +14,5 @@ pub use agent::{AgentId, AgentSpec};
 pub use event::{AgentEvent, EventFilter};
 pub use message::{Message, MessageId, Role};
 pub use part::{Part, PartId};
-pub use permission::{
-    AlwaysScope, Decision, PermissionMode, PermissionRequest, PermissionRule,
-};
+pub use permission::{AlwaysScope, Decision, PermissionMode, PermissionRequest, PermissionRule};
 pub use session::{SessionFilter, SessionId, SessionMeta, SessionStatus};

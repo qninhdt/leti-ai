@@ -46,7 +46,7 @@ MVP for **openlet-ai** (Team 2): a standalone Rust agent runtime exposing REST +
 | 5 | [HTTP API and SSE](./phase-05-http-api-and-sse.md) | Complete |
 | 6 | [Ink TUI](./phase-06-ink-tui.md) | Complete |
 | 7 | [Compaction and Polish](./phase-07-compaction-and-polish.md) | Complete |
-| 8 | [Hardening](./phase-08-hardening.md) | Pending |
+| 8 | [Hardening](./phase-08-hardening.md) | Complete |
 
 ## Amendments
 

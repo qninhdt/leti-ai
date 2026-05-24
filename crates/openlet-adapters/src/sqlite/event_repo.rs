@@ -25,8 +25,8 @@ impl SqliteEventRepo {
         ev: &AgentEvent,
     ) -> Result<i64, EventError> {
         let kind = event_kind(ev);
-        let payload = serde_json::to_string(ev)
-            .map_err(|e| EventError::Io(format!("encode event: {e}")))?;
+        let payload =
+            serde_json::to_string(ev).map_err(|e| EventError::Io(format!("encode event: {e}")))?;
         let now = Utc::now().timestamp_millis();
 
         let id: i64 = sqlx::query_scalar(
@@ -81,6 +81,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionAsked { .. } => "permission.asked",
         AgentEvent::PermissionResolved { .. } => "permission.resolved",
         AgentEvent::Error { .. } => "error",
+        AgentEvent::PluginError { .. } => "plugin.error",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }

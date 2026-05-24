@@ -35,8 +35,33 @@ pub struct ServeArgs {
 
 #[derive(Debug, Parser)]
 pub struct AuditArgs {
-    /// Path to the session log to audit. Phase 8 implements.
-    pub session_log: Option<std::path::PathBuf>,
+    /// Session id whose `<data_dir>/sessions/<id>.jsonl` should be printed.
+    /// Mutually exclusive with `--file`.
+    #[arg(long, value_name = "SESSION_ID")]
+    pub session_id: Option<String>,
+
+    /// Explicit path to a JSONL session log. Overrides `--session-id`.
+    #[arg(long, value_name = "PATH")]
+    pub file: Option<std::path::PathBuf>,
+
+    /// RFC3339 lower bound on the envelope `ts` field.
+    #[arg(long)]
+    pub from: Option<String>,
+
+    /// RFC3339 upper bound on the envelope `ts` field.
+    #[arg(long)]
+    pub to: Option<String>,
+
+    /// Output format. `pretty` is human-readable; `json` re-emits the
+    /// (re-redacted) envelope verbatim for piping into jq / log shippers.
+    #[arg(long, value_enum, default_value_t = AuditFormat::Pretty)]
+    pub format: AuditFormat,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum AuditFormat {
+    Pretty,
+    Json,
 }
 
 impl Cli {

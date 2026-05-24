@@ -22,13 +22,9 @@ pub trait MemoryStore: Send + Sync + 'static {
         parent: Option<SessionId>,
     ) -> Result<SessionId, MemoryError>;
 
-    async fn get_session(&self, session: SessionId)
-        -> Result<Option<SessionMeta>, MemoryError>;
+    async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError>;
 
-    async fn list_sessions(
-        &self,
-        filter: SessionFilter,
-    ) -> Result<Vec<SessionMeta>, MemoryError>;
+    async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError>;
 
     async fn update_status(
         &self,
@@ -45,6 +41,16 @@ pub trait MemoryStore: Send + Sync + 'static {
         mode: PermissionMode,
     ) -> Result<(), MemoryError>;
 
+    /// Replaces the integrator-owned `extensions` JSON blob on a session.
+    /// Core stays auth-blind — schema lives entirely in the integrator
+    /// (e.g. `{"user_id": "u_123"}`). Returns `SessionNotFound` if the
+    /// session is missing or soft-deleted.
+    async fn update_session_extensions(
+        &self,
+        session: SessionId,
+        extensions: serde_json::Value,
+    ) -> Result<(), MemoryError>;
+
     /// Soft-delete: sets status=cancelled + deleted_at.
     async fn delete_session(&self, session: SessionId) -> Result<(), MemoryError>;
 
@@ -54,11 +60,7 @@ pub trait MemoryStore: Send + Sync + 'static {
         msg: Message,
     ) -> Result<MessageId, MemoryError>;
 
-    async fn append_part(
-        &self,
-        msg: MessageId,
-        part: Part,
-    ) -> Result<PartId, MemoryError>;
+    async fn append_part(&self, msg: MessageId, part: Part) -> Result<PartId, MemoryError>;
 
     /// Replace an existing part (used by streaming text deltas appending
     /// to an in-progress Text part).
@@ -69,8 +71,7 @@ pub trait MemoryStore: Send + Sync + 'static {
         part: Part,
     ) -> Result<(), MemoryError>;
 
-    async fn list_messages(&self, session: SessionId)
-        -> Result<Vec<Message>, MemoryError>;
+    async fn list_messages(&self, session: SessionId) -> Result<Vec<Message>, MemoryError>;
 
     /// Lists every persisted part for `msg`, in append order. Used by
     /// the multi-step turn loop to harvest tool_calls from the latest
@@ -84,9 +85,5 @@ pub trait MemoryStore: Send + Sync + 'static {
 
     /// Records that the agent read a path during this session.
     /// Persisted to `session_reads` (Phase 2 schema, §F).
-    async fn record_read(
-        &self,
-        session: SessionId,
-        path: PathBuf,
-    ) -> Result<(), MemoryError>;
+    async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError>;
 }

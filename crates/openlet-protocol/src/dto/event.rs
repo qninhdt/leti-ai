@@ -71,6 +71,13 @@ pub enum EventDto {
         code: String,
         message: String,
     },
+    PluginError {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<Uuid>,
+        plugin_id: String,
+        hook: String,
+        message: String,
+    },
     Heartbeat,
 }
 
@@ -118,17 +125,30 @@ impl From<Usage> for UsageDto {
 impl From<AgentEvent> for EventDto {
     fn from(ev: AgentEvent) -> Self {
         match ev {
-            AgentEvent::SessionStatus { session_id, status, at } => Self::SessionStatus {
+            AgentEvent::SessionStatus {
+                session_id,
+                status,
+                at,
+            } => Self::SessionStatus {
                 session_id: session_id.as_uuid(),
                 status,
                 at,
             },
-            AgentEvent::MessageCreated { session_id, message_id, at } => Self::MessageCreated {
+            AgentEvent::MessageCreated {
+                session_id,
+                message_id,
+                at,
+            } => Self::MessageCreated {
                 session_id: session_id.as_uuid(),
                 message_id: message_id.as_uuid(),
                 at,
             },
-            AgentEvent::PartCreated { session_id, message_id, part_id, at } => Self::PartCreated {
+            AgentEvent::PartCreated {
+                session_id,
+                message_id,
+                part_id,
+                at,
+            } => Self::PartCreated {
                 session_id: session_id.as_uuid(),
                 message_id: message_id.as_uuid(),
                 part_id: part_id.as_uuid(),
@@ -147,7 +167,11 @@ impl From<AgentEvent> for EventDto {
                 delta_kind: delta_kind.into(),
                 delta,
             },
-            AgentEvent::PartUpdated { session_id, message_id, part_id } => Self::PartUpdated {
+            AgentEvent::PartUpdated {
+                session_id,
+                message_id,
+                part_id,
+            } => Self::PartUpdated {
                 session_id: session_id.as_uuid(),
                 message_id: message_id.as_uuid(),
                 part_id: part_id.as_uuid(),
@@ -165,7 +189,11 @@ impl From<AgentEvent> for EventDto {
                 usage: usage.map(UsageDto::from),
                 cost_decimal_str,
             },
-            AgentEvent::PermissionAsked { session_id, ask_id, request } => Self::PermissionAsked {
+            AgentEvent::PermissionAsked {
+                session_id,
+                ask_id,
+                request,
+            } => Self::PermissionAsked {
                 session_id: session_id.as_uuid(),
                 request: PermissionRequestDto::from_request(ask_id.0, &request),
             },
@@ -173,9 +201,24 @@ impl From<AgentEvent> for EventDto {
                 ask_id: ask_id.0,
                 decision: decision_label(&decision),
             },
-            AgentEvent::Error { session_id, code, message } => Self::Error {
+            AgentEvent::Error {
+                session_id,
+                code,
+                message,
+            } => Self::Error {
                 session_id: session_id.map(|s| s.as_uuid()),
                 code,
+                message,
+            },
+            AgentEvent::PluginError {
+                session_id,
+                plugin_id,
+                hook,
+                message,
+            } => Self::PluginError {
+                session_id: session_id.map(|s| s.as_uuid()),
+                plugin_id,
+                hook,
                 message,
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
