@@ -282,21 +282,32 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // resources (sockets, billing-flush state, audit handles) get a
     // chance to drain before the process exits. Per-plugin shutdown is
     // panic-isolated so a buggy plugin can't strand the others.
-    for plugin in installed.plugins.iter() {
+    // Phase 9 (FMA-F5 ACCEPT): run shutdowns in parallel under a single
+    // 5s timeout so total wall time stays bounded by ONE timeout window
+    // (not 5s × N plugins). Fits k8s default terminationGracePeriodSeconds=30.
+    let shutdowns = installed.plugins.iter().map(|plugin| {
         let id = plugin.manifest().id.clone();
-        let result = std::panic::AssertUnwindSafe(plugin.shutdown())
-            .catch_unwind()
+        async move {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                std::panic::AssertUnwindSafe(plugin.shutdown()).catch_unwind(),
+            )
             .await;
-        match result {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => {
-                tracing::warn!(plugin = %id, error = %e, "plugin shutdown returned error");
-            }
-            Err(_) => {
-                tracing::warn!(plugin = %id, "plugin shutdown panicked");
+            match result {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => {
+                    tracing::warn!(plugin = %id, error = %e, "plugin shutdown returned error");
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!(plugin = %id, "plugin shutdown panicked");
+                }
+                Err(_) => {
+                    tracing::warn!(plugin = %id, "plugin shutdown timed out (5s)");
+                }
             }
         }
-    }
+    });
+    futures::future::join_all(shutdowns).await;
 
     serve_result?;
     info!("openlet-server stopped");
