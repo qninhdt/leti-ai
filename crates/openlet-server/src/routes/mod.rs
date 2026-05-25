@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod cancel;
+pub mod diagnostics;
 pub mod event;
 pub mod health;
 pub mod message;

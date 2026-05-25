@@ -7,6 +7,7 @@ pub mod app_state_builder;
 pub mod audit;
 pub mod cli;
 pub mod core_api_impl;
+pub mod diagnostics;
 pub mod error;
 pub mod openapi;
 pub mod router;

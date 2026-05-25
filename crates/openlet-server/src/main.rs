@@ -27,7 +27,7 @@ use openlet_plugin_api::context::CoreApi;
 use openlet_plugin_registry::{FinalizedRegistry, install_all};
 use openlet_server::{
     AgentResources, AppStateBuilder, RouterBuilder,
-    cli::{Cli, Command},
+    cli::{Cli, Command, DoctorArgs, DoctorFormat},
 };
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
             run_server(config).await
         }
         Command::Audit(args) => openlet_server::audit::run(args, &config.data_dir).await,
+        Command::Doctor(args) => run_doctor(args, config).await,
     }
 }
 
@@ -258,7 +259,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         if !addr.ip().is_loopback() && !allow_non_loopback {
             anyhow::bail!(
                 "refusing to bind non-loopback address {addr} without OPENLET_ALLOW_NON_LOOPBACK=1; \
-                 the MVP server has no built-in auth and must not be exposed beyond loopback"
+                 the MVP server has no built-in auth and must not be exposed beyond loopback",
             );
         }
         if !addr.ip().is_loopback() {
@@ -353,4 +354,143 @@ async fn shutdown_signal() {
         () = ctrl_c => info!("received Ctrl+C, shutting down"),
         () = term => info!("received SIGTERM, shutting down"),
     }
+}
+
+/// Build a minimal AppState off the live `Config`, run preflight
+/// diagnostics, print the (redacted) report, and exit with a status code
+/// matching the worst-case check.
+async fn run_doctor(args: DoctorArgs, config: Config) -> anyhow::Result<()> {
+    use openlet_server::diagnostics::run_diagnostics;
+
+    let state = build_doctor_state(&config).await?;
+    let report = run_diagnostics(&state).await;
+
+    match args.format {
+        DoctorFormat::Json => {
+            let value = report.to_redacted_json();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+            );
+        }
+        DoctorFormat::Text => print_doctor_text(&report),
+    }
+
+    let code = report.exit_code();
+    if code != 0 {
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
+fn print_doctor_text(report: &openlet_server::diagnostics::DoctorReport) {
+    use openlet_server::diagnostics::Status;
+    for c in &report.checks {
+        let glyph = match c.status {
+            Status::Healthy => "[OK]",
+            Status::Degraded => "[WARN]",
+            Status::Failed => "[FAIL]",
+        };
+        match &c.detail {
+            Some(d) => println!("{glyph} {} ({} ms) — {}", c.name, c.elapsed_ms, d),
+            None => println!("{glyph} {} ({} ms)", c.name, c.elapsed_ms),
+        }
+    }
+    let overall = match report.overall {
+        Status::Healthy => "Healthy",
+        Status::Degraded => "Degraded",
+        Status::Failed => "Failed",
+    };
+    println!("\nOverall: {overall}");
+}
+
+/// Build a slim AppState for the `doctor` subcommand. Same wiring as
+/// `run_server` but skips graceful shutdown / hook plumbing the report
+/// doesn't read. Crash recovery is intentionally NOT run here — `doctor`
+/// is read-only.
+async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::AppState> {
+    let db_path = config.data_dir.join("db.sqlite");
+    let artifact_root = config.data_dir.join("artifacts");
+
+    let pool = openlet_adapters::sqlite::open_pool(&db_path, 2)
+        .await
+        .with_context(|| format!("opening sqlite at {}", db_path.display()))?;
+    openlet_adapters::sqlite::run_migrations(&pool)
+        .await
+        .context("running sqlite migrations")?;
+
+    tokio::fs::create_dir_all(&artifact_root).await.ok();
+
+    let provider: Arc<dyn openlet_core::adapters::ModelProvider> =
+        Arc::new(OpenAiCompatProvider::new(
+            openlet_adapters::openai_compat::DEFAULT_BASE_URL,
+            config.openrouter_api_key.clone(),
+        ));
+    let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
+        Arc::new(SqliteMemoryStore::new(pool.clone()));
+    let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());
+    let events: Arc<dyn openlet_core::adapters::EventSink> =
+        Arc::new(BroadcastBus::with_repo(event_repo));
+
+    let workspace_root = std::env::var("OPENLET_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config.data_dir.join("workspace"));
+    tokio::fs::create_dir_all(&workspace_root).await.ok();
+
+    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
+    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
+    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
+
+    let core_api: Arc<dyn openlet_plugin_api::context::CoreApi> =
+        Arc::new(openlet_server::core_api_impl::CoreApiImpl::new(
+            memory.clone(),
+            events.clone(),
+            Arc::new(config.clone()),
+        ));
+    let installed = install_plugins(core_api, shell.clone()).await?;
+    let provider = installed.provider.unwrap_or(provider);
+    let hook_chains = Arc::new(installed.chains);
+
+    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
+    for tool in installed.tools {
+        tool_builder = tool_builder.register_erased(tool);
+    }
+    let tool_registry = tool_builder.build();
+
+    let default_agent_id = AgentId::new();
+    let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
+    let mut agents = HashMap::new();
+    agents.insert(
+        default_agent_id,
+        AgentResources {
+            spec: agent_spec,
+            fs: fs_adapter,
+            shell,
+        },
+    );
+
+    let mut plugin_registry = openlet_plugin_registry::PluginRegistry::new();
+    for plugin in installed.plugins {
+        plugin_registry.push(plugin);
+    }
+
+    AppStateBuilder::new()
+        .provider(provider)
+        .memory(memory)
+        .artifacts(Arc::new(LocalFsArtifactStore::new(
+            artifact_root,
+            pool.clone(),
+        )))
+        .tools(Arc::new(LocalShellToolExecutor::new()))
+        .tool_registry(tool_registry)
+        .events(events)
+        .permission(Arc::new(ConfigPermissionMgr::new()))
+        .config(Arc::new(config.clone()))
+        .plugin_registry(Arc::new(plugin_registry))
+        .hook_chains(hook_chains)
+        .agents(agents)
+        .default_agent_id(default_agent_id)
+        .agent_registry(Arc::new(openlet_core::agent::AgentRegistry::new()))
+        .build()
+        .context("building doctor app state")
 }

@@ -23,6 +23,9 @@ pub enum Command {
     Serve(ServeArgs),
     /// Audit subcommand — Phase 8 implements; reserved here.
     Audit(AuditArgs),
+    /// Preflight diagnostics — checks API key, data dir, sqlite, plugins,
+    /// model reachability, and bind port. Read-only.
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -61,6 +64,20 @@ pub struct AuditArgs {
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum AuditFormat {
     Pretty,
+    Json,
+}
+
+#[derive(Debug, Parser)]
+pub struct DoctorArgs {
+    /// Output format. `text` is human-readable with status glyphs;
+    /// `json` emits the redacted DoctorReport for piping to jq.
+    #[arg(long, value_enum, default_value_t = DoctorFormat::Text)]
+    pub format: DoctorFormat,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum DoctorFormat {
+    Text,
     Json,
 }
 

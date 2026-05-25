@@ -10,6 +10,7 @@ use openlet_protocol::{
 };
 use utoipa::OpenApi;
 
+use crate::diagnostics::{CheckResult, DoctorReport, Status};
 use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
 
 #[derive(OpenApi)]
@@ -23,9 +24,11 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
     components(schemas(
         AbortAckDto,
         AgentDto,
+        CheckResult,
         CreateMessageDto,
         CreateSessionDto,
         DeltaKindDto,
+        DoctorReport,
         ErrorDto,
         EventDto,
         HealthDto,
@@ -39,15 +42,17 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         PromptAckDto,
         SessionDto,
         SetModeDto,
+        Status,
         UsageDto,
     )),
     tags(
-        (name = "global",     description = "Server-wide endpoints (health, version)"),
-        (name = "session",    description = "Session lifecycle + prompt dispatch"),
-        (name = "agent",      description = "Registered agent inventory"),
-        (name = "permission", description = "Permission ask/reply flow"),
-        (name = "event",      description = "SSE event channel"),
-        (name = "plugin",     description = "Plugin discovery + health"),
+        (name = "global",      description = "Server-wide endpoints (health, version)"),
+        (name = "session",     description = "Session lifecycle + prompt dispatch"),
+        (name = "agent",       description = "Registered agent inventory"),
+        (name = "permission",  description = "Permission ask/reply flow"),
+        (name = "event",       description = "SSE event channel"),
+        (name = "plugin",      description = "Plugin discovery + health"),
+        (name = "diagnostics", description = "Preflight diagnostics"),
     )
 )]
 pub struct ApiDoc;

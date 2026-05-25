@@ -16,7 +16,9 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::app_state::AppState;
 use crate::openapi::ApiDoc;
-use crate::routes::{agent, cancel, event, health, message, permission, plugin, session};
+use crate::routes::{
+    agent, cancel, diagnostics, event, health, message, permission, plugin, session,
+};
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
 /// group; call `build(state)` to finalize into an `axum::Router`.
@@ -38,6 +40,7 @@ impl Default for RouterBuilder {
             .with_permission_routes()
             .with_agent_routes()
             .with_plugin_routes()
+            .with_diagnostics_routes()
     }
 }
 
@@ -105,6 +108,14 @@ impl RouterBuilder {
             .inner
             .routes(routes!(plugin::list))
             .routes(routes!(plugin::health));
+        self
+    }
+
+    /// `GET /v1/diagnostics` — preflight report (api key, data dir, sqlite,
+    /// plugins, model reachability, port). Output is redacted.
+    #[must_use]
+    pub fn with_diagnostics_routes(mut self) -> Self {
+        self.inner = self.inner.routes(routes!(diagnostics::report));
         self
     }
 
