@@ -128,9 +128,22 @@ impl RouterBuilder {
             .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
             .split_for_parts();
 
-        router
-            .merge(SwaggerUi::new("/doc").url("/doc/openapi.json", api))
-            .with_state(state)
+        // Gate Swagger UI on OPENLET_ENABLE_DOCS. Defaults to ON for
+        // local-binary developer ergonomics, OFF for cloud-binary builds
+        // where the docs surface is an unnecessary attack vector
+        // (Swagger UI has had XSS history). Operators set
+        // OPENLET_ENABLE_DOCS=0 in cloud deploys.
+        let docs_enabled = std::env::var("OPENLET_ENABLE_DOCS")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+
+        if docs_enabled {
+            router
+                .merge(SwaggerUi::new("/doc").url("/doc/openapi.json", api))
+                .with_state(state)
+        } else {
+            router.with_state(state)
+        }
     }
 }
 
