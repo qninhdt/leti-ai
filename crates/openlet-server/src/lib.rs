@@ -12,11 +12,13 @@ pub mod error;
 pub mod openapi;
 pub mod router;
 pub mod routes;
+pub mod subagent_spawner;
 
 pub use app_state::{AgentResources, AppState, TurnHandle};
 pub use app_state_builder::{AppStateBuilder, AppStateBuilderError};
 pub use error::AppError;
 pub use router::RouterBuilder;
+pub use subagent_spawner::RuntimeSubagentSpawner;
 
 /// Re-export of `router::build` under a shorter name for tests + the
 /// reference binary. Equivalent to `RouterBuilder::default().build(state)`.

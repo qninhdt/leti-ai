@@ -144,6 +144,14 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }
-        AgentEvent::Heartbeat => None,
+        AgentEvent::SubagentStarted {
+            parent_session_id, ..
+        } => Some(*parent_session_id),
+        // SubagentOutput / SubagentFinished are addressed by task_id, not
+        // session_id — the SSE replay row is keyed off the parent via
+        // SubagentStarted, so leaving session_id NULL here is safe.
+        AgentEvent::SubagentOutput { .. }
+        | AgentEvent::SubagentFinished { .. }
+        | AgentEvent::Heartbeat => None,
     }
 }

@@ -105,6 +105,23 @@ pub enum EventDto {
         mime: String,
         summary: String,
     },
+    SubagentStarted {
+        task_id: Uuid,
+        parent_session_id: Uuid,
+        subagent_type: String,
+    },
+    SubagentOutput {
+        task_id: Uuid,
+        delta: String,
+    },
+    SubagentFinished {
+        task_id: Uuid,
+        output: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_usd: Option<String>,
+    },
+>>>>>>> f6c9fb5 (feat(core): add in-process subagent task tool + task_status + @subagent)
+    },
     Heartbeat,
 }
 
@@ -331,6 +348,28 @@ impl From<AgentEvent> for EventDto {
                 attachment_kind: attachment_kind.into(),
                 mime,
                 summary,
+            },
+            AgentEvent::SubagentStarted {
+                task_id,
+                parent_session_id,
+                subagent_type,
+            } => Self::SubagentStarted {
+                task_id,
+                parent_session_id: parent_session_id.as_uuid(),
+                subagent_type,
+            },
+            AgentEvent::SubagentOutput { task_id, delta } => {
+                Self::SubagentOutput { task_id, delta }
+            }
+            AgentEvent::SubagentFinished {
+                task_id,
+                output,
+                cost_usd,
+            } => Self::SubagentFinished {
+                task_id,
+                output,
+                cost_usd,
+            },
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

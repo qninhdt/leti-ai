@@ -131,8 +131,8 @@ impl MemoryStore for SqliteMemoryStore {
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
                  version, created_at, updated_at, deleted_at, extensions,
-                 capabilities, current_agent_slug, previous_agent_slug)
-               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}', NULL, NULL)"#,
+                 capabilities, current_agent_slug, previous_agent_slug, depth)
+               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}', NULL, NULL, 0)"#,
         )
         .bind(&id_str)
         .bind(&agent_str)
@@ -152,7 +152,7 @@ impl MemoryStore for SqliteMemoryStore {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
                       version, created_at, updated_at, deleted_at, extensions,
-                      capabilities, current_agent_slug, previous_agent_slug
+                      capabilities, current_agent_slug, previous_agent_slug, depth
                FROM sessions WHERE id = ?"#,
         )
         .bind(session.to_string())
@@ -167,7 +167,7 @@ impl MemoryStore for SqliteMemoryStore {
         let mut sql = String::from(
             "SELECT id, agent_id, parent_session_id, status, permission_mode, \
              version, created_at, updated_at, deleted_at, extensions, capabilities, \
-             current_agent_slug, previous_agent_slug \
+             current_agent_slug, previous_agent_slug, depth \
              FROM sessions WHERE 1=1",
         );
         if !filter.include_deleted {
@@ -489,6 +489,8 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
         .map_err(|e| MemoryError::Io(format!("capabilities json: {e}")))?;
     let current_agent_slug: Option<String> = row.try_get("current_agent_slug").map_err(map_io)?;
     let previous_agent_slug: Option<String> = row.try_get("previous_agent_slug").map_err(map_io)?;
+    let depth: i64 = row.try_get("depth").map_err(map_io)?;
+    let depth = u8::try_from(depth.max(0)).unwrap_or(u8::MAX);
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
@@ -504,6 +506,7 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
         capabilities,
         current_agent_slug,
         previous_agent_slug,
+        depth,
     })
 }
 

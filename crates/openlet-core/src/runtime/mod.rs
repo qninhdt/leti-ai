@@ -14,6 +14,7 @@ pub mod doom_guard;
 pub mod processor;
 pub mod prompt;
 pub mod question_registry;
+pub mod subagent;
 pub mod token_estimate;
 pub mod turn_loop;
 mod turn_stream;

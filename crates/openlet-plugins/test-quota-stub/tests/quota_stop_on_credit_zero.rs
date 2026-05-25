@@ -56,6 +56,7 @@ impl RecordingCore {
             capabilities: openlet_core::types::session::SessionCapabilities::default(),
             current_agent_slug: None,
             previous_agent_slug: None,
+            depth: 0,
         };
         Arc::new(Self {
             meta,
@@ -232,6 +233,7 @@ async fn missing_user_id_skips_silently() {
             capabilities: openlet_core::types::session::SessionCapabilities::default(),
             current_agent_slug: None,
             previous_agent_slug: None,
+            depth: 0,
         },
         cancellations: Mutex::new(Vec::new()),
     });

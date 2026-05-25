@@ -132,7 +132,23 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         config_arc.clone(),
     ));
     let core_api: Arc<dyn CoreApi> = core_api_impl.clone();
-    let installed = install_plugins(core_api, shell.clone(), inner_memory.clone()).await?;
+
+    // Subagent task registry + spawner — built BEFORE install_plugins
+    // so `core-tools` can register `subagent_task`/`task_status` with
+    // live handles. The spawner is late-bound to AppState below.
+    let task_registry = Arc::new(openlet_core::runtime::subagent::TaskRegistry::from_env());
+    let subagent_spawner = Arc::new(openlet_server::RuntimeSubagentSpawner::new());
+    let spawner_dyn: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> =
+        subagent_spawner.clone();
+
+    let installed = install_plugins(
+        core_api,
+        shell.clone(),
+        inner_memory.clone(),
+        task_registry.clone(),
+        spawner_dyn,
+    )
+    .await?;
     let hook_chains = Arc::new(installed.chains);
     // First plugin to register a provider wins; otherwise fall back to
     // the OpenAI-compat provider built from `Config`.
@@ -236,8 +252,16 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .default_agent_id(default_agent_id)
         .agent_registry(Arc::new(agent_registry))
         .questions(Arc::new(QuestionRegistry::new()))
+        .task_registry(task_registry.clone())
         .build()
         .context("building app state")?;
+
+    // Late-bind the live AppState into the subagent spawner so
+    // `subagent_task` tool dispatches can resolve permission, agent
+    // resources, and the conversation runtime. Boot order: spawner
+    // built BEFORE plugins (so core-tools registers it), then bound
+    // here once AppState is constructed.
+    subagent_spawner.set_state(state.clone());
 
     // Late-bind active_turns into CoreApi so plugins can call
     // `cancel_session` from inside hook closures. Same OnceLock pattern
@@ -329,8 +353,11 @@ async fn install_plugins(
     core_api: Arc<dyn CoreApi>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
     memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
+    task_registry: Arc<openlet_core::runtime::subagent::TaskRegistry>,
+    spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner>,
 ) -> anyhow::Result<FinalizedRegistry> {
-    let plugins = openlet_plugin_registry::all_plugins(shell, memory);
+    let plugins =
+        openlet_plugin_registry::all_plugins(shell, memory, task_registry, spawner);
     let configs = std::collections::HashMap::new();
     install_all(plugins, &configs, core_api)
         .await

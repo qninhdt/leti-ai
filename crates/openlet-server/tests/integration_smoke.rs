@@ -44,7 +44,7 @@ mod support;
 #[tokio::test]
 async fn canonical_plugin_set_drains_tools_and_agents() {
     let shell = stub_shell();
-    let plugins = all_plugins(shell, stub_memory());
+    let plugins = all_plugins(shell, stub_memory(), stub_task_registry(), stub_spawner());
     let configs = HashMap::new();
     let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
 
@@ -52,10 +52,19 @@ async fn canonical_plugin_set_drains_tools_and_agents() {
         .await
         .expect("install canonical plugin set");
 
-    // 8 built-ins from core-tools.
+    // 10 built-ins from core-tools (8 originals + subagent_task + task_status).
     let tool_names: Vec<&'static str> = installed.tools.iter().map(|t| t.name()).collect();
     for expected in [
-        "read", "list", "glob", "grep", "write", "edit", "bash", "todo",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "write",
+        "edit",
+        "bash",
+        "todo",
+        "subagent_task",
+        "task_status",
     ] {
         assert!(
             tool_names.contains(&expected),
@@ -102,7 +111,7 @@ async fn quota_stub_installs_with_default_config() {
 
     // Baseline: canonical plugin set alone.
     let baseline = install_all(
-        all_plugins(stub_shell(), stub_memory()),
+        all_plugins(stub_shell(), stub_memory(), stub_task_registry(), stub_spawner()),
         &configs,
         core_api.clone(),
     )
@@ -110,7 +119,7 @@ async fn quota_stub_installs_with_default_config() {
     .expect("install canonical baseline");
 
     // With the quota stub appended.
-    let mut plugins = all_plugins(stub_shell(), stub_memory());
+    let mut plugins = all_plugins(stub_shell(), stub_memory(), stub_task_registry(), stub_spawner());
     plugins.push(Arc::new(QuotaStubPlugin::new()) as Arc<dyn Plugin>);
     let with_stub = install_all(plugins, &configs, core_api)
         .await
@@ -325,5 +334,45 @@ impl openlet_core::adapters::memory_store::MemoryStore for NoopMemory {
         _: std::path::PathBuf,
     ) -> Result<(), openlet_core::error::MemoryError> {
         Ok(())
+    }
+}
+
+fn stub_task_registry() -> Arc<openlet_core::runtime::subagent::TaskRegistry> {
+    Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32))
+}
+
+fn stub_spawner() -> Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> {
+    Arc::new(StubSubagentSpawner)
+}
+
+struct StubSubagentSpawner;
+
+#[async_trait]
+impl openlet_core::tools::builtins::subagent_task::SubagentSpawner for StubSubagentSpawner {
+    async fn spawn(
+        &self,
+        _ctx: &openlet_core::adapters::tool_executor::ToolCtx,
+        _subagent_type: &str,
+        _objective: &str,
+    ) -> Result<openlet_core::runtime::subagent::TaskId, openlet_core::runtime::subagent::SpawnError>
+    {
+        Err(openlet_core::runtime::subagent::SpawnError::Internal(
+            "stub".into(),
+        ))
+    }
+    async fn await_completion(
+        &self,
+        _task_id: openlet_core::runtime::subagent::TaskId,
+    ) -> Result<
+        (
+            String,
+            Option<String>,
+            openlet_core::runtime::subagent::TaskStatus,
+        ),
+        openlet_core::runtime::subagent::SpawnError,
+    > {
+        Err(openlet_core::runtime::subagent::SpawnError::Internal(
+            "stub".into(),
+        ))
     }
 }

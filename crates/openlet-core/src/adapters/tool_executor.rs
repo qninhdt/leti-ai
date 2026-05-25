@@ -6,8 +6,10 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::AgentRegistry;
 use crate::error::ToolError;
 use crate::runtime::question_registry::QuestionRegistry;
+use crate::runtime::subagent::TaskRegistry;
 use crate::tools::read_history::ReadHistory;
 use crate::types::agent::AgentId;
 use crate::types::message::MessageId;
@@ -49,6 +51,14 @@ pub struct ToolCtx {
     /// this — kept on `ToolCtx` so the runtime stays the only authority
     /// on which adapter implementation backs the lookup.
     pub memory: Arc<dyn MemoryStore>,
+    /// In-process subagent task registry. Tools that spawn nested
+    /// agents (`subagent_task`, `task_status`) consult this to admit /
+    /// poll / cancel descendants.
+    pub task_registry: Arc<TaskRegistry>,
+    /// Agent definitions resolved by slug. Subagent spawn validates
+    /// `subagent_type` against this registry; a slug not found here
+    /// returns `subagent_type_not_found` without admitting quota.
+    pub agent_registry: Arc<AgentRegistry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -18,6 +18,7 @@ use openlet_core::adapters::ModelProvider;
 use openlet_core::adapters::model_provider::{ChatRequest, ChatStream, ModelPricing};
 use openlet_core::config::{Config, LogFormat, PluginsConfig};
 use openlet_core::error::ProviderError;
+use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus};
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_api::context::CoreApi;
@@ -81,7 +82,15 @@ impl TestHarness {
         // and `main.rs` in lockstep — any drift would surface as a test
         // that passes locally but fails in production wiring.
         let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
-        let plugins = openlet_plugin_registry::all_plugins(shell.clone(), memory.clone());
+        let task_registry = Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32));
+        let spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> =
+            Arc::new(StubSubagentSpawner);
+        let plugins = openlet_plugin_registry::all_plugins(
+            shell.clone(),
+            memory.clone(),
+            task_registry.clone(),
+            spawner,
+        );
         let configs = std::collections::HashMap::new();
         let installed = install_all(plugins, &configs, core_api)
             .await
@@ -184,6 +193,29 @@ impl CoreApi for NoopCoreApi {
         Ok(serde_json::Value::Null)
     }
     async fn cancel_session(&self, _: openlet_core::types::session::SessionId, _: String) {}
+}
+
+/// Test stub for `SubagentSpawner` — every call returns
+/// `SpawnError::Internal` so integration tests that don't exercise
+/// nested subagents can still install `core-tools` cleanly.
+struct StubSubagentSpawner;
+
+#[async_trait]
+impl openlet_core::tools::builtins::subagent_task::SubagentSpawner for StubSubagentSpawner {
+    async fn spawn(
+        &self,
+        _ctx: &openlet_core::adapters::tool_executor::ToolCtx,
+        _subagent_type: &str,
+        _objective: &str,
+    ) -> Result<TaskId, SpawnError> {
+        Err(SpawnError::Internal("stub spawner".into()))
+    }
+    async fn await_completion(
+        &self,
+        _task_id: TaskId,
+    ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
+        Err(SpawnError::Internal("stub spawner".into()))
+    }
 }
 
 /// Provider stub that errors on every call — runtime tests for SSE

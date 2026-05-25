@@ -94,6 +94,11 @@ pub struct SessionMeta {
     /// profiles.
     #[serde(default)]
     pub previous_agent_slug: Option<String>,
+    /// Subagent nesting depth. 0 = top-level (user-initiated). 1+ = spawned
+    /// by a parent session via the `subagent_task` tool. Bounded by
+    /// `OPENLET_SUBAGENT_MAX_DEPTH` (default 3) at spawn time.
+    #[serde(default)]
+    pub depth: u8,
 }
 
 /// Frontend affordances the session's caller exposes. Default = every

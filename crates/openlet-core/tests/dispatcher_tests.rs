@@ -237,6 +237,8 @@ fn ctx(workspace: &Path) -> ToolCtx {
         cancel: CancellationToken::new(),
         questions: Arc::new(openlet_core::runtime::QuestionRegistry::new()),
         memory: Arc::new(NoopMemory),
+        task_registry: Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32)),
+        agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
     }
 }
 

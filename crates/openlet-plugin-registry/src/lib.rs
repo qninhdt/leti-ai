@@ -13,8 +13,10 @@ use futures::FutureExt;
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::adapters::model_provider::ModelProvider;
 use openlet_core::agent::AgentDefinition;
+use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::ToolHandle;
 use openlet_core::tools::builtins::bash::ShellExecutor;
+use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_plugin_api::context::{CoreApi, PluginContext};
 use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_api::manifest::PluginManifest;
@@ -26,17 +28,24 @@ use semver::Version;
 /// `shell` flows into `core-tools::CoreToolsPlugin` so the `bash` tool
 /// can dispatch into the host's `LocalShellExecutor`. `memory` flows in
 /// for the plan-mode tools — they call `MemoryStore::switch_agent` to
-/// flip the active agent profile. The same shell + memory stay
+/// flip the active agent profile. `task_registry` + `spawner` thread the
+/// in-process subagent bookkeeping into `subagent_task` / `task_status`
+/// registered by the core-tools plugin. The same shell + memory stay
 /// available to other plugins through `CoreApi` if they need them.
 #[must_use]
 pub fn all_plugins(
     shell: Arc<dyn ShellExecutor>,
     memory: Arc<dyn MemoryStore>,
+    task_registry: Arc<TaskRegistry>,
+    spawner: Arc<dyn SubagentSpawner>,
 ) -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new()),
         Arc::new(openlet_plugin_core_tools::CoreToolsPlugin::new(
-            shell, memory,
+            shell,
+            memory,
+            task_registry,
+            spawner,
         )),
     ]
 }

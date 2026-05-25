@@ -15,11 +15,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use openlet_core::adapters::memory_store::MemoryStore;
+use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::bash::ShellExecutor;
+use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_core::tools::builtins::{
     AskUserTool, BashTool, EditTool, EnterPlanModeTool, ExitPlanModeTool, GlobTool, GrepTool,
-    ListTool, ReadTool, TodoTool, WriteTool,
+    ListTool, ReadTool, SubagentTaskTool, TaskStatusTool, TodoTool, WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -39,25 +41,36 @@ pub struct CoreToolsPlugin {
     manifest: PluginManifest,
     shell: Arc<dyn ShellExecutor>,
     memory: Arc<dyn MemoryStore>,
+    task_registry: Arc<TaskRegistry>,
+    spawner: Arc<dyn SubagentSpawner>,
 }
 
 impl CoreToolsPlugin {
     /// `shell` is the bash executor the `bash` tool forwards into.
     /// `memory` is the session store that `enter_plan_mode` /
     /// `exit_plan_mode` mutate to flip the active agent profile.
-    /// Both are passed in so production wiring (server crate) decides
+    /// `task_registry` + `spawner` are required by `subagent_task` /
+    /// `task_status`. The host (server crate) builds them once at boot
+    /// and threads the same instances into both `AppState` and this
+    /// plugin so tool-side bookkeeping matches route-side cancellation.
+    /// All are passed in so production wiring (server crate) decides
     /// the concrete impls — tests substitute mocks without forking
     /// core.
     #[must_use]
-    pub fn new(shell: Arc<dyn ShellExecutor>, memory: Arc<dyn MemoryStore>) -> Self {
+    pub fn new(
+        shell: Arc<dyn ShellExecutor>,
+        memory: Arc<dyn MemoryStore>,
+        task_registry: Arc<TaskRegistry>,
+        spawner: Arc<dyn SubagentSpawner>,
+    ) -> Self {
         Self {
             manifest: PluginManifest {
                 id: "core-tools".into(),
                 name: "Openlet Core Tools".into(),
                 version: Version::new(0, 1, 0),
                 description: "Ships the core built-in tools (read, list, glob, grep, write, edit, \
-                     bash, todo, enter_plan_mode, exit_plan_mode) through the plugin \
-                     extension surface."
+                     bash, todo, ask_user, enter_plan_mode, exit_plan_mode, subagent_task, \
+                     task_status) through the plugin extension surface."
                     .into(),
                 author: Some("Openlet".into()),
                 capabilities: vec![Capability::Tool],
@@ -67,6 +80,8 @@ impl CoreToolsPlugin {
             },
             shell,
             memory,
+            task_registry,
+            spawner,
         }
     }
 }
@@ -92,6 +107,8 @@ impl Plugin for CoreToolsPlugin {
         // conflicts on this file resolve by stacking.
         ctx.register_tool(erase(EnterPlanModeTool::new(self.memory.clone())))?;
         ctx.register_tool(erase(ExitPlanModeTool::new(self.memory.clone())))?;
+        ctx.register_tool(erase(SubagentTaskTool::new(self.spawner.clone())))?;
+        ctx.register_tool(erase(TaskStatusTool::new(self.task_registry.clone())))?;
         Ok(())
     }
 }

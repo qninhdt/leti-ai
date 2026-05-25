@@ -16,6 +16,8 @@ pub mod grep;
 pub mod list;
 pub mod plan_mode;
 pub mod read;
+pub mod subagent_task;
+pub mod task_status;
 pub mod todo;
 pub mod write;
 
@@ -27,5 +29,7 @@ pub use grep::GrepTool;
 pub use list::ListTool;
 pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use read::ReadTool;
+pub use subagent_task::{SubagentSpawner, SubagentTaskTool};
+pub use task_status::TaskStatusTool;
 pub use todo::TodoTool;
 pub use write::WriteTool;

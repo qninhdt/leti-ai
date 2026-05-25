@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use super::message::MessageId;
 use super::part::PartId;
@@ -128,6 +129,27 @@ pub enum AgentEvent {
         attachment_kind: AttachmentKind,
         mime: String,
         summary: String,
+    },
+    /// `subagent.started` — durable. Emitted when the in-process
+    /// `subagent_task` tool admits a new descendant task. Carries the
+    /// PARENT session id so SSE consumers tracking the parent see the
+    /// fan-out without subscribing globally.
+    SubagentStarted {
+        task_id: Uuid,
+        parent_session_id: SessionId,
+        subagent_type: String,
+    },
+    /// `subagent.output` — TRANSIENT. Streaming text fragment from a
+    /// running subagent's assistant turn. Bounded by the per-task 10MB
+    /// output cap (see `runtime::subagent::task_registry::MAX_OUTPUT_BYTES`).
+    SubagentOutput { task_id: Uuid, delta: String },
+    /// `subagent.finished` — durable. Carries final output snapshot +
+    /// cost so a parent's `task_status` poll observes a consistent
+    /// terminal state.
+    SubagentFinished {
+        task_id: Uuid,
+        output: String,
+        cost_usd: Option<String>,
     },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,

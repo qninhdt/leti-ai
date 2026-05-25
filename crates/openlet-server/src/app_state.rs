@@ -18,6 +18,7 @@ use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
 use openlet_core::runtime::ConversationRuntime;
 use openlet_core::runtime::question_registry::QuestionRegistry;
+use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::ReadHistory;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::registry::ToolRegistry;
@@ -129,4 +130,7 @@ pub struct AppState {
     /// here while suspended; `POST /v1/sessions/:id/question/answer`
     /// resolves them.
     pub questions: Arc<QuestionRegistry>,
+    /// In-process subagent task registry. Bounded by
+    /// `OPENLET_SUBAGENT_MAX_PER_SESSION` (default 32) per ROOT session.
+    pub task_registry: Arc<TaskRegistry>,
 }

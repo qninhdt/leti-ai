@@ -72,15 +72,18 @@ pub struct LoopContext {
     /// session metadata without an extra adapter wired through every
     /// caller.
     pub memory: Arc<dyn MemoryStore>,
+    /// In-process subagent task registry. Threaded through `ToolCtx`
+    /// so `subagent_task` / `task_status` find their bookkeeping.
+    pub task_registry: Arc<crate::runtime::subagent::TaskRegistry>,
     /// Resolves the session's current agent slug to an
     /// `AgentDefinition` at every tool dispatch (NOT once per turn).
-    /// `None` ⇒ allowlist enforcement is disabled (legacy callers,
-    /// tests). Wired through so plan-mode swaps the active profile
+    /// Wired through so plan-mode swaps the active profile
     /// MID-TURN and the next dispatch sees the new allowlist
     /// — no race window where a write tool sneaks past the gate
     /// because the loop snapshotted "general" before EnterPlanMode
-    /// flipped the slug.
-    pub agent_registry: Option<Arc<AgentRegistry>>,
+    /// flipped the slug. Same handle the runtime uses to compact +
+    /// spawn nested subagents.
+    pub agent_registry: Arc<crate::agent::AgentRegistry>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -417,6 +420,8 @@ impl ConversationRuntime {
                 cancel: cancel_for_ctx.clone(),
                 questions: Arc::clone(&lc.questions),
                 memory: Arc::clone(&lc.memory),
+                task_registry: Arc::clone(&lc.task_registry),
+                agent_registry: Arc::clone(&lc.agent_registry),
             };
             // F2.5 — snapshot the active agent slug RIGHT BEFORE dispatch
             // (not at turn start). A previous tool in the same loop may

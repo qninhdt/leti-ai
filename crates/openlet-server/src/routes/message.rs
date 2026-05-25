@@ -87,6 +87,13 @@ pub async fn prompt_async(
         ));
     }
 
+    // Mention rewrite — `@subagent_name objective…` at the start of a
+    // text part rewrites into a synthetic `subagent_task` tool call.
+    // The literal text part is preserved alongside so audit trails
+    // still show what the user typed; the rewrite only adds the tool
+    // call hint downstream tools can dispatch off.
+    let user_parts = rewrite_mention_into_subagent_task(user_parts, &state);
+
     // Atomically claim the active-turn slot BEFORE we mutate session
     // state. `contains_key` then `insert` would let two concurrent
     // callers both pass and one would clobber the other, orphaning a
@@ -304,7 +311,8 @@ async fn drive_loop(
         hook_chains: state.hook_chains.clone(),
         questions: state.questions.clone(),
         memory: state.memory.clone(),
-        agent_registry: Some(state.agent_registry.clone()),
+        task_registry: state.task_registry.clone(),
+        agent_registry: state.agent_registry.clone(),
     };
 
     let input = TurnInput {
@@ -334,4 +342,46 @@ fn status_reason(
         Err(_) if cancel.is_cancelled() => "cancelled",
         Err(_) => "loop error",
     }
+}
+
+/// Rewrite a leading `@subagent_name objective…` text part into a
+/// matching synthetic `subagent_task` tool call. Mid-prompt mentions
+/// and unknown slugs leave the parts untouched (literal). Per F4.5,
+/// the parser is ASCII-only and rejects Unicode confusables.
+///
+/// Behaviour:
+///   - First text part is checked. If it parses as a valid mention
+///     against the live agent registry, an extra `Part::ToolCall` is
+///     appended carrying `subagent_task` with the resolved slug +
+///     objective.
+///   - The original text part is preserved so audit / SSE consumers
+///     still see what the user typed.
+///   - `background = false` (sync mode) — the user explicitly invoked
+///     the subagent and wants its result before the parent continues.
+fn rewrite_mention_into_subagent_task(parts: Vec<Part>, state: &AppState) -> Vec<Part> {
+    let Some(first_text) = parts.iter().find_map(|p| match p {
+        Part::Text { text, .. } => Some(text.clone()),
+        _ => None,
+    }) else {
+        return parts;
+    };
+    let Some((slug, objective)) = openlet_core::runtime::subagent::parse_subagent_mention(
+        &first_text,
+        state.agent_registry.as_ref(),
+    ) else {
+        return parts;
+    };
+    let mut out = parts;
+    let args = serde_json::json!({
+        "subagent_type": slug.as_str(),
+        "objective": objective,
+        "background": false,
+    });
+    out.push(Part::ToolCall {
+        id: openlet_core::types::part::PartId::new(),
+        call_id: format!("mention-{}", uuid::Uuid::new_v4()),
+        name: "subagent_task".to_string(),
+        args,
+    });
+    out
 }

@@ -145,6 +145,9 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::PlanModeEntered { .. } => "plan_mode.entered",
         AgentEvent::PlanModeExited { .. } => "plan_mode.exited",
         AgentEvent::AttachmentAccepted { .. } => "attachment.accepted",
+        AgentEvent::SubagentStarted { .. } => "subagent.started",
+        AgentEvent::SubagentOutput { .. } => "subagent.output",
+        AgentEvent::SubagentFinished { .. } => "subagent.finished",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }
@@ -166,6 +169,11 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }
-        AgentEvent::Heartbeat => None,
+        AgentEvent::SubagentStarted {
+            parent_session_id, ..
+        } => Some(*parent_session_id),
+        AgentEvent::SubagentOutput { .. }
+        | AgentEvent::SubagentFinished { .. }
+        | AgentEvent::Heartbeat => None,
     }
 }
