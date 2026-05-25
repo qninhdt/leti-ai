@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use dashmap::DashMap;
 use openlet_core::adapters::{
@@ -23,14 +24,57 @@ use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_core::types::session::SessionId;
 use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_registry::PluginRegistry;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-/// Per-session in-flight turn handle. Phase 5 fills in cancellation.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+/// Per-session in-flight turn handle. Cancellation invariants:
+/// - `request_cancel` uses CompareAndSwap so concurrent cancellers (HTTP
+///   abort + DELETE + plugin `cancel_session`) emit exactly one
+///   `Cancelling` status event.
+/// - `exited` is signalled by the driving task in its Drop guard; DELETE
+///   awaits it before marking the session terminal so the LLM can't keep
+///   streaming on a session the client thinks is gone.
+/// - The driving task removes its OWN slot via `remove_if(Arc::ptr_eq)`
+///   so a stale finalizer can't stomp a fresh turn's status.
+#[derive(Clone)]
 pub struct TurnHandle {
     pub session_id: SessionId,
     pub cancel: CancellationToken,
+    /// CAS gate so exactly one canceller publishes `Cancelling` and
+    /// trips `cancel`. Subsequent calls observe `false` and no-op.
+    pub cancel_emitted: Arc<AtomicBool>,
+    /// Notified by the driving task in its Drop guard on exit (success,
+    /// error, OR panic). DELETE/abort awaiters resolve immediately.
+    pub exited: Arc<Notify>,
+}
+
+impl std::fmt::Debug for TurnHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TurnHandle")
+            .field("session_id", &self.session_id)
+            .field("cancel_emitted", &self.cancel_emitted.load(Ordering::Acquire))
+            .finish()
+    }
+}
+
+impl TurnHandle {
+    pub fn new(session_id: SessionId) -> Self {
+        Self {
+            session_id,
+            cancel: CancellationToken::new(),
+            cancel_emitted: Arc::new(AtomicBool::new(false)),
+            exited: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Returns `true` if THIS call is the one that flipped the flag —
+    /// caller is responsible for `cancel.cancel()` and the `Cancelling`
+    /// event. Subsequent callers get `false` and must no-op.
+    pub fn request_cancel(&self) -> bool {
+        self.cancel_emitted
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
 }
 
 /// Per-agent runtime resources. One agent owns exactly one workspace,

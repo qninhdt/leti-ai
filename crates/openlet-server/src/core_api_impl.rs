@@ -113,12 +113,17 @@ impl CoreApi for CoreApiImpl {
     }
 
     async fn cancel_session(&self, session_id: SessionId, reason: String) {
-        // Trip the per-session token if a turn is in flight. Plain
-        // `remove` mirrors the HTTP `/abort` route — once removed, the
-        // running task's drop guard is responsible for finalizing.
+        // Use the CAS gate so concurrent abort/DELETE/cancel_session
+        // emit exactly one Cancelling event (closes C6-server). Don't
+        // remove the slot — driving task removes its own on exit
+        // (closes C1-server stale-finalizer race).
+        let mut emitted = false;
         if let Some(active) = self.active_turns.get() {
-            if let Some((_, handle)) = active.remove(&session_id) {
-                handle.cancel.cancel();
+            if let Some(handle) = active.get(&session_id).map(|h| h.clone()) {
+                if handle.request_cancel() {
+                    handle.cancel.cancel();
+                    emitted = true;
+                }
             }
         } else {
             tracing::warn!(
@@ -127,10 +132,12 @@ impl CoreApi for CoreApiImpl {
             );
         }
 
-        // Mark the session Cancelling regardless of whether a turn was
-        // running. Idempotent on the storage side — a second cancel
-        // just re-stamps `updated_at`. Errors logged, not surfaced
-        // (plugin's view is fire-and-forget).
+        if !emitted {
+            // Concurrent canceller already emitted the event. No-op so
+            // we don't double-publish.
+            return;
+        }
+
         if let Err(err) = self
             .memory
             .update_status(session_id, SessionStatus::Cancelling, &reason)

@@ -40,37 +40,42 @@ pub async fn abort(
         ));
     }
 
-    let aborted = if let Some((_, handle)) = state.active_turns.remove(&sid) {
-        handle.cancel.cancel();
+    // Don't remove the slot here — let the driving task remove its own
+    // handle on exit (closes C1-server stale-finalizer race). Just trip
+    // the cancel token via the CAS gate so concurrent abort + DELETE +
+    // cancel_session emit exactly one Cancelling event.
+    let aborted = if let Some(handle) = state.active_turns.get(&sid).map(|h| h.clone()) {
+        if handle.request_cancel() {
+            handle.cancel.cancel();
+            let cleanup_state = state.clone();
+            tokio::spawn(async move {
+                if let Err(err) = cleanup_state
+                    .memory
+                    .update_status(sid, SessionStatus::Cancelling, "client abort")
+                    .await
+                {
+                    tracing::warn!(session = %sid, error = %err, "abort cleanup: status write failed");
+                }
+                if let Err(err) = cleanup_state
+                    .events
+                    .publish(
+                        AgentEvent::SessionStatus {
+                            session_id: sid,
+                            status: SessionStatus::Cancelling,
+                            at: Utc::now(),
+                        },
+                        Persistence::Durable,
+                    )
+                    .await
+                {
+                    tracing::warn!(session = %sid, error = %err, "abort cleanup: event publish failed");
+                }
+            });
+        }
         true
     } else {
         false
     };
-
-    let cleanup_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(err) = cleanup_state
-            .memory
-            .update_status(sid, SessionStatus::Cancelling, "client abort")
-            .await
-        {
-            tracing::warn!(session = %sid, error = %err, "abort cleanup: status write failed");
-        }
-        if let Err(err) = cleanup_state
-            .events
-            .publish(
-                AgentEvent::SessionStatus {
-                    session_id: sid,
-                    status: SessionStatus::Cancelling,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await
-        {
-            tracing::warn!(session = %sid, error = %err, "abort cleanup: event publish failed");
-        }
-    });
 
     Ok(Json(AbortAckDto { aborted }))
 }

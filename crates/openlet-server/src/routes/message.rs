@@ -25,6 +25,23 @@ use uuid::Uuid;
 use crate::app_state::{AppState, TurnHandle};
 use crate::error::AppError;
 
+/// Drop-guard that releases the `active_turns` slot if any `?` propagates
+/// before we commit it to the spawned task. Once `committed = true`, the
+/// driving task owns slot lifecycle (closes C3-server slot leak).
+struct SlotGuard<'a> {
+    state: &'a AppState,
+    sid: SessionId,
+    committed: bool,
+}
+
+impl<'a> Drop for SlotGuard<'a> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.state.active_turns.remove(&self.sid);
+        }
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/v1/session/{id}/prompt_async",
@@ -73,8 +90,10 @@ pub async fn prompt_async(
     // Atomically claim the active-turn slot BEFORE we mutate session
     // state. `contains_key` then `insert` would let two concurrent
     // callers both pass and one would clobber the other, orphaning a
-    // running task.
-    let cancel = CancellationToken::new();
+    // running task. The `SlotGuard` Drop releases the slot if any `?`
+    // propagates before we commit it to the spawned task (closes
+    // C3-server: slot-leak on error path).
+    let handle = TurnHandle::new(sid);
     match state.active_turns.entry(sid) {
         dashmap::mapref::entry::Entry::Occupied(_) => {
             return Err(AppError::conflict(
@@ -83,12 +102,14 @@ pub async fn prompt_async(
             ));
         }
         dashmap::mapref::entry::Entry::Vacant(v) => {
-            v.insert(TurnHandle {
-                session_id: sid,
-                cancel: cancel.clone(),
-            });
+            v.insert(handle.clone());
         }
     }
+    let mut slot_guard = SlotGuard {
+        state: &state,
+        sid,
+        committed: false,
+    };
 
     let user_msg = Message {
         id: MessageId::new(),
@@ -141,15 +162,38 @@ pub async fn prompt_async(
         )
         .await?;
 
+    // All ?-propagating work is done. Commit the slot to the spawned
+    // task — SlotGuard now drops without releasing.
+    slot_guard.committed = true;
+    drop(slot_guard);
+
     let task_state = state.clone();
+    let task_handle = handle.clone();
     tokio::spawn(async move {
+        // Drop guard ensures `exited` is notified on success, error, OR
+        // panic. DELETE/abort awaiters resolve immediately on exit.
+        struct ExitGuard(Arc<tokio::sync::Notify>);
+        impl Drop for ExitGuard {
+            fn drop(&mut self) {
+                self.0.notify_waiters();
+            }
+        }
+        let _exit_guard = ExitGuard(task_handle.exited.clone());
+
+        let cancel = task_handle.cancel.clone();
         let outcome = drive_loop(task_state.clone(), sid, meta.agent_id, cancel.clone()).await;
         let final_status = match &outcome {
             Ok(_) => SessionStatus::Idle,
             Err(_) if cancel.is_cancelled() => SessionStatus::Cancelled,
             Err(_) => SessionStatus::Errored,
         };
-        let _ = task_state.active_turns.remove(&sid);
+        // Remove ONLY our own handle. If a fresh prompt_async raced past
+        // a still-cancelling driver, this `remove_if` is a no-op so the
+        // dying loop's tail finalizer can't stomp the new turn's slot
+        // (closes C1-server stale-finalizer race).
+        task_state
+            .active_turns
+            .remove_if(&sid, |_, h| Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted));
         let _ = task_state
             .memory
             .update_status(sid, final_status, status_reason(&outcome, &cancel))
