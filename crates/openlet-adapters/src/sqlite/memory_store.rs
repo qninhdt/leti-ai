@@ -279,25 +279,25 @@ impl MemoryStore for SqliteMemoryStore {
         session: SessionId,
         msg: Message,
     ) -> Result<MessageId, MemoryError> {
+        // Single atomic INSERT with subquery so concurrent appenders
+        // can't both compute the same MAX(seq) and trip UNIQUE(session_id,
+        // seq). SQLite serializes writers via the db lock; this collapses
+        // the read+write into one statement so they can't interleave.
+        // Closes B/I2.
         let mut tx = self.pool.begin().await.map_err(map_io)?;
-
-        let next_seq: i64 = sqlx::query_scalar(
-            r#"SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?"#,
-        )
-        .bind(session.to_string())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(map_io)?;
-
         let id = msg.id;
         sqlx::query(
             r#"INSERT INTO messages (id, session_id, role, seq, created_at, meta)
-               VALUES (?, ?, ?, ?, ?, '{}')"#,
+               VALUES (
+                 ?, ?, ?,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?),
+                 ?, '{}'
+               )"#,
         )
         .bind(id.to_string())
         .bind(session.to_string())
         .bind(role_str(msg.role))
-        .bind(next_seq)
+        .bind(session.to_string())
         .bind(msg.created_at.timestamp_millis())
         .execute(&mut *tx)
         .await
@@ -320,23 +320,20 @@ impl MemoryStore for SqliteMemoryStore {
         let payload = serde_json::to_string(&part)
             .map_err(|e| MemoryError::Io(format!("encode part: {e}")))?;
 
+        // Single atomic INSERT — see append_message rationale (B/I2).
         let mut tx = self.pool.begin().await.map_err(map_io)?;
-
-        let next_seq: i64 = sqlx::query_scalar(
-            r#"SELECT COALESCE(MAX(seq), 0) + 1 FROM parts WHERE message_id = ?"#,
-        )
-        .bind(msg.to_string())
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(map_io)?;
 
         sqlx::query(
             r#"INSERT INTO parts (id, message_id, seq, kind, payload)
-               VALUES (?, ?, ?, ?, ?)"#,
+               VALUES (
+                 ?, ?,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM parts WHERE message_id = ?),
+                 ?, ?
+               )"#,
         )
         .bind(id.to_string())
         .bind(msg.to_string())
-        .bind(next_seq)
+        .bind(msg.to_string())
         .bind(kind)
         .bind(&payload)
         .execute(&mut *tx)
