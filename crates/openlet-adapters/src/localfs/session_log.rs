@@ -115,16 +115,34 @@ async fn rotate_if_needed(path: &Path) -> std::io::Result<()> {
 
 #[derive(Debug)]
 pub struct SecretRedactor {
-    bearer: Regex,
-    sk_token: Regex,
+    patterns: Vec<Regex>,
     sensitive: Vec<String>,
 }
 
 impl Default for SecretRedactor {
     fn default() -> Self {
+        // Token-prefix denylist (HIGH-F2). Each pattern matches the
+        // common form of a credential a model could exfiltrate via tool
+        // output. Whole-name match for sensitive keys (no substring) so
+        // legitimate names like `tokenizer` aren't false-positively
+        // redacted.
+        let raw_patterns = [
+            r"(?i)bearer\s+[A-Za-z0-9\-_.=]+",
+            r"sk-[A-Za-z0-9_\-]{16,}",                  // OpenAI / Anthropic
+            r"sk_live_[A-Za-z0-9]{16,}",                // Stripe
+            r"AKIA[0-9A-Z]{16}",                         // AWS
+            r"AIza[0-9A-Za-z_\-]{35}",                  // GCP
+            r"gh[ps]_[A-Za-z0-9]{36}",                   // GitHub PAT/server
+            r"gho_[A-Za-z0-9]{36}",                      // GitHub OAuth
+            r"xox[abp]-[A-Za-z0-9-]{10,}",              // Slack
+            r"eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", // JWT
+        ];
+        let patterns = raw_patterns
+            .iter()
+            .map(|p| Regex::new(p).expect("redactor regex"))
+            .collect();
         Self {
-            bearer: Regex::new(r"(?i)bearer\s+[A-Za-z0-9\-_.=]+").expect("bearer regex"),
-            sk_token: Regex::new(r"sk-[A-Za-z0-9_\-]{16,}").expect("sk token regex"),
+            patterns,
             sensitive: SENSITIVE_KEYS.iter().map(|s| s.to_lowercase()).collect(),
         }
     }
@@ -132,8 +150,10 @@ impl Default for SecretRedactor {
 
 impl SecretRedactor {
     fn is_sensitive_key(&self, k: &str) -> bool {
+        // Whole-name match (case-insensitive) so `tokenizer` doesn't
+        // false-positively trigger on `token`. Closes SA-F5.
         let lk = k.to_lowercase();
-        self.sensitive.iter().any(|s| lk == *s || lk.contains(s))
+        self.sensitive.iter().any(|s| lk == *s)
     }
 
     pub fn redact_in_place(&self, v: &mut Value) {
@@ -153,8 +173,11 @@ impl SecretRedactor {
                 }
             }
             Value::String(s) => {
-                let redacted = self.bearer.replace_all(s, "<redacted>");
-                let redacted = self.sk_token.replace_all(&redacted, "<redacted>");
+                let mut redacted: std::borrow::Cow<'_, str> = std::borrow::Cow::Borrowed(s);
+                for re in &self.patterns {
+                    let next = re.replace_all(&redacted, "<redacted>");
+                    redacted = std::borrow::Cow::Owned(next.into_owned());
+                }
                 *v = Value::String(redacted.into_owned());
             }
             _ => {}
