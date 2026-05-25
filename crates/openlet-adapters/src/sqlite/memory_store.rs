@@ -16,7 +16,9 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::PermissionMode;
-use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
+use openlet_core::types::session::{
+    SessionCapabilities, SessionFilter, SessionId, SessionMeta, SessionStatus,
+};
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemoryStore {
@@ -128,8 +130,8 @@ impl MemoryStore for SqliteMemoryStore {
         sqlx::query(
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
-                 version, created_at, updated_at, deleted_at, extensions)
-               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null')"#,
+                 version, created_at, updated_at, deleted_at, extensions, capabilities)
+               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}')"#,
         )
         .bind(&id_str)
         .bind(&agent_str)
@@ -148,7 +150,7 @@ impl MemoryStore for SqliteMemoryStore {
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
-                      version, created_at, updated_at, deleted_at, extensions
+                      version, created_at, updated_at, deleted_at, extensions, capabilities
                FROM sessions WHERE id = ?"#,
         )
         .bind(session.to_string())
@@ -162,7 +164,7 @@ impl MemoryStore for SqliteMemoryStore {
     async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {
         let mut sql = String::from(
             "SELECT id, agent_id, parent_session_id, status, permission_mode, \
-             version, created_at, updated_at, deleted_at, extensions \
+             version, created_at, updated_at, deleted_at, extensions, capabilities \
              FROM sessions WHERE 1=1",
         );
         if !filter.include_deleted {
@@ -451,6 +453,9 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
     let extensions: String = row.try_get("extensions").map_err(map_io)?;
     let extensions = serde_json::from_str(&extensions)
         .map_err(|e| MemoryError::Io(format!("extensions json: {e}")))?;
+    let capabilities: String = row.try_get("capabilities").map_err(map_io)?;
+    let capabilities: SessionCapabilities = serde_json::from_str(&capabilities)
+        .map_err(|e| MemoryError::Io(format!("capabilities json: {e}")))?;
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
@@ -463,6 +468,7 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
         deleted_at: deleted_at.map(from_ms),
         version,
         extensions,
+        capabilities,
     })
 }
 

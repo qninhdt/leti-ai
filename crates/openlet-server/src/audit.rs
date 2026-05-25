@@ -90,11 +90,9 @@ fn resolve_path(args: &AuditArgs, data_dir: &Path) -> Result<PathBuf> {
     // Reject non-UUID session ids before path-building so a caller
     // can't escape the sessions/ directory via `..` / absolute paths /
     // path separators baked into the input.
-    let parsed = Uuid::parse_str(id)
-        .with_context(|| format!("--session-id must be a UUID, got `{id}`"))?;
-    Ok(data_dir
-        .join("sessions")
-        .join(format!("{parsed}.jsonl")))
+    let parsed =
+        Uuid::parse_str(id).with_context(|| format!("--session-id must be a UUID, got `{id}`"))?;
+    Ok(data_dir.join("sessions").join(format!("{parsed}.jsonl")))
 }
 
 fn parse_ts(s: Option<&str>, flag: &str) -> Result<Option<DateTime<Utc>>> {

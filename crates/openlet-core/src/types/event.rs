@@ -5,6 +5,7 @@ use super::message::MessageId;
 use super::part::PartId;
 use super::permission::{AskId, Decision, PermissionRequest};
 use super::session::{SessionId, SessionStatus};
+use crate::runtime::question_registry::QuestionId;
 
 /// Domain event published on the bus and (depending on `Persistence`)
 /// persisted to SQLite. Phase 5 wires the two-tier publisher (§G).
@@ -80,8 +81,31 @@ pub enum AgentEvent {
         hook: String,
         message: String,
     },
+    /// `question.requested` — durable. Emitted when an `ask_user` tool
+    /// invocation suspends waiting for a frontend reply. The frontend
+    /// observes this event and POSTs back to
+    /// `/v1/sessions/:id/question/answer` with `question_id` + selected
+    /// option indices.
+    QuestionRequested {
+        session_id: SessionId,
+        question_id: QuestionId,
+        header: String,
+        question: String,
+        options: Vec<AskOption>,
+        multi_select: bool,
+    },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,
+}
+
+/// One selectable option for an `ask_user` prompt. Rendered by the
+/// frontend; the model receives the integer indices selected by the
+/// user (single-select → exactly one; multi-select → zero or more).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskOption {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Streaming delta kind (`part.delta` payload discriminator).

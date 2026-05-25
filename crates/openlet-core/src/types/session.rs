@@ -59,6 +59,12 @@ pub enum SessionStatus {
 /// `extensions` is an opaque JSON blob the integrator owns. Core stays
 /// auth-blind — `extensions["user_id"]` (or any other shape) is the
 /// integrator's responsibility, not core's. Default = `Value::Null`.
+///
+/// `capabilities` declares which interactive frontend affordances the
+/// session's caller supports. Headless-cloud callers leave the default
+/// (every flag `false`), so tools that require an interactive frontend
+/// (e.g. `ask_user`) return a synchronous error instead of blocking
+/// indefinitely on a UI that will never answer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMeta {
     pub id: SessionId,
@@ -72,6 +78,23 @@ pub struct SessionMeta {
     pub version: String,
     #[serde(default)]
     pub extensions: serde_json::Value,
+    #[serde(default)]
+    pub capabilities: SessionCapabilities,
+}
+
+/// Frontend affordances the session's caller exposes. Default = every
+/// flag `false` so headless-cloud sessions are safe by construction —
+/// interactive tools (`ask_user`) return a synchronous error rather
+/// than blocking on a UI that will never reply.
+///
+/// TUI / integrator binaries that drive a real human flip the relevant
+/// flag to `true` at session create.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SessionCapabilities {
+    /// Caller can answer interactive `ask_user` prompts via the
+    /// `POST /v1/sessions/:id/question/answer` endpoint.
+    #[serde(default)]
+    pub user_questions: bool,
 }
 
 /// Filter for `MemoryStore::list_sessions` (added in §A).

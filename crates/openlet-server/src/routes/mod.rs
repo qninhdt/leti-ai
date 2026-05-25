@@ -9,4 +9,5 @@ pub mod health;
 pub mod message;
 pub mod permission;
 pub mod plugin;
+pub mod question;
 pub mod session;

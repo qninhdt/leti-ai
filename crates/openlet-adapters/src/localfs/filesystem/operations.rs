@@ -162,9 +162,7 @@ pub(crate) async fn write(
         file.write_all(&body)
             .await
             .map_err(|e| FsError::Io(e.to_string()))?;
-        file.flush()
-            .await
-            .map_err(|e| FsError::Io(e.to_string()))?;
+        file.flush().await.map_err(|e| FsError::Io(e.to_string()))?;
     } else {
         fs::write(&resolved, &body)
             .await

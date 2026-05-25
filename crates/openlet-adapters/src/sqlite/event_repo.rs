@@ -142,6 +142,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionResolved { .. } => "permission.resolved",
         AgentEvent::Error { .. } => "error",
         AgentEvent::PluginError { .. } => "plugin.error",
+        AgentEvent::QuestionRequested { .. } => "question.requested",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }

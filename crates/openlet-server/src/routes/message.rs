@@ -191,9 +191,9 @@ pub async fn prompt_async(
         // a still-cancelling driver, this `remove_if` is a no-op so the
         // dying loop's tail finalizer can't stomp the new turn's slot
         // (closes C1-server stale-finalizer race).
-        task_state
-            .active_turns
-            .remove_if(&sid, |_, h| Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted));
+        task_state.active_turns.remove_if(&sid, |_, h| {
+            Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted)
+        });
         let _ = task_state
             .memory
             .update_status(sid, final_status, status_reason(&outcome, &cancel))
@@ -282,6 +282,8 @@ async fn drive_loop(
             .cloned()
             .map(std::sync::Arc::new),
         hook_chains: state.hook_chains.clone(),
+        questions: state.questions.clone(),
+        memory: state.memory.clone(),
     };
 
     let input = TurnInput {

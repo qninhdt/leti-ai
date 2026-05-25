@@ -17,6 +17,7 @@ use openlet_core::adapters::{
 use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
 use openlet_core::runtime::ConversationRuntime;
+use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::tools::ReadHistory;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::registry::ToolRegistry;
@@ -52,7 +53,10 @@ impl std::fmt::Debug for TurnHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TurnHandle")
             .field("session_id", &self.session_id)
-            .field("cancel_emitted", &self.cancel_emitted.load(Ordering::Acquire))
+            .field(
+                "cancel_emitted",
+                &self.cancel_emitted.load(Ordering::Acquire),
+            )
             .finish()
     }
 }
@@ -121,4 +125,8 @@ pub struct AppState {
     /// the column lands (phase-08), and falls back to the `general` slug
     /// for MVP.
     pub agent_registry: Arc<AgentRegistry>,
+    /// In-flight `ask_user` rendezvous map. Tools register oneshots
+    /// here while suspended; `POST /v1/sessions/:id/question/answer`
+    /// resolves them.
+    pub questions: Arc<QuestionRegistry>,
 }

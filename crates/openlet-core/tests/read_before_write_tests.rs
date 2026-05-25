@@ -53,16 +53,10 @@ impl PermissionManager for AllowAll {
     ) -> Result<(), PermissionError> {
         Ok(())
     }
-    fn take_deferred(
-        &self,
-        _: AskId,
-    ) -> Option<openlet_core::permission::Deferred<Decision>> {
+    fn take_deferred(&self, _: AskId) -> Option<openlet_core::permission::Deferred<Decision>> {
         None
     }
-    fn peek_session_id(
-        &self,
-        _: AskId,
-    ) -> Option<openlet_core::types::session::SessionId> {
+    fn peek_session_id(&self, _: AskId) -> Option<openlet_core::types::session::SessionId> {
         None
     }
     async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
@@ -126,7 +120,108 @@ fn ctx(workspace: &Path, mode: PermissionMode, history: ReadHistory) -> ToolCtx 
         artifacts: Arc::new(DiscardArtifacts),
         read_history: history,
         cancel: CancellationToken::new(),
+        questions: Arc::new(openlet_core::runtime::QuestionRegistry::new()),
+        memory: noop_memory(),
     }
+}
+
+fn noop_memory() -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
+    use openlet_core::adapters::memory_store::MemoryStore;
+    use openlet_core::error::MemoryError;
+
+    struct NoopMemory;
+
+    #[async_trait::async_trait]
+    impl MemoryStore for NoopMemory {
+        async fn create_session(
+            &self,
+            _: AgentId,
+            _: Option<SessionId>,
+        ) -> Result<SessionId, MemoryError> {
+            Err(MemoryError::Unimplemented)
+        }
+        async fn get_session(
+            &self,
+            _: SessionId,
+        ) -> Result<Option<openlet_core::types::session::SessionMeta>, MemoryError> {
+            Ok(None)
+        }
+        async fn list_sessions(
+            &self,
+            _: openlet_core::types::session::SessionFilter,
+        ) -> Result<Vec<openlet_core::types::session::SessionMeta>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn update_status(
+            &self,
+            _: SessionId,
+            _: openlet_core::types::session::SessionStatus,
+            _: &str,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn update_permission_mode(
+            &self,
+            _: SessionId,
+            _: PermissionMode,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn update_session_extensions(
+            &self,
+            _: SessionId,
+            _: serde_json::Value,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn delete_session(&self, _: SessionId) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn append_message(
+            &self,
+            _: SessionId,
+            msg: openlet_core::types::message::Message,
+        ) -> Result<MessageId, MemoryError> {
+            Ok(msg.id)
+        }
+        async fn append_part(
+            &self,
+            _: MessageId,
+            _: openlet_core::types::part::Part,
+        ) -> Result<openlet_core::types::part::PartId, MemoryError> {
+            Ok(openlet_core::types::part::PartId::new())
+        }
+        async fn upsert_part(
+            &self,
+            _: MessageId,
+            _: openlet_core::types::part::PartId,
+            _: openlet_core::types::part::Part,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn list_messages(
+            &self,
+            _: SessionId,
+        ) -> Result<Vec<openlet_core::types::message::Message>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn list_parts(
+            &self,
+            _: SessionId,
+            _: MessageId,
+        ) -> Result<Vec<openlet_core::types::part::Part>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn record_read(
+            &self,
+            _: SessionId,
+            _: std::path::PathBuf,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+    }
+
+    Arc::new(NoopMemory)
 }
 
 #[tokio::test]

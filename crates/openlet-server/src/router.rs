@@ -17,7 +17,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::app_state::AppState;
 use crate::openapi::ApiDoc;
 use crate::routes::{
-    agent, cancel, diagnostics, event, health, message, permission, plugin, session,
+    agent, cancel, diagnostics, event, health, message, permission, plugin, question, session,
 };
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
@@ -38,6 +38,7 @@ impl Default for RouterBuilder {
             .with_message_routes()
             .with_event_routes()
             .with_permission_routes()
+            .with_question_routes()
             .with_agent_routes()
             .with_plugin_routes()
             .with_diagnostics_routes()
@@ -91,6 +92,13 @@ impl RouterBuilder {
     #[must_use]
     pub fn with_permission_routes(mut self) -> Self {
         self.inner = self.inner.routes(routes!(permission::reply));
+        self
+    }
+
+    /// `POST /v1/sessions/:id/question/answer`.
+    #[must_use]
+    pub fn with_question_routes(mut self) -> Self {
+        self.inner = self.inner.routes(routes!(question::answer));
         self
     }
 

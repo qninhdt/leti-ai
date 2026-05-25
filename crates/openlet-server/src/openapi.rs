@@ -6,7 +6,7 @@
 use openlet_protocol::{
     AbortAckDto, AgentDto, CreateMessageDto, CreateSessionDto, DeltaKindDto, ErrorDto, EventDto,
     HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind, PermissionRequestDto,
-    PromptAckDto, SessionDto, SetModeDto, UsageDto,
+    PromptAckDto, SessionDto, SetModeDto, UsageDto, dto::QuestionAnswerDto,
 };
 use utoipa::OpenApi;
 
@@ -40,6 +40,7 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         PluginHealthDto,
         PluginInfoDto,
         PromptAckDto,
+        QuestionAnswerDto,
         SessionDto,
         SetModeDto,
         Status,
@@ -50,6 +51,7 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         (name = "session",     description = "Session lifecycle + prompt dispatch"),
         (name = "agent",       description = "Registered agent inventory"),
         (name = "permission",  description = "Permission ask/reply flow"),
+        (name = "question",    description = "Interactive ask_user prompt replies"),
         (name = "event",       description = "SSE event channel"),
         (name = "plugin",      description = "Plugin discovery + health"),
         (name = "diagnostics", description = "Preflight diagnostics"),

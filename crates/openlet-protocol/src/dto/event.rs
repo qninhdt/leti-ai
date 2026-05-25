@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use openlet_core::types::event::{AgentEvent, DeltaKind, Usage};
+use openlet_core::types::event::{AgentEvent, AskOption, DeltaKind, Usage};
 use openlet_core::types::session::SessionStatus;
 
 use super::permission::PermissionRequestDto;
@@ -79,7 +79,32 @@ pub enum EventDto {
         hook: String,
         message: String,
     },
+    QuestionRequested {
+        session_id: Uuid,
+        question_id: Uuid,
+        header: String,
+        question: String,
+        options: Vec<AskOptionDto>,
+        multi_select: bool,
+    },
     Heartbeat,
+}
+
+/// Wire shape for an `ask_user` option.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AskOptionDto {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl From<AskOption> for AskOptionDto {
+    fn from(o: AskOption) -> Self {
+        Self {
+            label: o.label,
+            description: o.description,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
@@ -226,6 +251,21 @@ impl From<AgentEvent> for EventDto {
                 plugin_id,
                 hook,
                 message,
+            },
+            AgentEvent::QuestionRequested {
+                session_id,
+                question_id,
+                header,
+                question,
+                options,
+                multi_select,
+            } => Self::QuestionRequested {
+                session_id: session_id.as_uuid(),
+                question_id: question_id.as_uuid(),
+                header,
+                question,
+                options: options.into_iter().map(AskOptionDto::from).collect(),
+                multi_select,
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

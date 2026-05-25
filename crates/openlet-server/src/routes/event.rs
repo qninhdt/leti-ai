@@ -141,6 +141,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::PermissionResolved { .. } => "permission.resolved",
         AgentEvent::Error { .. } => "error",
         AgentEvent::PluginError { .. } => "plugin.error",
+        AgentEvent::QuestionRequested { .. } => "question.requested",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }
@@ -154,7 +155,8 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         | AgentEvent::PartUpdated { session_id, .. }
         | AgentEvent::StepFinished { session_id, .. }
         | AgentEvent::PermissionAsked { session_id, .. }
-        | AgentEvent::PermissionResolved { session_id, .. } => Some(*session_id),
+        | AgentEvent::PermissionResolved { session_id, .. }
+        | AgentEvent::QuestionRequested { session_id, .. } => Some(*session_id),
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }

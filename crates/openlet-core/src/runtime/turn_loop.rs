@@ -28,6 +28,7 @@ use crate::hooks::io::{
 };
 use crate::projection::LlmMessage;
 use crate::runtime::doom_guard::{self, DoomVerdict, ToolCallSig, TurnSummary as DoomTurnSummary};
+use crate::runtime::question_registry::QuestionRegistry;
 use crate::tools::{ReadHistory, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch};
 use crate::types::agent::AgentId;
 use crate::types::event::AgentEvent;
@@ -59,6 +60,14 @@ pub struct LoopContext {
     /// Sorted plugin hook chains. `Arc::new(HookChains::new())` when no
     /// plugins register hooks — dispatch is O(1) skip on empty chains.
     pub hook_chains: Arc<HookChains>,
+    /// Question rendezvous map. Forwarded into each tool's `ToolCtx` so
+    /// `ask_user` can register a oneshot before suspending on the receiver.
+    pub questions: Arc<QuestionRegistry>,
+    /// Memory store handle. Forwarded into each tool's `ToolCtx` so
+    /// session-aware tools (e.g. `ask_user` capability gate) can read
+    /// session metadata without an extra adapter wired through every
+    /// caller.
+    pub memory: Arc<dyn MemoryStore>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -393,6 +402,8 @@ impl ConversationRuntime {
                 artifacts: Arc::clone(&lc.artifacts),
                 read_history: lc.read_history.clone(),
                 cancel: cancel_for_ctx.clone(),
+                questions: Arc::clone(&lc.questions),
+                memory: Arc::clone(&lc.memory),
             };
             let results = dispatch_batch(
                 &loop_ctx.registry,

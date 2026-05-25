@@ -11,6 +11,7 @@ pub mod cost;
 pub mod doom_guard;
 pub mod processor;
 pub mod prompt;
+pub mod question_registry;
 pub mod token_estimate;
 pub mod turn_loop;
 mod turn_stream;
@@ -24,6 +25,7 @@ pub use cost::{compute_cost, format_usd};
 pub use doom_guard::{DoomVerdict, ToolCallSig};
 pub use processor::{Processor, ProcessorEvent, ProcessorPart, ProcessorState};
 pub use prompt::{compose_system_prompt, select_provider_prompt};
+pub use question_registry::{CancelReason, QuestionId, QuestionRegistry, ResolveError};
 pub use token_estimate::{
     CHARS_PER_TOKEN, anchored_estimate, estimate_conversation_tokens, estimate_message_tokens,
 };

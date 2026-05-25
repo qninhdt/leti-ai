@@ -102,7 +102,9 @@ impl ShellExecutor for LocalShellExecutor {
         let timed_out = exit_result.is_err();
         if timed_out {
             #[cfg(unix)]
-            if let Some(pid) = pgid { kill_group(pid); }
+            if let Some(pid) = pgid {
+                kill_group(pid);
+            }
             let _ = child.start_kill();
         }
         let exit_status = match exit_result {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ToolError;
+use crate::runtime::question_registry::QuestionRegistry;
 use crate::tools::read_history::ReadHistory;
 use crate::types::agent::AgentId;
 use crate::types::message::MessageId;
@@ -16,6 +17,7 @@ use crate::types::session::SessionId;
 use super::artifact_store::ArtifactStore;
 use super::event_sink::EventSink;
 use super::filesystem::Filesystem;
+use super::memory_store::MemoryStore;
 use super::permission_manager::PermissionManager;
 
 /// Per-call context carrying handles a tool needs to enforce permissions
@@ -38,6 +40,15 @@ pub struct ToolCtx {
     pub artifacts: Arc<dyn ArtifactStore>,
     pub read_history: ReadHistory,
     pub cancel: CancellationToken,
+    /// In-flight `ask_user` rendezvous map. The `ask_user` tool registers
+    /// a oneshot here at run-time; the REST handler resolves the entry on
+    /// the matching `POST /v1/sessions/:id/question/answer` reply.
+    pub questions: Arc<QuestionRegistry>,
+    /// Memory-store handle. Tools that need to inspect session-level
+    /// state (capabilities, extensions, permission mode) read through
+    /// this — kept on `ToolCtx` so the runtime stays the only authority
+    /// on which adapter implementation backs the lookup.
+    pub memory: Arc<dyn MemoryStore>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -16,6 +16,7 @@ use openlet_core::adapters::{
 };
 use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
+use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::tools::ReadHistory;
 use openlet_core::tools::registry::ToolRegistry;
@@ -57,6 +58,7 @@ pub struct AppStateBuilder {
     agents: Option<HashMap<AgentId, AgentResources>>,
     default_agent_id: Option<AgentId>,
     agent_registry: Option<Arc<AgentRegistry>>,
+    questions: Option<Arc<QuestionRegistry>>,
 }
 
 impl AppStateBuilder {
@@ -161,6 +163,12 @@ impl AppStateBuilder {
         self
     }
 
+    #[must_use]
+    pub fn questions(mut self, v: Arc<QuestionRegistry>) -> Self {
+        self.questions = Some(v);
+        self
+    }
+
     /// Validate required fields and assemble the [`AppState`]. Auto-fills
     /// `runtime` from provider+memory+events+config if the integrator did
     /// not supply one explicitly.
@@ -225,6 +233,9 @@ impl AppStateBuilder {
             agent_registry: self
                 .agent_registry
                 .unwrap_or_else(|| Arc::new(AgentRegistry::new())),
+            questions: self
+                .questions
+                .unwrap_or_else(|| Arc::new(QuestionRegistry::new())),
         })
     }
 }

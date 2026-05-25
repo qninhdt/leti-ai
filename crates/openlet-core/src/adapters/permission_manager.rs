@@ -50,9 +50,5 @@ pub trait PermissionManager: Send + Sync + 'static {
     /// persistence fails, the ask is restored and the user sees an error.
     /// The HTTP route NEVER constructs a rule from client input; the
     /// rule pattern comes from the original `PermissionRequest`.
-    async fn accept_ask(
-        &self,
-        ask_id: AskId,
-        scope: AlwaysScope,
-    ) -> Result<(), PermissionError>;
+    async fn accept_ask(&self, ask_id: AskId, scope: AlwaysScope) -> Result<(), PermissionError>;
 }

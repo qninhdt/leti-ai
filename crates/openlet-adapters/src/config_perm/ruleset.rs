@@ -91,11 +91,7 @@ impl CompiledRuleset {
     /// Last-match-wins lookup, scope-filtered. Returns the action of the
     /// last matching rule whose scope is active for `ctx`, or `None` if
     /// no rule matches (caller falls back to mode).
-    pub(crate) fn evaluate(
-        &self,
-        ctx: &PermissionCtx,
-        permission: &str,
-    ) -> Option<&CompiledRule> {
+    pub(crate) fn evaluate(&self, ctx: &PermissionCtx, permission: &str) -> Option<&CompiledRule> {
         self.rules
             .iter()
             .rev()

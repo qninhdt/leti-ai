@@ -21,6 +21,7 @@ use openlet_adapters::{
 use openlet_core::adapters::hooked_event_sink::HookedEventSink;
 use openlet_core::adapters::hooked_memory_store::HookedMemoryStore;
 use openlet_core::config::{Config, LogFormat};
+use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_api::context::CoreApi;
@@ -234,6 +235,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .agents(agents)
         .default_agent_id(default_agent_id)
         .agent_registry(Arc::new(agent_registry))
+        .questions(Arc::new(QuestionRegistry::new()))
         .build()
         .context("building app state")?;
 

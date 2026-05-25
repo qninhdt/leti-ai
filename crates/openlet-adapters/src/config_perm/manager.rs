@@ -16,9 +16,7 @@ use openlet_core::types::permission::{
 };
 use tokio::sync::RwLock;
 
-use crate::sqlite::permission_repo::{
-    PermissionRecord, PersistedDecision, SqlitePermissionRepo,
-};
+use crate::sqlite::permission_repo::{PermissionRecord, PersistedDecision, SqlitePermissionRepo};
 
 use super::ruleset::{CompiledRule, CompiledRuleset};
 
@@ -100,15 +98,23 @@ impl ConfigPermissionMgr {
     /// Read-only peek at a pending ask's session id. Used by the HTTP
     /// route to publish `PermissionResolved` to the correct session
     /// before `accept_ask`/`reply` consumes the entry.
-    pub fn peek_session_id(&self, ask_id: AskId) -> Option<openlet_core::types::session::SessionId> {
+    pub fn peek_session_id(
+        &self,
+        ask_id: AskId,
+    ) -> Option<openlet_core::types::session::SessionId> {
         self.pending.get(&ask_id).map(|e| e.ctx.session_id)
     }
 
     /// Hydrate persisted always-allow rules from the SQLite repo. Called
     /// on boot before any route is mounted, so existing always-allow
     /// rules apply to incoming requests immediately.
-    pub async fn hydrate(&self, sessions: &[openlet_core::types::session::SessionId]) -> Result<(), PermissionError> {
-        let Some(repo) = &self.repo else { return Ok(()) };
+    pub async fn hydrate(
+        &self,
+        sessions: &[openlet_core::types::session::SessionId],
+    ) -> Result<(), PermissionError> {
+        let Some(repo) = &self.repo else {
+            return Ok(());
+        };
         let mut g = self.inner.write().await;
         for sid in sessions {
             let records = repo.list_for_session(*sid).await?;
@@ -248,11 +254,7 @@ impl PermissionManager for ConfigPermissionMgr {
         self.pending.get(&ask_id).map(|e| e.ctx.session_id)
     }
 
-    async fn accept_ask(
-        &self,
-        ask_id: AskId,
-        scope: AlwaysScope,
-    ) -> Result<(), PermissionError> {
+    async fn accept_ask(&self, ask_id: AskId, scope: AlwaysScope) -> Result<(), PermissionError> {
         match &scope {
             AlwaysScope::Global | AlwaysScope::Session { .. } => {}
             AlwaysScope::Workspace { .. } | AlwaysScope::Agent { .. } => {
@@ -441,10 +443,7 @@ mod tests {
             mode: PermissionMode::WorkspaceWrite,
         };
         // Ask for narrow permission "edit:notes.md".
-        let decision = m
-            .check(scoped_ctx, req("edit:notes.md"))
-            .await
-            .unwrap();
+        let decision = m.check(scoped_ctx, req("edit:notes.md")).await.unwrap();
         let ask_id = match decision {
             Decision::Pending { ask_id } => ask_id,
             other => panic!("expected Pending, got {other:?}"),

@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::builtins::{
-    BashTool, EditTool, GlobTool, GrepTool, ListTool, ReadTool, TodoTool, WriteTool,
+    AskUserTool, BashTool, EditTool, GlobTool, GrepTool, ListTool, ReadTool, TodoTool, WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -81,6 +81,7 @@ impl Plugin for CoreToolsPlugin {
         ctx.register_tool(erase(EditTool))?;
         ctx.register_tool(erase(BashTool::with_executor(self.shell.clone())))?;
         ctx.register_tool(erase(TodoTool))?;
+        ctx.register_tool(erase(AskUserTool::new()))?;
         Ok(())
     }
 }

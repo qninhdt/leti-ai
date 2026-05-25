@@ -53,6 +53,7 @@ impl RecordingCore {
             deleted_at: None,
             version: "0.1.0".into(),
             extensions: json!({"user_id": user_id}),
+            capabilities: openlet_core::types::session::SessionCapabilities::default(),
         };
         Arc::new(Self {
             meta,
@@ -226,6 +227,7 @@ async fn missing_user_id_skips_silently() {
             deleted_at: None,
             version: "0.1.0".into(),
             extensions: serde_json::Value::Null,
+            capabilities: openlet_core::types::session::SessionCapabilities::default(),
         },
         cancellations: Mutex::new(Vec::new()),
     });

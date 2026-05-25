@@ -129,8 +129,8 @@ pub async fn delete(
         // Wait for the driving task's Drop guard to signal exit. Notify
         // permits-on-await semantics: if the task already exited, this
         // resolves immediately the next loop iteration.
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle.exited.notified())
-            .await;
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(5), handle.exited.notified()).await;
     }
     state.memory.delete_session(sid).await?;
     let _ = state
