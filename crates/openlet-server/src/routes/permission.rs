@@ -5,9 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::types::event::AgentEvent;
-use openlet_core::types::permission::{
-    AlwaysScope, AskId, PermissionAction, PermissionRule,
-};
+use openlet_core::types::permission::{AlwaysScope, AskId};
 use openlet_protocol::{PermissionReplyDto, PermissionReplyKind};
 use uuid::Uuid;
 
@@ -31,46 +29,57 @@ pub async fn reply(
     Json(body): Json<PermissionReplyDto>,
 ) -> Result<StatusCode, AppError> {
     let ask = AskId(ask_id);
-    let decision = body.to_decision();
 
-    // Persist `always_*` rules BEFORE replying so any retry of the same
-    // permission inside a tight tool batch already sees the new rule.
-    // Scope is global today; the layered ruleset (§E) lands in 4C and will
-    // pull session/agent scope from the original ask.
+    // For `always_*` decisions, use `accept_ask` — atomic take + persist
+    // + push + resolve, with the rule pattern derived from the ORIGINAL
+    // ask (never from client input). Closes the privilege-escalation
+    // primitive where a client could persist a broader pattern than was
+    // shown in the prompt.
     if body.is_persistent() {
-        let action = match body.decision {
-            PermissionReplyKind::AlwaysAllow => PermissionAction::Allow,
-            PermissionReplyKind::AlwaysDeny => PermissionAction::Deny,
-            _ => unreachable!("is_persistent() guards the always_* variants"),
-        };
-        let pattern = body.pattern.clone().ok_or_else(|| {
-            AppError::bad_request(
-                "permission_pattern_required",
-                "always_* decisions require `pattern` in the body",
-            )
-        })?;
+        let scope = AlwaysScope::Global;
         state
             .permission
-            .record_always(
-                AlwaysScope::Global,
-                PermissionRule {
-                    permission: pattern,
-                    action,
-                },
-            )
-            .await?;
+            .accept_ask(ask, scope)
+            .await
+            .map_err(map_perm_err)?;
+    } else {
+        let decision = body.to_decision();
+        state
+            .permission
+            .reply(ask, decision)
+            .await
+            .map_err(map_perm_err)?;
     }
-
-    state.permission.reply(ask, decision.clone()).await?;
+    let resolved_decision = match body.decision {
+        PermissionReplyKind::Allow | PermissionReplyKind::AlwaysAllow => {
+            openlet_core::types::permission::Decision::Allow
+        }
+        PermissionReplyKind::Deny | PermissionReplyKind::AlwaysDeny => {
+            openlet_core::types::permission::Decision::Deny {
+                feedback: body.reason.clone(),
+            }
+        }
+    };
     state
         .events
         .publish(
             AgentEvent::PermissionResolved {
                 ask_id: ask,
-                decision,
+                decision: resolved_decision,
             },
             Persistence::Durable,
         )
         .await?;
     Ok(StatusCode::OK)
+}
+
+fn map_perm_err(e: openlet_core::error::PermissionError) -> AppError {
+    use openlet_core::error::PermissionError;
+    match e {
+        PermissionError::AskNotFound | PermissionError::AskExpired => {
+            AppError::not_found("ask_not_found", "permission ask not found or expired")
+        }
+        PermissionError::Unsupported(s) => AppError::bad_request("unsupported_scope", s),
+        e => AppError::from(e),
+    }
 }

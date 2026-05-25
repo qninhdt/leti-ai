@@ -232,15 +232,27 @@ async fn run_one(
                 feedback.unwrap_or_else(|| "denied by ruleset".into()),
             ));
         }
-        Decision::Pending { ask_id: _ } => {
-            // Phase 4C plumbs the runtime to `take_deferred(ask_id)` on a
-            // `ConfigPermissionMgr`-backed manager. The trait surface
-            // returns `Pending` and lets the runtime drive the wait;
-            // that wiring lands in phase 5 alongside the SSE permission
-            // event. For now treat as deny so dispatch never hangs.
-            return Err(ToolError::PermissionDenied(
-                "permission ask received but no driver wired (phase 5)".into(),
-            ));
+        Decision::Pending { ask_id } => {
+            // Take ownership of the deferred half from the manager. The
+            // sender is held by the manager (resolved via reply / sweep
+            // / accept_ask), and we await the receiver. Drop-resolves to
+            // Deny so a dropped sender doesn't hang us.
+            let deferred = permission
+                .take_deferred(ask_id)
+                .ok_or_else(|| ToolError::PermissionDenied("ask expired".into()))?;
+            match deferred.await {
+                Decision::Allow => {}
+                Decision::Deny { feedback } => {
+                    return Err(ToolError::PermissionDenied(
+                        feedback.unwrap_or_else(|| "denied by user".into()),
+                    ));
+                }
+                Decision::Pending { .. } => {
+                    return Err(ToolError::Io(
+                        "permission deferred resolved to Pending (unreachable)".into(),
+                    ));
+                }
+            }
         }
     }
     // Catch panics inside `run_json` so a buggy tool can't unwind the

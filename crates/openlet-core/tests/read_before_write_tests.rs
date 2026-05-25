@@ -53,6 +53,15 @@ impl PermissionManager for AllowAll {
     ) -> Result<(), PermissionError> {
         Ok(())
     }
+    fn take_deferred(
+        &self,
+        _: AskId,
+    ) -> Option<openlet_core::permission::Deferred<Decision>> {
+        None
+    }
+    async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]

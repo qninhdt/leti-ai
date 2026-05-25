@@ -125,8 +125,14 @@ impl From<PermissionError> for AppError {
             PermissionError::AskNotFound => {
                 Self::not_found("ask_not_found", "permission ask not found")
             }
+            PermissionError::AskExpired => {
+                Self::not_found("ask_expired", "permission ask expired")
+            }
             PermissionError::Timeout => {
                 Self::conflict("ask_timeout", "permission ask already timed out")
+            }
+            PermissionError::Unsupported(m) => {
+                Self::bad_request("unsupported_scope", m)
             }
             PermissionError::Io(m) => Self::internal("permission_io", m),
             PermissionError::Unimplemented => Self::internal(

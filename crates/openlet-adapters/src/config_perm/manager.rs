@@ -16,6 +16,10 @@ use openlet_core::types::permission::{
 };
 use tokio::sync::RwLock;
 
+use crate::sqlite::permission_repo::{
+    PermissionRecord, PersistedDecision, SqlitePermissionRepo,
+};
+
 use super::ruleset::{CompiledRule, CompiledRuleset};
 
 /// Per-pending-ask state. We carry the request alongside the sender so
@@ -23,8 +27,8 @@ use super::ruleset::{CompiledRule, CompiledRuleset};
 /// `deferred` is held until the runtime calls `take_deferred(ask_id)`,
 /// at which point the runtime owns the receiver half of the oneshot.
 pub struct PendingAsk {
-    #[allow(dead_code)] // surfaced via SSE in phase 5
     pub request: PermissionRequest,
+    pub ctx: PermissionCtx,
     pub sender: DeferredSender<Decision>,
     pub deferred: Option<Deferred<Decision>>,
 }
@@ -44,6 +48,7 @@ pub struct ConfigPermissionMgr {
     inner: Arc<RwLock<CompiledRuleset>>,
     pending: Arc<DashMap<AskId, PendingAsk>>,
     hook_chains: Option<Arc<HookChains>>,
+    repo: Option<SqlitePermissionRepo>,
 }
 
 impl ConfigPermissionMgr {
@@ -61,6 +66,14 @@ impl ConfigPermissionMgr {
         self
     }
 
+    /// Attach a SQLite repo so `accept_ask` persists across restart and
+    /// `hydrate` rehydrates rules at boot.
+    #[must_use]
+    pub fn with_repo(mut self, repo: SqlitePermissionRepo) -> Self {
+        self.repo = Some(repo);
+        self
+    }
+
     /// Construct from raw rules. Errors propagate from glob compilation.
     pub fn with_rules(rules: Vec<PermissionRule>) -> Result<Self, PermissionError> {
         let compiled =
@@ -69,6 +82,7 @@ impl ConfigPermissionMgr {
             inner: Arc::new(RwLock::new(compiled)),
             pending: Arc::new(DashMap::new()),
             hook_chains: None,
+            repo: None,
         })
     }
 
@@ -78,12 +92,34 @@ impl ConfigPermissionMgr {
         self.pending.len()
     }
 
-    /// Surrender the receiver half of an outstanding ask. Phase 4C: the
-    /// runtime calls this immediately after `check()` returns
-    /// `Decision::Pending`, then `.await`s the deferred. Returns `None`
-    /// if the ask was already taken or never existed.
-    pub fn take_deferred(&self, ask_id: AskId) -> Option<Deferred<Decision>> {
-        self.pending.get_mut(&ask_id)?.deferred.take()
+    /// Read-only peek at a pending ask's request for SSE rendering.
+    pub fn peek_request(&self, ask_id: AskId) -> Option<PermissionRequest> {
+        self.pending.get(&ask_id).map(|e| e.request.clone())
+    }
+
+    /// Hydrate persisted always-allow rules from the SQLite repo. Called
+    /// on boot before any route is mounted, so existing always-allow
+    /// rules apply to incoming requests immediately.
+    pub async fn hydrate(&self, sessions: &[openlet_core::types::session::SessionId]) -> Result<(), PermissionError> {
+        let Some(repo) = &self.repo else { return Ok(()) };
+        let mut g = self.inner.write().await;
+        for sid in sessions {
+            let records = repo.list_for_session(*sid).await?;
+            for rec in records {
+                if !matches!(rec.decision, PersistedDecision::Always) {
+                    continue;
+                }
+                let rule = PermissionRule {
+                    permission: rec.permission,
+                    action: PermissionAction::Allow,
+                };
+                let scope = AlwaysScope::Session { id: rec.session_id };
+                let compiled = CompiledRule::from_rule_scoped(rule, scope)
+                    .map_err(|e| PermissionError::Io(e.to_string()))?;
+                g.push(compiled);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -146,6 +182,7 @@ impl PermissionManager for ConfigPermissionMgr {
                     ask_id,
                     PendingAsk {
                         request: req,
+                        ctx,
                         sender,
                         deferred: Some(deferred),
                     },
@@ -181,10 +218,68 @@ impl PermissionManager for ConfigPermissionMgr {
         scope: AlwaysScope,
         rule: PermissionRule,
     ) -> Result<(), PermissionError> {
+        match &scope {
+            AlwaysScope::Global | AlwaysScope::Session { .. } => {}
+            AlwaysScope::Workspace { .. } | AlwaysScope::Agent { .. } => {
+                return Err(PermissionError::Unsupported(
+                    "workspace/agent scope not yet wired".into(),
+                ));
+            }
+        }
         let compiled = CompiledRule::from_rule_scoped(rule, scope)
             .map_err(|e| PermissionError::Io(e.to_string()))?;
         let mut g = self.inner.write().await;
         g.push(compiled);
+        Ok(())
+    }
+
+    fn take_deferred(&self, ask_id: AskId) -> Option<Deferred<Decision>> {
+        self.pending.get_mut(&ask_id)?.deferred.take()
+    }
+
+    async fn accept_ask(
+        &self,
+        ask_id: AskId,
+        scope: AlwaysScope,
+    ) -> Result<(), PermissionError> {
+        match &scope {
+            AlwaysScope::Global | AlwaysScope::Session { .. } => {}
+            AlwaysScope::Workspace { .. } | AlwaysScope::Agent { .. } => {
+                return Err(PermissionError::Unsupported(
+                    "workspace/agent scope not yet wired".into(),
+                ));
+            }
+        }
+        // Atomic remove — on failure to persist below, we restore.
+        let (id, ask) = self
+            .pending
+            .remove(&ask_id)
+            .ok_or(PermissionError::AskExpired)?;
+        let rule = PermissionRule {
+            permission: ask.request.permission.clone(),
+            action: PermissionAction::Allow,
+        };
+        let compiled = match CompiledRule::from_rule_scoped(rule.clone(), scope.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                self.pending.insert(id, ask);
+                return Err(PermissionError::Io(e.to_string()));
+            }
+        };
+        if let Some(repo) = &self.repo {
+            let record = PermissionRecord {
+                session_id: ask.ctx.session_id,
+                ask_id,
+                permission: ask.request.permission.clone(),
+                decision: PersistedDecision::Always,
+            };
+            if let Err(e) = repo.record(&record).await {
+                self.pending.insert(id, ask);
+                return Err(e);
+            }
+        }
+        self.inner.write().await.push(compiled);
+        let _ = ask.sender.send(Decision::Allow);
         Ok(())
     }
 }
@@ -321,5 +416,76 @@ mod tests {
         let m = ConfigPermissionMgr::new();
         let res = m.reply(AskId::new(), Decision::Allow).await;
         assert!(matches!(res, Err(PermissionError::AskNotFound)));
+    }
+
+    #[tokio::test]
+    async fn accept_ask_uses_original_pattern_not_client_input() {
+        // Closes SA-F1: a client cannot persist a broader rule than was
+        // shown in the prompt. The pattern comes from the PermissionRequest
+        // that produced the ask_id, never from a client-supplied field.
+        let m = ConfigPermissionMgr::new();
+        let session_id = SessionId::new();
+        let scoped_ctx = PermissionCtx {
+            session_id,
+            mode: PermissionMode::WorkspaceWrite,
+        };
+        // Ask for narrow permission "edit:notes.md".
+        let decision = m
+            .check(scoped_ctx, req("edit:notes.md"))
+            .await
+            .unwrap();
+        let ask_id = match decision {
+            Decision::Pending { ask_id } => ask_id,
+            other => panic!("expected Pending, got {other:?}"),
+        };
+        // accept_ask takes scope only — no pattern.
+        m.accept_ask(ask_id, AlwaysScope::Session { id: session_id })
+            .await
+            .unwrap();
+        // The persisted rule applies to "edit:notes.md".
+        let scoped_ctx2 = PermissionCtx {
+            session_id,
+            mode: PermissionMode::WorkspaceWrite,
+        };
+        let d = m.check(scoped_ctx2, req("edit:notes.md")).await.unwrap();
+        assert!(matches!(d, Decision::Allow));
+        // But NOT to a broader pattern like "edit:.env".
+        let scoped_ctx3 = PermissionCtx {
+            session_id,
+            mode: PermissionMode::WorkspaceWrite,
+        };
+        let d2 = m.check(scoped_ctx3, req("edit:.env")).await.unwrap();
+        assert!(matches!(d2, Decision::Pending { .. }));
+    }
+
+    #[tokio::test]
+    async fn accept_ask_rejects_workspace_scope() {
+        let m = ConfigPermissionMgr::new();
+        let session_id = SessionId::new();
+        let scoped_ctx = PermissionCtx {
+            session_id,
+            mode: PermissionMode::WorkspaceWrite,
+        };
+        let decision = m.check(scoped_ctx, req("read:*.rs")).await.unwrap();
+        let ask_id = match decision {
+            Decision::Pending { ask_id } => ask_id,
+            other => panic!("expected Pending, got {other:?}"),
+        };
+        let res = m
+            .accept_ask(
+                ask_id,
+                AlwaysScope::Workspace {
+                    path: "/foo".into(),
+                },
+            )
+            .await;
+        assert!(matches!(res, Err(PermissionError::Unsupported(_))));
+    }
+
+    #[tokio::test]
+    async fn accept_ask_unknown_returns_expired() {
+        let m = ConfigPermissionMgr::new();
+        let res = m.accept_ask(AskId::new(), AlwaysScope::Global).await;
+        assert!(matches!(res, Err(PermissionError::AskExpired)));
     }
 }

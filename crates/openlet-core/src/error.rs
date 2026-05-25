@@ -270,8 +270,12 @@ pub enum EventError {
 pub enum PermissionError {
     #[error("permission ask not found")]
     AskNotFound,
+    #[error("permission ask expired")]
+    AskExpired,
     #[error("permission ask timed out")]
     Timeout,
+    #[error("scope not yet supported: {0}")]
+    Unsupported(String),
     #[error("storage io: {0}")]
     Io(String),
     #[error("not implemented (Phase 1 stub)")]

@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::error::PermissionError;
+use crate::permission::Deferred;
 use crate::types::permission::{
     AlwaysScope, AskId, Decision, PermissionCtx, PermissionRequest, PermissionRule,
 };
@@ -28,5 +29,23 @@ pub trait PermissionManager: Send + Sync + 'static {
         &self,
         scope: AlwaysScope,
         rule: PermissionRule,
+    ) -> Result<(), PermissionError>;
+
+    /// Surrender the receiver half of an outstanding ask. The runtime
+    /// calls this after `check()` returns `Decision::Pending`, then
+    /// `.await`s the deferred. Returns `None` if the ask was already
+    /// taken or never existed. Sync because it's just a map mutation.
+    fn take_deferred(&self, ask_id: AskId) -> Option<Deferred<Decision>>;
+
+    /// Atomic ask acceptance: consumes the pending ask, persists the
+    /// rule scoped to `scope`, pushes it onto the in-memory ruleset, and
+    /// resolves the deferred with `Decision::Allow`. All-or-nothing — if
+    /// persistence fails, the ask is restored and the user sees an error.
+    /// The HTTP route NEVER constructs a rule from client input; the
+    /// rule pattern comes from the original `PermissionRequest`.
+    async fn accept_ask(
+        &self,
+        ask_id: AskId,
+        scope: AlwaysScope,
     ) -> Result<(), PermissionError>;
 }
