@@ -109,10 +109,13 @@ impl ConversationRuntime {
                         let pre_msg_count = input.messages.len();
                         // OnCompaction Before — Stop halts compaction; the
                         // outer loop continues with the un-compacted projection.
+                        // `autocontinue` is set to its default for completeness;
+                        // the toggle is only honored on the After-phase dispatch.
                         let before_ctx = OnCompactionCtx {
                             session_id: Some(session_id),
                             phase: CompactionPhase::Before,
                             message_count: pre_msg_count,
+                            autocontinue: true,
                         };
                         let before_outcome =
                             dispatch(&loop_ctx.hook_chains.on_compaction, before_ctx).await;
@@ -218,15 +221,46 @@ impl ConversationRuntime {
                         // OnCompaction After — observation; plugins emit
                         // metrics or post-process the new projection. Stop
                         // does not unwind the compaction (already durable).
+                        // A plugin may also set `autocontinue = false` via
+                        // Replace to pause the loop instead of driving the
+                        // synthetic resume turn — see handling below.
                         let after_ctx = OnCompactionCtx {
                             session_id: Some(session_id),
                             phase: CompactionPhase::After,
                             message_count: input.messages.len(),
+                            autocontinue: true,
                         };
                         let after_outcome =
                             dispatch(&loop_ctx.hook_chains.on_compaction, after_ctx).await;
                         publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome)
                             .await;
+                        // Honor the autocontinue toggle: when a plugin
+                        // returns Replace with autocontinue=false from the
+                        // After phase, skip the synthetic resume turn,
+                        // signal the pause via SessionStatus::Idle, and
+                        // exit the loop. SessionStatus::Idle is used as a
+                        // proxy until a dedicated Paused variant lands.
+                        if let DispatchOutcome::Completed(ref ctx) = after_outcome {
+                            if !ctx.autocontinue {
+                                let _ = loop_ctx
+                                    .events
+                                    .publish(
+                                        AgentEvent::SessionStatus {
+                                            session_id,
+                                            status: crate::types::session::SessionStatus::Idle,
+                                            at: Utc::now(),
+                                        },
+                                        Persistence::Durable,
+                                    )
+                                    .await;
+                                return Ok(LoopOutcome {
+                                    steps: model_steps,
+                                    finish_reason: FinishReason::Halted,
+                                    final_assistant_message_id: last_assistant_id
+                                        .unwrap_or_default(),
+                                });
+                            }
+                        }
                         // Post-compaction overflow check (amendment §P).
                         let post = should_compact(&input.messages, agent, None);
                         if matches!(post, CompactDecision::Run { .. }) {
@@ -564,10 +598,12 @@ async fn build_doom_summary(
     results: &[ToolDispatchResult],
 ) -> Result<DoomTurnSummary, CoreError> {
     let parts = memory.list_parts(session_id, assistant_message_id).await?;
-    let had_text_output = parts.iter().any(|p| matches!(p, Part::Text { text, .. } if !text.trim().is_empty()));
+    let had_text_output = parts
+        .iter()
+        .any(|p| matches!(p, Part::Text { text, .. } if !text.trim().is_empty()));
     let had_successful_writes = results
         .iter()
-        .any(|r| matches!(r.outcome, Ok(_)) && !is_read_only_tool(&r.name));
+        .any(|r| r.outcome.is_ok() && !is_read_only_tool(&r.name));
     let mut tool_calls = std::collections::BTreeSet::new();
     for inv in invocations {
         tool_calls.insert(ToolCallSig::new(inv.name.clone(), &inv.args));

@@ -229,11 +229,32 @@ pub mod io {
     /// Custom compaction prompts / per-tenant retention rules. Stop
     /// halts compaction before it runs (Before phase) or before
     /// post-processing (After phase).
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     pub struct OnCompactionCtx {
         pub session_id: Option<SessionId>,
         pub phase: CompactionPhase,
         pub message_count: usize,
+        /// When `true` (default), the runtime continues with the next
+        /// model turn after compaction completes. A plugin observing the
+        /// `After` phase may return `Replace` with `autocontinue = false`
+        /// to pause the loop instead — the runtime then emits
+        /// `SessionStatus::Idle` as a proxy for a paused state (a future
+        /// PR may introduce a dedicated `Paused` variant) and returns
+        /// from `run_loop` without driving another model turn. Ignored on
+        /// the `Before` phase: the toggle's whole point is gating the
+        /// post-compaction continuation.
+        pub autocontinue: bool,
+    }
+
+    impl Default for OnCompactionCtx {
+        fn default() -> Self {
+            Self {
+                session_id: None,
+                phase: CompactionPhase::default(),
+                message_count: 0,
+                autocontinue: true,
+            }
+        }
     }
 
     /// Session lifecycle transitions — cleanup, notifications. Fires
