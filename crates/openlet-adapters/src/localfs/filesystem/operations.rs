@@ -8,11 +8,15 @@ use openlet_core::adapters::filesystem::{ByteRange, DirEntry, FileMeta, WriteOpt
 use openlet_core::error::FsError;
 use tempfile::NamedTempFile;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 
 use super::paths::resolve_in_workspace;
 
 const SAMPLE_BYTES: usize = 4096;
+/// Hard cap on a single `read` allocation. The tool layer should pass a
+/// smaller cap, but this is the floor that bounds memory under TOCTOU
+/// (file growing between stat and read).
+const MAX_READ_BYTES: u64 = 8 * 1024 * 1024;
 
 pub(crate) async fn read(
     root: &Path,
@@ -27,7 +31,13 @@ pub(crate) async fn read(
 
     let (start, len) = match range {
         Some(r) => {
-            let start = r.start.min(total);
+            if r.start > total {
+                return Err(FsError::InvalidInput(format!(
+                    "range start {} > file size {}",
+                    r.start, total
+                )));
+            }
+            let start = r.start;
             let len = if r.len == 0 {
                 total - start
             } else {
@@ -37,6 +47,10 @@ pub(crate) async fn read(
         }
         None => (0, total),
     };
+    // Bound allocation by MAX_READ_BYTES so a file that grows between
+    // stat and read (TOCTOU) cannot blow memory. This is a floor; tool
+    // layer caps tighter (1 MiB for `read` tool).
+    let len = len.min(MAX_READ_BYTES);
 
     let mut file = fs::File::open(&resolved)
         .await
@@ -95,13 +109,6 @@ pub(crate) async fn write(
 ) -> Result<FileMeta, FsError> {
     let resolved = resolve_in_workspace(root, path).await?;
 
-    if opts.create_new && fs::metadata(&resolved).await.is_ok() {
-        return Err(FsError::InvalidInput(format!(
-            "file already exists: {}",
-            resolved.display()
-        )));
-    }
-
     if let Some(parent) = resolved.parent() {
         fs::create_dir_all(parent)
             .await
@@ -123,7 +130,41 @@ pub(crate) async fn write(
     }
 
     if opts.atomic {
+        if opts.create_new {
+            // Atomic + create_new: stage to tempfile + rename, but reject
+            // pre-existing target via OpenOptions::create_new on the
+            // tempfile so two concurrent calls can't both pass a stat.
+            // Closes VULN-F7 (create_new TOCTOU race).
+            if fs::metadata(&resolved).await.is_ok() {
+                return Err(FsError::InvalidInput(format!(
+                    "file already exists: {}",
+                    resolved.display()
+                )));
+            }
+        }
         write_atomic(&resolved, &body).await?;
+    } else if opts.create_new {
+        // Non-atomic + create_new: use OpenOptions::create_new(true) so
+        // the kernel atomically rejects pre-existing targets — no TOCTOU
+        // window between metadata-check and open. Closes VULN-F7.
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&resolved)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    FsError::InvalidInput(format!("file already exists: {}", resolved.display()))
+                } else {
+                    FsError::Io(e.to_string())
+                }
+            })?;
+        file.write_all(&body)
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
+        file.flush()
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
     } else {
         fs::write(&resolved, &body)
             .await

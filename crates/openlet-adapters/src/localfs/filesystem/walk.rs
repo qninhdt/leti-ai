@@ -16,6 +16,13 @@ use regex::RegexBuilder;
 /// Cap grep file size to bound memory + tail-latency on accidental
 /// loopback symlinks (e.g. `/proc/self/mem`) and giant binaries.
 const GREP_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+/// Cap total bytes read across the walk. Without this, a workspace of
+/// 50k 8 MiB files = 400 GiB read per grep call. Saturates the blocking
+/// pool. Aborts gracefully when exceeded.
+const GREP_MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
+/// Cap files visited so a workspace of millions of small files cannot
+/// stall a single grep dispatch indefinitely.
+const GREP_MAX_FILES: usize = 50_000;
 
 /// Floor `index` to the nearest UTF-8 char boundary at or below it.
 fn floor_char_boundary(s: &str, mut index: usize) -> usize {
@@ -94,14 +101,23 @@ pub(crate) async fn grep(root: &Path, args: GrepArgs) -> Result<Vec<GrepHit>, Fs
 
     tokio::task::spawn_blocking(move || -> Vec<GrepHit> {
         let mut hits: Vec<GrepHit> = Vec::new();
+        let mut files_visited: usize = 0;
+        let mut total_bytes_read: u64 = 0;
         let walker = WalkBuilder::new(&root).hidden(false).build();
         'walk: for entry in walker.flatten() {
             if hits.len() >= max_hits {
                 break 'walk;
             }
+            if files_visited >= GREP_MAX_FILES {
+                break 'walk;
+            }
+            if total_bytes_read >= GREP_MAX_TOTAL_BYTES {
+                break 'walk;
+            }
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
+            files_visited += 1;
             let path = entry.path();
             let rel = path.strip_prefix(&root).unwrap_or(path);
             if let Some(g) = &path_glob {
@@ -111,10 +127,13 @@ pub(crate) async fn grep(root: &Path, args: GrepArgs) -> Result<Vec<GrepHit>, Fs
             }
             let content = match std::fs::metadata(path) {
                 Ok(m) if m.len() > GREP_MAX_FILE_BYTES => continue,
-                Ok(_) => match std::fs::read_to_string(path) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                },
+                Ok(m) => {
+                    total_bytes_read = total_bytes_read.saturating_add(m.len());
+                    match std::fs::read_to_string(path) {
+                        Ok(s) => s,
+                        Err(_) => continue,
+                    }
+                }
                 Err(_) => continue,
             };
             for (idx, line) in content.lines().enumerate() {
