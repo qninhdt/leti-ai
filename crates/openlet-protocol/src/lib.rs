@@ -5,7 +5,7 @@
 pub mod dto;
 
 pub use dto::{
-    AbortAckDto, AgentDto, CreateMessageDto, CreateSessionDto, DeltaKindDto, ErrorDto, EventDto,
-    HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind, PermissionRequestDto,
-    PromptAckDto, QuestionAnswerDto, SessionDto, SetModeDto, UsageDto,
+    AbortAckDto, AgentDto, AttachmentKindDto, CreateMessageDto, CreateSessionDto, DeltaKindDto,
+    ErrorDto, EventDto, HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind,
+    PermissionRequestDto, PromptAckDto, QuestionAnswerDto, SessionDto, SetModeDto, UsageDto,
 };

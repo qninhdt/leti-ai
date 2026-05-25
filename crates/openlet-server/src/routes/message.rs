@@ -245,7 +245,18 @@ async fn drive_loop(
         let parts = state.memory.list_parts(session_id, m.id).await?;
         parts_by_msg.insert(m.id, parts);
     }
-    let llm_messages = project_for_llm(&messages, &parts_by_msg, ProjectionCaps::default());
+    // Resolve provider capabilities by model so vision-capable
+    // sessions don't degrade attachments to text. Uses the workspace's
+    // configured default model — Phase 5 wires per-session model
+    // overrides through SessionMeta.
+    let model = state.config.default_model.clone();
+    let provider_caps = state.provider.capabilities(&model);
+    let projection_caps = ProjectionCaps {
+        supports_reasoning_replay: false,
+        supports_image_input: provider_caps.supports_vision,
+        supports_document_input: provider_caps.supports_document_input,
+    };
+    let llm_messages = project_for_llm(&messages, &parts_by_msg, projection_caps);
 
     // Materialize tool specs from registry.
     let tools: Vec<openlet_core::adapters::model_provider::ToolSpec> = state

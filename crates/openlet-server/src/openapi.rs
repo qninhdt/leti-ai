@@ -4,13 +4,14 @@
 //! `OpenApi` derive below collects them into the `/doc/openapi.json` doc.
 
 use openlet_protocol::{
-    AbortAckDto, AgentDto, CreateMessageDto, CreateSessionDto, DeltaKindDto, ErrorDto, EventDto,
-    HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind, PermissionRequestDto,
-    PromptAckDto, SessionDto, SetModeDto, UsageDto, dto::QuestionAnswerDto,
+    AbortAckDto, AgentDto, AttachmentKindDto, CreateMessageDto, CreateSessionDto, DeltaKindDto,
+    ErrorDto, EventDto, HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind,
+    PermissionRequestDto, PromptAckDto, SessionDto, SetModeDto, UsageDto, dto::QuestionAnswerDto,
 };
 use utoipa::OpenApi;
 
 use crate::diagnostics::{CheckResult, DoctorReport, Status};
+use crate::routes::attachments::AttachmentAck;
 use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
 
 #[derive(OpenApi)]
@@ -24,6 +25,8 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
     components(schemas(
         AbortAckDto,
         AgentDto,
+        AttachmentAck,
+        AttachmentKindDto,
         CheckResult,
         CreateMessageDto,
         CreateSessionDto,

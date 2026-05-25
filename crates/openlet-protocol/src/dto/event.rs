@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use openlet_core::types::event::{AgentEvent, AskOption, DeltaKind, Usage};
+use openlet_core::types::event::{AgentEvent, AskOption, AttachmentKind, DeltaKind, Usage};
 use openlet_core::types::session::SessionStatus;
 
 use super::permission::PermissionRequestDto;
@@ -96,7 +96,33 @@ pub enum EventDto {
         plan: String,
         at: DateTime<Utc>,
     },
+    AttachmentAccepted {
+        session_id: Uuid,
+        message_id: Uuid,
+        part_id: Uuid,
+        artifact_id: String,
+        attachment_kind: AttachmentKindDto,
+        mime: String,
+        summary: String,
+    },
     Heartbeat,
+}
+
+/// Wire shape for `AttachmentKind`. Mirrors the domain enum 1:1.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKindDto {
+    Image,
+    Document,
+}
+
+impl From<AttachmentKind> for AttachmentKindDto {
+    fn from(k: AttachmentKind) -> Self {
+        match k {
+            AttachmentKind::Image => Self::Image,
+            AttachmentKind::Document => Self::Document,
+        }
+    }
 }
 
 /// Wire shape for an `ask_user` option.
@@ -288,6 +314,23 @@ impl From<AgentEvent> for EventDto {
                 session_id: session_id.as_uuid(),
                 plan,
                 at,
+            },
+            AgentEvent::AttachmentAccepted {
+                session_id,
+                message_id,
+                part_id,
+                artifact_id,
+                attachment_kind,
+                mime,
+                summary,
+            } => Self::AttachmentAccepted {
+                session_id: session_id.as_uuid(),
+                message_id: message_id.as_uuid(),
+                part_id: part_id.as_uuid(),
+                artifact_id,
+                attachment_kind: attachment_kind.into(),
+                mime,
+                summary,
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

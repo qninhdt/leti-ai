@@ -2,6 +2,7 @@
 //! session/message/cancel/agent/permission/event/plugin surface.
 
 pub mod agent;
+pub mod attachments;
 pub mod cancel;
 pub mod diagnostics;
 pub mod event;

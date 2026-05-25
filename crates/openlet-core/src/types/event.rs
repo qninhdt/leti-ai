@@ -113,8 +113,33 @@ pub enum AgentEvent {
         plan: String,
         at: DateTime<Utc>,
     },
+    /// `attachment.accepted` — durable. Emitted by the multipart upload
+    /// route after the bytes are persisted to `ArtifactStore` and the
+    /// matching `Part::Image` / `Part::Document` is appended to the
+    /// session. Frontends render an attachment chip without re-fetching
+    /// the message log. `summary` is human-readable (e.g. "PNG 1024x768"
+    /// or "PDF, 12 pages, 3.4kB extracted text") — never includes
+    /// extracted text body so audit redactor doesn't have to scan it.
+    AttachmentAccepted {
+        session_id: SessionId,
+        message_id: MessageId,
+        part_id: PartId,
+        artifact_id: String,
+        attachment_kind: AttachmentKind,
+        mime: String,
+        summary: String,
+    },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,
+}
+
+/// Discriminator for `AttachmentAccepted`. Mirrors the upload route's
+/// content-sniff result so the frontend doesn't have to re-classify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttachmentKind {
+    Image,
+    Document,
 }
 
 /// One selectable option for an `ask_user` prompt. Rendered by the

@@ -20,10 +20,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use openlet_core::adapters::model_provider::{
-    ChatDelta, ChatRequest, ChatStream, ModelPricing, ModelProvider,
+    ChatDelta, ChatRequest, ChatStream, ModelPricing, ModelProvider, ProviderCapabilities,
 };
 use openlet_core::error::ProviderError;
 
+use super::capabilities::capabilities_for;
 use super::chunk_decoder::decode_chunk;
 use super::pricing::pricing_for;
 use super::sse::SseParser;
@@ -171,6 +172,10 @@ impl ModelProvider for OpenAiCompatProvider {
 
     fn pricing(&self, model: &str) -> Option<ModelPricing> {
         pricing_for(model)
+    }
+
+    fn capabilities(&self, model: &str) -> ProviderCapabilities {
+        capabilities_for(model)
     }
 }
 

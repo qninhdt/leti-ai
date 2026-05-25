@@ -139,7 +139,8 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         | AgentEvent::PermissionResolved { session_id, .. }
         | AgentEvent::QuestionRequested { session_id, .. }
         | AgentEvent::PlanModeEntered { session_id, .. }
-        | AgentEvent::PlanModeExited { session_id, .. } => Some(*session_id),
+        | AgentEvent::PlanModeExited { session_id, .. }
+        | AgentEvent::AttachmentAccepted { session_id, .. } => Some(*session_id),
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }

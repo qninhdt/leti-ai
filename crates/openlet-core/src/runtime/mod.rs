@@ -6,6 +6,7 @@
 //! that bridges `Processor` to `MemoryStore` + `EventSink`.
 
 pub mod agent_allowlist;
+pub mod attachments;
 pub mod compaction;
 pub mod conversation;
 pub mod cost;

@@ -7,7 +7,9 @@
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
@@ -17,7 +19,8 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::app_state::AppState;
 use crate::openapi::ApiDoc;
 use crate::routes::{
-    agent, cancel, diagnostics, event, health, message, permission, plugin, question, session,
+    agent, attachments, cancel, diagnostics, event, health, message, permission, plugin, question,
+    session,
 };
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
@@ -42,6 +45,7 @@ impl Default for RouterBuilder {
             .with_agent_routes()
             .with_plugin_routes()
             .with_diagnostics_routes()
+            .with_attachment_routes()
     }
 }
 
@@ -124,6 +128,22 @@ impl RouterBuilder {
     #[must_use]
     pub fn with_diagnostics_routes(mut self) -> Self {
         self.inner = self.inner.routes(routes!(diagnostics::report));
+        self
+    }
+
+    /// `POST /v1/sessions/:id/attachments` — multipart upload. Body is
+    /// capped at 25MB via a route-specific `RequestBodyLimitLayer` that
+    /// disables the global 2MB cap (closes F3.1).
+    #[must_use]
+    pub fn with_attachment_routes(mut self) -> Self {
+        let layered = OpenApiRouter::with_openapi(ApiDoc::openapi())
+            .routes(routes!(attachments::upload))
+            .layer(
+                ServiceBuilder::new()
+                    .layer(DefaultBodyLimit::disable())
+                    .layer(RequestBodyLimitLayer::new(attachments::MAX_UPLOAD_BYTES)),
+            );
+        self.inner = self.inner.merge(layered);
         self
     }
 

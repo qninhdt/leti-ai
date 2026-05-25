@@ -145,6 +145,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::QuestionRequested { .. } => "question.requested",
         AgentEvent::PlanModeEntered { .. } => "plan_mode.entered",
         AgentEvent::PlanModeExited { .. } => "plan_mode.exited",
+        AgentEvent::AttachmentAccepted { .. } => "attachment.accepted",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }

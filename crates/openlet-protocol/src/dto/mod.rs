@@ -13,7 +13,7 @@ pub mod session;
 
 pub use agent::AgentDto;
 pub use error::ErrorDto;
-pub use event::{DeltaKindDto, EventDto, UsageDto};
+pub use event::{AttachmentKindDto, DeltaKindDto, EventDto, UsageDto};
 pub use health::HealthDto;
 pub use message::{CreateMessageDto, MessageDto, PromptAckDto};
 pub use part::PartDto;

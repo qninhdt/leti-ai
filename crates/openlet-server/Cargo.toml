@@ -14,7 +14,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-axum = { workspace = true, features = ["json", "tokio", "http1", "http2", "macros", "query"] }
+axum = { workspace = true, features = ["json", "tokio", "http1", "http2", "macros", "query", "multipart"] }
 bytes.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -36,7 +36,7 @@ tokio = { workspace = true, features = ["full"] }
 tokio-stream = { workspace = true, features = ["sync"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tower = { workspace = true, features = ["util"] }
-tower-http = { workspace = true, features = ["trace", "cors"] }
+tower-http = { workspace = true, features = ["trace", "cors", "limit"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 utoipa.workspace = true
@@ -44,11 +44,16 @@ utoipa-axum.workspace = true
 utoipa-swagger-ui.workspace = true
 uuid.workspace = true
 
+# Phase 3 — re-export `infer` so the multipart route can content-sniff
+# without depending on `image::guess_format` (single canonical source).
+infer = "0.16"
+
 [lints]
 workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 openlet-plugin-test-quota-stub.workspace = true
 tempfile.workspace = true
 rust_decimal.workspace = true

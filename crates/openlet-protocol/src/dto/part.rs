@@ -37,7 +37,17 @@ pub enum PartDto {
     },
     Image {
         id: Uuid,
+        artifact_id: String,
         mime: String,
+        width: u32,
+        height: u32,
+    },
+    Document {
+        id: Uuid,
+        artifact_id: String,
+        mime: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extracted_text: Option<String>,
     },
     StepStart {
         id: Uuid,
@@ -93,9 +103,29 @@ impl From<Part> for PartDto {
                 text,
                 error,
             },
-            Part::Image { id, mime, .. } => Self::Image {
-                id: id.as_uuid(),
+            Part::Image {
+                id,
+                artifact_id,
                 mime,
+                width,
+                height,
+            } => Self::Image {
+                id: id.as_uuid(),
+                artifact_id,
+                mime,
+                width,
+                height,
+            },
+            Part::Document {
+                id,
+                artifact_id,
+                mime,
+                extracted_text,
+            } => Self::Document {
+                id: id.as_uuid(),
+                artifact_id,
+                mime,
+                extracted_text,
             },
             Part::StepStart { id } => Self::StepStart { id: id.as_uuid() },
             Part::StepFinish { id, reason } => Self::StepFinish {

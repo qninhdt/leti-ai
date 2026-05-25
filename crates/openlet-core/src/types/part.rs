@@ -1,6 +1,5 @@
 use std::fmt;
 
-use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -61,11 +60,27 @@ pub enum Part {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
+    /// Image attachment. Bytes live in the `ArtifactStore` keyed by
+    /// `artifact_id`; the part carries only the pointer + display
+    /// metadata so the on-the-wire JSON stays compact and replay
+    /// doesn't drag pixels through the projection layer.
     Image {
         id: PartId,
+        artifact_id: String,
         mime: String,
-        #[serde(with = "bytes_serde")]
-        bytes: Bytes,
+        width: u32,
+        height: u32,
+    },
+    /// PDF (or future document type) attachment. Original bytes are in
+    /// the artifact store; `extracted_text` carries the truncated inline
+    /// preview that the model sees during projection (full text is
+    /// always available via the artifact id).
+    Document {
+        id: PartId,
+        artifact_id: String,
+        mime: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extracted_text: Option<String>,
     },
     StepStart {
         id: PartId,
@@ -110,24 +125,11 @@ impl Part {
             | Self::ToolCall { id, .. }
             | Self::ToolResult { id, .. }
             | Self::Image { id, .. }
+            | Self::Document { id, .. }
             | Self::StepStart { id, .. }
             | Self::StepFinish { id, .. }
             | Self::Compaction { id, .. }
             | Self::Plan { id, .. } => *id,
         }
-    }
-}
-
-mod bytes_serde {
-    use bytes::Bytes;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(b: &Bytes, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_bytes(b)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Bytes, D::Error> {
-        let v: Vec<u8> = Vec::deserialize(d)?;
-        Ok(Bytes::from(v))
     }
 }

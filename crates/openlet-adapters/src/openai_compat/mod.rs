@@ -7,6 +7,7 @@
 //!
 //! `pricing` is the static OpenRouter pricing table.
 
+pub mod capabilities;
 pub mod chunk_decoder;
 pub mod pricing;
 pub mod provider;

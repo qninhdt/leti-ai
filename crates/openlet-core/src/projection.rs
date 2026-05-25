@@ -18,6 +18,7 @@ use crate::types::part::Part;
 pub struct ProjectionCaps {
     pub supports_reasoning_replay: bool,
     pub supports_image_input: bool,
+    pub supports_document_input: bool,
 }
 
 /// One LLM-shape message. `tool_calls` and `tool` role messages are paired
@@ -89,7 +90,7 @@ pub fn project_for_llm(
         let parts = parts_by_msg.get(&msg.id).map(Vec::as_slice).unwrap_or(&[]);
         match msg.role {
             Role::System => project_system(parts, &mut out),
-            Role::User => project_user(parts, &mut out),
+            Role::User => project_user(parts, caps, &mut out),
             Role::Assistant => project_assistant(parts, caps, &mut out),
             Role::Tool => project_tool(parts, &mut out),
         }
@@ -157,9 +158,17 @@ fn project_system(parts: &[Part], out: &mut Vec<LlmMessage>) {
     });
 }
 
-fn project_user(parts: &[Part], out: &mut Vec<LlmMessage>) {
-    let content = collect_text(parts);
-    if content.is_empty() && !parts.iter().any(|p| matches!(p, Part::Image { .. })) {
+fn project_user(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>) {
+    let mut content = collect_text(parts);
+    let attachment_text = collect_attachment_fallback_text(parts, caps);
+    if !attachment_text.is_empty() {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(&attachment_text);
+    }
+    let has_image_part = parts.iter().any(|p| matches!(p, Part::Image { .. }));
+    if content.is_empty() && !has_image_part {
         return;
     }
     out.push(LlmMessage {
@@ -169,6 +178,60 @@ fn project_user(parts: &[Part], out: &mut Vec<LlmMessage>) {
         tool_calls: Vec::new(),
         tool_call_id: None,
     });
+}
+
+/// Gather a text fallback for `Part::Image` / `Part::Document` parts.
+///
+/// Phase-3 projection emits image / document attachments as inline
+/// text placeholders (with extracted PDF text inlined when available).
+/// Phase 5+ will fork on `ProjectionCaps` to emit native multipart
+/// content for vision-capable providers; today both code paths share
+/// the text fallback so the model still sees *something* about the
+/// attachment.
+fn collect_attachment_fallback_text(parts: &[Part], caps: ProjectionCaps) -> String {
+    let mut buf = String::new();
+    for p in parts {
+        match p {
+            Part::Image {
+                artifact_id, mime, ..
+            } => {
+                if caps.supports_image_input {
+                    // Vision-capable models receive the image as a
+                    // multipart block at the wire layer; the text
+                    // fallback is suppressed so the placeholder text
+                    // doesn't compete with the actual image content.
+                    continue;
+                }
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                buf.push_str(&format!(
+                    "[image artifact {artifact_id} ({mime}) — vision not supported on this model]"
+                ));
+            }
+            Part::Document {
+                artifact_id,
+                mime,
+                extracted_text,
+                ..
+            } => {
+                if !buf.is_empty() {
+                    buf.push('\n');
+                }
+                if caps.supports_document_input {
+                    buf.push_str(&format!("[document artifact {artifact_id} ({mime})]"));
+                } else if let Some(text) = extracted_text {
+                    buf.push_str(&format!(
+                        "[document artifact {artifact_id} ({mime})]\n{text}"
+                    ));
+                } else {
+                    buf.push_str(&format!("[document artifact {artifact_id} ({mime})]"));
+                }
+            }
+            _ => {}
+        }
+    }
+    buf
 }
 
 fn project_assistant(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>) {

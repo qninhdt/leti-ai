@@ -463,6 +463,7 @@ fn part_kind(part: &Part) -> &'static str {
         Part::ToolCall { .. } => "tool_call",
         Part::ToolResult { .. } => "tool_result",
         Part::Image { .. } => "image",
+        Part::Document { .. } => "document",
         Part::StepStart { .. } => "step_start",
         Part::StepFinish { .. } => "step_finish",
         Part::Compaction { .. } => "compaction",

@@ -56,6 +56,14 @@ impl AppError {
     pub fn internal(code: &'static str, message: impl Into<String>) -> Self {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, code, message)
     }
+
+    pub fn unsupported_media_type(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNSUPPORTED_MEDIA_TYPE, code, message)
+    }
+
+    pub fn unprocessable_entity(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNPROCESSABLE_ENTITY, code, message)
+    }
 }
 
 impl IntoResponse for AppError {
