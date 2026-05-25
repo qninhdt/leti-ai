@@ -61,7 +61,6 @@ impl TestHarness {
             openrouter_api_key: None,
             default_model: "stub-model".to_string(),
             permission_ruleset_path: None,
-            max_cost_per_session_usd: Decimal::new(5, 0),
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
         };
@@ -70,7 +69,7 @@ impl TestHarness {
             provider.clone(),
             memory.clone(),
             events.clone(),
-            RuntimeConfig::new(Decimal::new(5, 0), "stub-model".to_string()),
+            RuntimeConfig::new("stub-model".to_string()),
         ));
 
         let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));

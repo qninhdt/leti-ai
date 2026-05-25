@@ -99,14 +99,10 @@ impl CoreApi for CoreApiImpl {
     }
 
     fn read_config(&self, key: &str) -> Result<serde_json::Value, String> {
-        // Phase 4 exposes only the typed fields plugins need mid-turn.
-        // Unknown keys are an error so plugin authors don't silently
-        // read `Null` and ship buggy quota gates.
+        // Phase 7: max_cost_per_session_usd removed; cost cap is plugin-only.
+        // Plugins that need a cap should track it themselves (see test-quota-stub).
         match key {
             "default_model" => Ok(serde_json::Value::String(self.config.default_model.clone())),
-            "max_cost_per_session_usd" => Ok(serde_json::json!(
-                self.config.max_cost_per_session_usd.to_string()
-            )),
             "bind_addr" => Ok(serde_json::Value::String(self.config.bind_addr.clone())),
             other => Err(format!("unknown config key: {other}")),
         }

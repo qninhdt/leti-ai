@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use super::slug::AgentSlug;
@@ -58,10 +57,6 @@ pub struct AgentDefinition {
     /// `compaction-summarizer` once we add a separate compaction agent.
     #[serde(default)]
     pub hidden: bool,
-    /// Optional per-agent ceiling for cost-per-session (overrides global
-    /// `Config::max_cost_per_session_usd` when present).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_cost_per_session_usd: Option<Decimal>,
 }
 
 impl AgentDefinition {

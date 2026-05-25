@@ -28,7 +28,6 @@ fn test_config() -> Config {
         openrouter_api_key: None,
         default_model: "stub-model".to_string(),
         permission_ruleset_path: None,
-        max_cost_per_session_usd: Decimal::new(5, 0),
         log_format: LogFormat::Pretty,
         plugins: PluginsConfig::default(),
     }
@@ -120,8 +119,6 @@ async fn core_api_read_config_whitelist() {
         core.read_config("default_model").unwrap(),
         json!("stub-model")
     );
-    let max = core.read_config("max_cost_per_session_usd").unwrap();
-    assert!(max.as_str().unwrap().starts_with("5"));
     assert!(core.read_config("bind_addr").unwrap().is_string());
     let err = core.read_config("password").unwrap_err();
     assert!(err.contains("unknown config key"));

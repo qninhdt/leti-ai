@@ -17,7 +17,6 @@ fn agent_with_window(window: u32, threshold: f32) -> AgentDefinition {
         compaction_threshold: threshold,
         compaction_summary_cap_tokens: 500,
         hidden: false,
-        max_cost_per_session_usd: None,
     }
 }
 

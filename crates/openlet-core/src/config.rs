@@ -6,9 +6,7 @@
 
 use std::env;
 use std::path::PathBuf;
-use std::str::FromStr;
 
-use rust_decimal::Decimal;
 use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +19,6 @@ pub struct Config {
     pub openrouter_api_key: Option<SecretString>,
     pub default_model: String,
     pub permission_ruleset_path: Option<PathBuf>,
-    pub max_cost_per_session_usd: Decimal,
     pub log_format: LogFormat,
     pub plugins: PluginsConfig,
 }
@@ -58,10 +55,15 @@ impl Config {
         let default_model = env::var("OPENLET_DEFAULT_MODEL")
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".to_string());
 
-        let max_cost = env::var("OPENLET_MAX_COST_USD")
-            .ok()
-            .and_then(|s| Decimal::from_str(&s).ok())
-            .unwrap_or_else(|| Decimal::new(5, 0));
+        // Phase 7: max_cost_per_session_usd removed. Per-session cost
+        // cap is cloud-only via the quota plugin; local binary has no
+        // cap. Warn if operator still has the env var set.
+        if env::var("OPENLET_MAX_COST_USD").is_ok() {
+            tracing::warn!(
+                "OPENLET_MAX_COST_USD is no longer honored; cost cap is plugin-driven (see test-quota-stub for reference). \
+                 Remove the env var to silence this warning."
+            );
+        }
 
         let log_format = match env::var("OPENLET_LOG_FORMAT").as_deref() {
             Ok("pretty") => LogFormat::Pretty,
@@ -78,7 +80,6 @@ impl Config {
             openrouter_api_key,
             default_model,
             permission_ruleset_path,
-            max_cost_per_session_usd: max_cost,
             log_format,
             plugins: PluginsConfig::default(),
         })

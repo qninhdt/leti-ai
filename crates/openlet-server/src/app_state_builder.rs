@@ -195,10 +195,7 @@ impl AppStateBuilder {
                 provider.clone(),
                 memory.clone(),
                 events.clone(),
-                RuntimeConfig::new(
-                    config.max_cost_per_session_usd,
-                    config.default_model.clone(),
-                ),
+                RuntimeConfig::new(config.default_model.clone()),
                 hook_chains.clone(),
             ))
         });

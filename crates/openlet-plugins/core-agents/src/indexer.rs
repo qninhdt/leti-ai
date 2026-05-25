@@ -26,6 +26,5 @@ pub fn indexer_agent() -> AgentDefinition {
         compaction_threshold: 0.8,
         compaction_summary_cap_tokens: 2_000,
         hidden: false,
-        max_cost_per_session_usd: None,
     }
 }

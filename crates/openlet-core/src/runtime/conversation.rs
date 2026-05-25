@@ -34,16 +34,14 @@ const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Runtime tunables. Plumbed from `openlet_core::config::Config` at boot.
 #[derive(Debug, Clone)]
 pub struct RuntimeConfig {
-    pub max_cost_per_session_usd: Decimal,
     pub idle_timeout: Duration,
     pub default_model: String,
 }
 
 impl RuntimeConfig {
     #[must_use]
-    pub fn new(max_cost_per_session_usd: Decimal, default_model: String) -> Self {
+    pub fn new(default_model: String) -> Self {
         Self {
-            max_cost_per_session_usd,
             idle_timeout: DEFAULT_IDLE_TIMEOUT,
             default_model,
         }

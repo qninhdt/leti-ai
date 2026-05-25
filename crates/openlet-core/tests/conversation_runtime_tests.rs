@@ -232,7 +232,7 @@ fn build(
 }
 
 fn cfg() -> RuntimeConfig {
-    RuntimeConfig::new(Decimal::new(5, 0), "mock-model".into())
+    RuntimeConfig::new("mock-model".into())
 }
 
 fn user_msg(text: &str) -> Vec<LlmMessage> {
