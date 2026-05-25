@@ -127,6 +127,31 @@ impl ModelProvider for OpenAiCompatProvider {
         auth.set_sensitive(true);
         headers.insert(AUTHORIZATION, auth);
 
+        // Merge plugin-injected headers from `OnChatHeaders`. Reserved
+        // headers (auth-bearing) are filtered structurally so a buggy
+        // or malicious plugin cannot hijack upstream credentials. Closes
+        // SA-F3 (plugin Authorization hijack via doc-only protection).
+        for (k, v) in &req.headers {
+            let lk = k.to_ascii_lowercase();
+            if RESERVED_HEADERS.contains(&lk.as_str()) {
+                tracing::warn!(
+                    header = %k,
+                    "plugin attempted to set reserved header; ignoring"
+                );
+                continue;
+            }
+            let Ok(name) = reqwest::header::HeaderName::from_bytes(k.as_bytes()) else {
+                tracing::warn!(header = %k, "plugin header name invalid; ignoring");
+                continue;
+            };
+            let Ok(val) = HeaderValue::from_str(v) else {
+                tracing::warn!(header = %k, "plugin header value invalid; ignoring");
+                continue;
+            };
+            // Insert only if not already present (built-in wins).
+            headers.entry(&name).or_insert(val);
+        }
+
         let response = tokio::select! {
             res = self.inner.http.post(&url).headers(headers).json(&body).send() => {
                 res.map_err(|e| ProviderError::Network(e.to_string()))?
@@ -148,6 +173,18 @@ impl ModelProvider for OpenAiCompatProvider {
         pricing_for(model)
     }
 }
+
+/// Reserved header names plugins cannot set via `OnChatHeaders`. Lower-
+/// case for case-insensitive comparison. The adapter filters these out
+/// structurally so a buggy or hostile plugin cannot hijack upstream
+/// credentials by setting `Authorization`. Closes SA-F3.
+const RESERVED_HEADERS: &[&str] = &[
+    "authorization",
+    "x-api-key",
+    "openai-api-key",
+    "anthropic-api-key",
+    "openrouter-api-key",
+];
 
 async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> ProviderError {
     let retry_after_ms = resp

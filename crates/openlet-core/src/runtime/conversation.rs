@@ -238,6 +238,7 @@ impl ConversationRuntime {
             temperature: params.temperature,
             tools: input.tools,
             stream: true,
+            headers: Default::default(),
         };
 
         let outcome = self

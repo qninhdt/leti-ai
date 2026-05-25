@@ -29,6 +29,7 @@ fn make_request(scenario: &str) -> ChatRequest {
         temperature: Some(0.0),
         tools: vec![],
         stream: true,
+        headers: Default::default(),
     }
 }
 

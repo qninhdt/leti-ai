@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use futures::Stream;
 use rust_decimal::Decimal;
@@ -26,6 +28,14 @@ pub struct ChatRequest {
     pub tools: Vec<ToolSpec>,
     #[serde(default = "default_stream")]
     pub stream: bool,
+    /// Plugin-injected HTTP headers, populated by the `OnChatHeaders`
+    /// hook chain. `String` keys (not `HeaderName`) so `openlet-core`
+    /// stays decoupled from `reqwest`. `BTreeMap` for stable iteration.
+    /// Reserved header names (`authorization`, `x-api-key`, etc.) are
+    /// filtered structurally by adapters before merge — see Phase 6
+    /// RESERVED_HEADERS in openai_compat::provider.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub headers: BTreeMap<String, String>,
 }
 
 const fn default_stream() -> bool {
