@@ -67,6 +67,7 @@ impl OpenAiCompatProvider {
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: Option<SecretString>) -> Self {
         let http = Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .pool_idle_timeout(Some(Duration::from_secs(90)))
             .build()
             .expect("reqwest client build");
@@ -149,14 +150,19 @@ impl ModelProvider for OpenAiCompatProvider {
 }
 
 async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> ProviderError {
+    let retry_after_ms = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|s| s.saturating_mul(1_000))
+        .unwrap_or(1_000);
     let body = resp.text().await.unwrap_or_default();
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
             ProviderError::Auth(truncate(&body, 256))
         }
-        StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimit {
-            retry_after_ms: 1_000,
-        },
+        StatusCode::TOO_MANY_REQUESTS => ProviderError::RateLimit { retry_after_ms },
         s if s.is_server_error() => {
             ProviderError::Network(format!("{s}: {}", truncate(&body, 256)))
         }
