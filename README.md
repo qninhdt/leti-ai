@@ -35,11 +35,12 @@ All config is environment-driven. See [`docs/deployment.md`](docs/deployment.md)
 | `OPENLET_DATA_DIR` | `~/.openlet` | Sqlite, artifact, and session-log root. |
 | `OPENROUTER_API_KEY` | _(unset)_ | OpenRouter / OpenAI-compat credentials. |
 | `OPENLET_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | Default chat model. |
-| `OPENLET_MAX_COST_USD` | `5.00` | Per-session hard limit (USD). |
 | `OPENLET_LOG_FORMAT` | `json` | `json` or `pretty`. |
+| `OPENLET_ENABLE_DOCS` | `1` | Set `0` to remove the `/doc` Swagger UI in cloud builds. |
+| `OPENLET_ALLOW_NON_LOOPBACK` | _(unset)_ | Set `1` to permit non-loopback bind. Required when an authenticating reverse-proxy fronts the listener. |
 | `RUST_LOG` | `info` | Tracing `EnvFilter` directive. |
 
-> **Security note (MVP):** the server binds loopback-only. LAN exposure requires auth, which is post-MVP.
+> **Security note (MVP):** the server binds loopback-only. LAN exposure requires auth, which is post-MVP. Cost cap is plugin-only — see `crates/openlet-plugins/test-quota-stub/` for a reference implementation.
 
 ## Architecture
 
