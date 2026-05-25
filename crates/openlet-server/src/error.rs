@@ -161,25 +161,32 @@ impl From<ConfigError> for AppError {
 
 impl From<ProviderError> for AppError {
     fn from(e: ProviderError) -> Self {
+        // HIGH-F9: provider response bodies may echo the request payload
+        // (some upstreams do for 400s) including conversation context +
+        // partially-substituted secrets. Log internally; return only a
+        // fixed message to the client.
         match e {
             ProviderError::MissingCredentials { .. } | ProviderError::Auth(_) => {
-                Self::new(StatusCode::UNAUTHORIZED, "provider_auth", e.to_string())
+                tracing::warn!(error = %e, "provider auth error");
+                Self::new(StatusCode::UNAUTHORIZED, "provider_auth", "upstream auth error")
             }
-            ProviderError::RateLimit { .. } => Self::new(
+            ProviderError::RateLimit { retry_after_ms } => Self::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "provider_rate_limit",
-                e.to_string(),
+                format!("upstream rate limit (retry after {}ms)", retry_after_ms),
             ),
             ProviderError::Network(_) => {
-                Self::new(StatusCode::BAD_GATEWAY, "provider_network", e.to_string())
+                tracing::warn!(error = %e, "provider network error");
+                Self::new(StatusCode::BAD_GATEWAY, "provider_network", "upstream network error")
             }
             ProviderError::Decode(_) => {
-                Self::new(StatusCode::BAD_GATEWAY, "provider_decode", e.to_string())
+                tracing::warn!(error = %e, "provider decode error");
+                Self::new(StatusCode::BAD_GATEWAY, "provider_decode", "upstream decode error")
             }
             ProviderError::ContextWindowExceeded { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "context_window",
-                e.to_string(),
+                "context window exceeded",
             ),
             ProviderError::Cancelled => {
                 Self::conflict("provider_cancelled", "provider request cancelled")

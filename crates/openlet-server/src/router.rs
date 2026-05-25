@@ -6,6 +6,7 @@
 //! thin wrapper for the reference binary + integration tests.
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -120,6 +121,11 @@ impl RouterBuilder {
             .inner
             .layer(TraceLayer::new_for_http())
             .layer(build_cors_layer())
+            // 2 MiB global body limit applies to ALL routes, not only
+            // Json<T> extractors. Closes Reviewer C important finding —
+            // any non-Json extractor (raw Bytes, future multipart) was
+            // previously unbounded.
+            .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
             .split_for_parts();
 
         router
