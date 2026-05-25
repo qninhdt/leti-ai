@@ -246,5 +246,9 @@ fn project_tool(parts: &[Part], out: &mut Vec<LlmMessage>) {
                 tool_call_id: Some(call_id.clone()),
             });
         }
+        // Part::Plan is durably persisted alongside the tool message
+        // for audit/replay, but the model already sees the plan via
+        // the matching ToolResult. Skipping here keeps projection
+        // deterministic and prevents double-attribution.
     }
 }

@@ -14,10 +14,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::builtins::{
-    AskUserTool, BashTool, EditTool, GlobTool, GrepTool, ListTool, ReadTool, TodoTool, WriteTool,
+    AskUserTool, BashTool, EditTool, EnterPlanModeTool, ExitPlanModeTool, GlobTool, GrepTool,
+    ListTool, ReadTool, TodoTool, WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -36,25 +38,27 @@ where
 pub struct CoreToolsPlugin {
     manifest: PluginManifest,
     shell: Arc<dyn ShellExecutor>,
+    memory: Arc<dyn MemoryStore>,
 }
 
 impl CoreToolsPlugin {
     /// `shell` is the bash executor the `bash` tool forwards into.
-    /// Pass `LocalShellExecutor` from the adapter crate (production)
-    /// or a mock impl (tests). Cloning is cheap — the plugin only
-    /// holds the `Arc`; the registered tool clones it once into its
-    /// own handle.
+    /// `memory` is the session store that `enter_plan_mode` /
+    /// `exit_plan_mode` mutate to flip the active agent profile.
+    /// Both are passed in so production wiring (server crate) decides
+    /// the concrete impls — tests substitute mocks without forking
+    /// core.
     #[must_use]
-    pub fn new(shell: Arc<dyn ShellExecutor>) -> Self {
+    pub fn new(shell: Arc<dyn ShellExecutor>, memory: Arc<dyn MemoryStore>) -> Self {
         Self {
             manifest: PluginManifest {
                 id: "core-tools".into(),
                 name: "Openlet Core Tools".into(),
                 version: Version::new(0, 1, 0),
-                description:
-                    "Ships the eight built-in tools (read, list, glob, grep, write, edit, \
-                     bash, todo) through the plugin extension surface."
-                        .into(),
+                description: "Ships the core built-in tools (read, list, glob, grep, write, edit, \
+                     bash, todo, enter_plan_mode, exit_plan_mode) through the plugin \
+                     extension surface."
+                    .into(),
                 author: Some("Openlet".into()),
                 capabilities: vec![Capability::Tool],
                 core_version_req: VersionReq::parse(">=0.1.0").expect("static version req"),
@@ -62,6 +66,7 @@ impl CoreToolsPlugin {
                 config_schema: None,
             },
             shell,
+            memory,
         }
     }
 }
@@ -82,6 +87,11 @@ impl Plugin for CoreToolsPlugin {
         ctx.register_tool(erase(BashTool::with_executor(self.shell.clone())))?;
         ctx.register_tool(erase(TodoTool))?;
         ctx.register_tool(erase(AskUserTool::new()))?;
+        // Plan-mode tools land at the bottom of the list — sibling
+        // agents adding web_search/web_fetch append after, so merge
+        // conflicts on this file resolve by stacking.
+        ctx.register_tool(erase(EnterPlanModeTool::new(self.memory.clone())))?;
+        ctx.register_tool(erase(ExitPlanModeTool::new(self.memory.clone())))?;
         Ok(())
     }
 }

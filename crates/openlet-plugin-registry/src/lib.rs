@@ -10,6 +10,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use futures::FutureExt;
+use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::adapters::model_provider::ModelProvider;
 use openlet_core::agent::AgentDefinition;
 use openlet_core::tools::ToolHandle;
@@ -23,13 +24,20 @@ use semver::Version;
 /// Returns the compile-time list of plugins shipped in this build.
 ///
 /// `shell` flows into `core-tools::CoreToolsPlugin` so the `bash` tool
-/// can dispatch into the host's `LocalShellExecutor`. The same shell
-/// stays available to other plugins through `CoreApi` if they need it.
+/// can dispatch into the host's `LocalShellExecutor`. `memory` flows in
+/// for the plan-mode tools — they call `MemoryStore::switch_agent` to
+/// flip the active agent profile. The same shell + memory stay
+/// available to other plugins through `CoreApi` if they need them.
 #[must_use]
-pub fn all_plugins(shell: Arc<dyn ShellExecutor>) -> Vec<Arc<dyn Plugin>> {
+pub fn all_plugins(
+    shell: Arc<dyn ShellExecutor>,
+    memory: Arc<dyn MemoryStore>,
+) -> Vec<Arc<dyn Plugin>> {
     vec![
         Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new()),
-        Arc::new(openlet_plugin_core_tools::CoreToolsPlugin::new(shell)),
+        Arc::new(openlet_plugin_core_tools::CoreToolsPlugin::new(
+            shell, memory,
+        )),
     ]
 }
 

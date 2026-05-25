@@ -105,6 +105,10 @@ impl MemoryStore for HookedMemoryStore {
         self.inner.update_permission_mode(session, mode).await
     }
 
+    async fn switch_agent(&self, session: SessionId, agent_slug: &str) -> Result<(), MemoryError> {
+        self.inner.switch_agent(session, agent_slug).await
+    }
+
     async fn update_session_extensions(
         &self,
         session: SessionId,

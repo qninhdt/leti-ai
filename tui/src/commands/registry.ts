@@ -2,6 +2,8 @@
 // Per amendment §C `/danger` toggles permission mode; per plugin §6
 // `/plugins` lists installed plugins.
 
+import { planCommand } from "./builtins/plan.js";
+
 export type Suggestion = {
   display: string;
   description: string;
@@ -13,6 +15,7 @@ export interface CommandContext {
   cancelTurn: () => Promise<void>;
   newSession: () => Promise<void>;
   setMode: (mode: "read_only" | "workspace_write" | "danger") => Promise<void>;
+  enterPlanMode: () => Promise<void>;
   exit: () => void;
 }
 
@@ -68,6 +71,7 @@ export const commands: Command[] = [
     summary: "List installed plugins",
     run: (ctx) => ctx.setView({ kind: "plugins" }),
   },
+  planCommand,
   {
     name: "quit",
     aliases: ["exit", "q"],

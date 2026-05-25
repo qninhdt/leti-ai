@@ -10,11 +10,20 @@ import type { MessageView, PartView } from "../store/index.js";
 
 export interface MessageListProps {
   messages: MessageView[];
+  planMode?: boolean;
 }
 
 export function MessageList(props: MessageListProps): React.ReactElement {
   return (
     <Box flexDirection="column">
+      {props.planMode && (
+        <Box marginBottom={1}>
+          <Text color={theme.badge.accent} bold>
+            ▣ Plan mode
+          </Text>
+          <Text color={theme.text.muted}> · read-only profile until ExitPlanMode</Text>
+        </Box>
+      )}
       {props.messages.map((m) => (
         <MessageCard key={m.id} message={m} />
       ))}

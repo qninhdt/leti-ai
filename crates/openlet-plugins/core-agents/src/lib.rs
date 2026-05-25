@@ -5,6 +5,7 @@
 
 mod general;
 mod indexer;
+mod plan;
 
 use async_trait::async_trait;
 use openlet_plugin_api::manifest::Capability;
@@ -13,6 +14,7 @@ use semver::{Version, VersionReq};
 
 pub use general::{GENERAL_CACHEABLE, general_agent};
 pub use indexer::indexer_agent;
+pub use plan::plan_agent;
 
 /// `core-agents` plugin entry point.
 pub struct CoreAgentsPlugin {
@@ -33,7 +35,7 @@ impl CoreAgentsPlugin {
                 id: "core-agents".into(),
                 name: "Openlet Core Agents".into(),
                 version: Version::new(0, 1, 0),
-                description: "Ships the general assistant + indexer reference agents.".into(),
+                description: "Ships the general assistant + indexer + plan-mode agents.".into(),
                 author: Some("Openlet".into()),
                 capabilities: vec![Capability::Agent],
                 core_version_req: VersionReq::parse(">=0.1.0").expect("static version req"),
@@ -53,6 +55,7 @@ impl Plugin for CoreAgentsPlugin {
     async fn install(&self, ctx: &mut PluginContext) -> Result<(), PluginError> {
         ctx.register_agent(general_agent())?;
         ctx.register_agent(indexer_agent())?;
+        ctx.register_agent(plan_agent())?;
         Ok(())
     }
 }

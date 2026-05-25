@@ -60,6 +60,25 @@ export function App(props: AppProps): React.ReactElement {
           setMode: async (mode) => {
             if (store.activeSessionId) await props.client.setMode(store.activeSessionId, { mode });
           },
+          enterPlanMode: async () => {
+            // F8 strict: /plan only ENTERS plan mode. Exit is via the
+            // model's ExitPlanMode tool. We submit a synthetic user
+            // message asking the model to enter plan mode; the model
+            // then issues the EnterPlanMode tool call. This keeps the
+            // entry path purely in-conversation so the operator's
+            // intent is auditable in the message log.
+            if (!store.activeSessionId) return;
+            await props.client.promptAsync(store.activeSessionId, {
+              parts: [
+                {
+                  id: cryptoRandomId(),
+                  message_id: "",
+                  kind: "text",
+                  text: "Please enter plan mode now using the enter_plan_mode tool, then gather context and produce a plan via exit_plan_mode.",
+                },
+              ],
+            });
+          },
           exit,
         });
         return;
@@ -80,6 +99,7 @@ export function App(props: AppProps): React.ReactElement {
           agent={store.agents.find((a) => a.id === activeAgentId(store)) ?? null}
           messages={store.activeSessionId ? store.messages[store.activeSessionId] ?? [] : []}
           pluginErrors={store.pluginErrors}
+          planMode={store.activeSessionId ? !!store.planMode[store.activeSessionId] : false}
           promptValue={prompt}
           setPromptValue={setPrompt}
           onSubmit={submit}
@@ -168,4 +188,14 @@ function navigateHistory(
   }
   setIdx(next);
   setPrompt(list[next]!);
+}
+
+// crypto.randomUUID is Node 19+; fall back to a simple unique-enough
+// ID for older runtimes. The id is consumed by the server's part
+// validation and never leaves the request, so collision risk on
+// fallback is acceptable.
+function cryptoRandomId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  return `tui-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }

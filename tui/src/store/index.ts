@@ -56,6 +56,10 @@ export interface State {
   plugins: PluginInfoDto[];
   pluginErrors: PluginErrorView[];
   pendingPermissions: Record<string, PermissionRequestDto>;
+  /// Per-session plan-mode flag. Latched by `plan_mode_entered`,
+  /// cleared by `plan_mode_exited`. The TUI reads this to render the
+  /// banner and hint to the user that writes are blocked until exit.
+  planMode: Record<string, boolean>;
   view: ViewKind;
   applyEvent: (ev: EventDto) => void;
   setConn: (status: ConnState, detail?: { attempt?: number; lastEventId?: number }) => void;
@@ -111,6 +115,7 @@ export const useStore = create<State>((set) => ({
   plugins: [],
   pluginErrors: [],
   pendingPermissions: {},
+  planMode: {},
   view: { kind: "chat" },
 
   setConn: (status, detail) =>
@@ -248,6 +253,16 @@ export const useStore = create<State>((set) => ({
             at: Date.now(),
           });
           return { pluginErrors: errs.slice(-20) };
+        }
+
+        case "plan_mode_entered": {
+          return { planMode: { ...s.planMode, [ev.session_id]: true } };
+        }
+
+        case "plan_mode_exited": {
+          const next = { ...s.planMode };
+          delete next[ev.session_id];
+          return { planMode: next };
         }
 
         case "error":

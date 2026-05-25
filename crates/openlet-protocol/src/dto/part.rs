@@ -52,6 +52,10 @@ pub enum PartDto {
         compacted_message_ids: Vec<String>,
         original_token_count: u32,
     },
+    Plan {
+        id: Uuid,
+        plan: String,
+    },
 }
 
 impl From<Part> for PartDto {
@@ -108,6 +112,10 @@ impl From<Part> for PartDto {
                 summary,
                 compacted_message_ids,
                 original_token_count,
+            },
+            Part::Plan { id, plan } => Self::Plan {
+                id: id.as_uuid(),
+                plan,
             },
         }
     }

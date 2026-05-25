@@ -132,7 +132,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         config_arc.clone(),
     ));
     let core_api: Arc<dyn CoreApi> = core_api_impl.clone();
-    let installed = install_plugins(core_api, shell.clone()).await?;
+    let installed = install_plugins(core_api, shell.clone(), inner_memory.clone()).await?;
     let hook_chains = Arc::new(installed.chains);
     // First plugin to register a provider wins; otherwise fall back to
     // the OpenAI-compat provider built from `Config`.
@@ -328,8 +328,9 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
 async fn install_plugins(
     core_api: Arc<dyn CoreApi>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
+    memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
 ) -> anyhow::Result<FinalizedRegistry> {
-    let plugins = openlet_plugin_registry::all_plugins(shell);
+    let plugins = openlet_plugin_registry::all_plugins(shell, memory);
     let configs = std::collections::HashMap::new();
     install_all(plugins, &configs, core_api)
         .await

@@ -81,7 +81,7 @@ impl TestHarness {
         // and `main.rs` in lockstep — any drift would surface as a test
         // that passes locally but fails in production wiring.
         let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
-        let plugins = openlet_plugin_registry::all_plugins(shell.clone());
+        let plugins = openlet_plugin_registry::all_plugins(shell.clone(), memory.clone());
         let configs = std::collections::HashMap::new();
         let installed = install_all(plugins, &configs, core_api)
             .await

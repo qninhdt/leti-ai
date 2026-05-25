@@ -16,6 +16,7 @@ export interface ChatViewProps {
   agent: AgentDto | null;
   messages: MessageView[];
   pluginErrors: PluginErrorView[];
+  planMode: boolean;
   promptValue: string;
   setPromptValue: (v: string) => void;
   onSubmit: (v: string) => void;
@@ -27,7 +28,7 @@ export interface ChatViewProps {
 export function ChatView(props: ChatViewProps): React.ReactElement {
   return (
     <Box flexDirection="column">
-      <MessageList messages={props.messages} />
+      <MessageList messages={props.messages} planMode={props.planMode} />
       {props.pluginErrors.length > 0 && (
         <PluginErrorBanner err={props.pluginErrors[props.pluginErrors.length - 1]!} />
       )}

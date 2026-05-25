@@ -90,6 +90,15 @@ pub enum Part {
         /// Used by post-compaction overflow check (amendment §P).
         original_token_count: u32,
     },
+    /// Frozen plan text emitted by `ExitPlanMode`. Persisted on the
+    /// `tool` message that holds the call's result so subsequent turns
+    /// (and replay) see the plan verbatim. Projection currently ignores
+    /// this part (the tool result already carries the plan to the
+    /// model); the durable copy exists for audit / TUI rendering.
+    Plan {
+        id: PartId,
+        plan: String,
+    },
 }
 
 impl Part {
@@ -103,7 +112,8 @@ impl Part {
             | Self::Image { id, .. }
             | Self::StepStart { id, .. }
             | Self::StepFinish { id, .. }
-            | Self::Compaction { id, .. } => *id,
+            | Self::Compaction { id, .. }
+            | Self::Plan { id, .. } => *id,
         }
     }
 }

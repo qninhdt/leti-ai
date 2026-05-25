@@ -266,6 +266,19 @@ async fn drive_loop(
 
     let read_history = state.read_histories.entry(session_id).or_default().clone();
 
+    // Resolve the session's current profile slug — falls back to
+    // `general` for legacy sessions that pre-date the
+    // current_agent_slug column.
+    let current_slug = session_meta
+        .current_agent_slug
+        .clone()
+        .unwrap_or_else(|| "general".into());
+    let agent_def = openlet_core::agent::AgentSlug::new(current_slug.clone())
+        .ok()
+        .and_then(|slug| state.agent_registry.get(&slug))
+        .cloned()
+        .map(std::sync::Arc::new);
+
     let loop_ctx = LoopContext {
         agent_id,
         fs: agent.fs.clone(),
@@ -276,14 +289,11 @@ async fn drive_loop(
         read_history,
         mode: session_meta.permission_mode,
         max_steps: 50,
-        agent: openlet_core::agent::AgentSlug::new("general")
-            .ok()
-            .and_then(|slug| state.agent_registry.get(&slug))
-            .cloned()
-            .map(std::sync::Arc::new),
+        agent: agent_def,
         hook_chains: state.hook_chains.clone(),
         questions: state.questions.clone(),
         memory: state.memory.clone(),
+        agent_registry: Some(state.agent_registry.clone()),
     };
 
     let input = TurnInput {

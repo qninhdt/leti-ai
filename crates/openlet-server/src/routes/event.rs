@@ -142,6 +142,8 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::Error { .. } => "error",
         AgentEvent::PluginError { .. } => "plugin.error",
         AgentEvent::QuestionRequested { .. } => "question.requested",
+        AgentEvent::PlanModeEntered { .. } => "plan_mode.entered",
+        AgentEvent::PlanModeExited { .. } => "plan_mode.exited",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }
@@ -156,7 +158,9 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         | AgentEvent::StepFinished { session_id, .. }
         | AgentEvent::PermissionAsked { session_id, .. }
         | AgentEvent::PermissionResolved { session_id, .. }
-        | AgentEvent::QuestionRequested { session_id, .. } => Some(*session_id),
+        | AgentEvent::QuestionRequested { session_id, .. }
+        | AgentEvent::PlanModeEntered { session_id, .. }
+        | AgentEvent::PlanModeExited { session_id, .. } => Some(*session_id),
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }

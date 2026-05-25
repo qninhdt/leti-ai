@@ -21,12 +21,16 @@ use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::FinishReason;
 use crate::adapters::permission_manager::PermissionManager;
 use crate::adapters::tool_executor::ToolCtx;
+use crate::agent::AgentRegistry;
 use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::CoreError;
 use crate::hooks::io::{
     AfterTurnCtx, BeforeTurnCtx, CompactionPhase, OnCompactionCtx, OnStepFinishCtx,
 };
 use crate::projection::LlmMessage;
+use crate::runtime::agent_allowlist::{
+    merge_with_denied, partition_by_allowlist, resolve_allowlist,
+};
 use crate::runtime::doom_guard::{self, DoomVerdict, ToolCallSig, TurnSummary as DoomTurnSummary};
 use crate::runtime::question_registry::QuestionRegistry;
 use crate::tools::{ReadHistory, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch};
@@ -68,6 +72,15 @@ pub struct LoopContext {
     /// session metadata without an extra adapter wired through every
     /// caller.
     pub memory: Arc<dyn MemoryStore>,
+    /// Resolves the session's current agent slug to an
+    /// `AgentDefinition` at every tool dispatch (NOT once per turn).
+    /// `None` ⇒ allowlist enforcement is disabled (legacy callers,
+    /// tests). Wired through so plan-mode swaps the active profile
+    /// MID-TURN and the next dispatch sees the new allowlist
+    /// — no race window where a write tool sneaks past the gate
+    /// because the loop snapshotted "general" before EnterPlanMode
+    /// flipped the slug.
+    pub agent_registry: Option<Arc<AgentRegistry>>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -405,17 +418,30 @@ impl ConversationRuntime {
                 questions: Arc::clone(&lc.questions),
                 memory: Arc::clone(&lc.memory),
             };
-            let results = dispatch_batch(
-                &loop_ctx.registry,
-                &loop_ctx.permission,
-                &loop_ctx.hook_chains,
-                &loop_ctx.events,
-                session_id,
-                ctx_for,
-                perm_ctx,
-                invocations.clone(),
-            )
-            .await;
+            // F2.5 — snapshot the active agent slug RIGHT BEFORE dispatch
+            // (not at turn start). A previous tool in the same loop may
+            // have swapped the agent (EnterPlanMode), so the next batch
+            // must see the new allowlist.
+            let allowlist_outcome =
+                resolve_allowlist(memory, session_id, loop_ctx.agent_registry.as_ref()).await;
+            let (allowed, denied) =
+                partition_by_allowlist(&invocations, allowlist_outcome.as_ref());
+            let dispatched_results = if allowed.is_empty() {
+                Vec::new()
+            } else {
+                dispatch_batch(
+                    &loop_ctx.registry,
+                    &loop_ctx.permission,
+                    &loop_ctx.hook_chains,
+                    &loop_ctx.events,
+                    session_id,
+                    ctx_for,
+                    perm_ctx,
+                    allowed,
+                )
+                .await
+            };
+            let results = merge_with_denied(&invocations, dispatched_results, denied);
 
             // Doom-guard check. Abort the loop if the model has spent the
             // last `DEFAULT_THRESHOLD` turns issuing the same (or strictly

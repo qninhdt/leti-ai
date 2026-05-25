@@ -143,6 +143,8 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::Error { .. } => "error",
         AgentEvent::PluginError { .. } => "plugin.error",
         AgentEvent::QuestionRequested { .. } => "question.requested",
+        AgentEvent::PlanModeEntered { .. } => "plan_mode.entered",
+        AgentEvent::PlanModeExited { .. } => "plan_mode.exited",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }

@@ -136,7 +136,9 @@ export type EventDto =
   | { kind: "permission_resolved"; ask_id: string; decision: string }
   | { kind: "error"; session_id?: string; code: string; message: string }
   | { kind: "heartbeat" }
-  | { kind: "plugin_error"; plugin_id: string; code: string; message: string };
+  | { kind: "plugin_error"; plugin_id: string; code: string; message: string }
+  | { kind: "plan_mode_entered"; session_id: string; at: string }
+  | { kind: "plan_mode_exited"; session_id: string; plan: string; at: string };
 
 export type EventName =
   | "session.status"

@@ -41,6 +41,14 @@ pub trait MemoryStore: Send + Sync + 'static {
         mode: PermissionMode,
     ) -> Result<(), MemoryError>;
 
+    /// Switches the session's active agent slug, archiving the prior
+    /// slug into `previous_agent_slug` so `ExitPlanMode` can restore it.
+    /// `agent_slug` is stored as plain text (string) — `AgentSlug`
+    /// validation lives in the typed registry, not the storage layer.
+    /// Returns `SessionNotFound` if the session is missing or
+    /// soft-deleted.
+    async fn switch_agent(&self, session: SessionId, agent_slug: &str) -> Result<(), MemoryError>;
+
     /// Replaces the integrator-owned `extensions` JSON blob on a session.
     /// Core stays auth-blind — schema lives entirely in the integrator
     /// (e.g. `{"user_id": "u_123"}`). Returns `SessionNotFound` if the

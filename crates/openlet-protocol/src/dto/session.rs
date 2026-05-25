@@ -54,6 +54,16 @@ pub struct SessionDto {
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     #[schema(value_type = Object)]
     pub extensions: serde_json::Value,
+    /// Slug of the agent profile the session is currently running.
+    /// `null` ⇒ the runtime falls back to the default profile
+    /// (typically `general`). Plan mode flips this to `plan`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_agent_slug: Option<String>,
+    /// Slug of the profile the session was on before the current
+    /// `current_agent_slug` — used by `ExitPlanMode` to restore the
+    /// prior profile. `null` for sessions that never switched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_agent_slug: Option<String>,
 }
 
 impl From<SessionMeta> for SessionDto {
@@ -69,6 +79,8 @@ impl From<SessionMeta> for SessionDto {
             deleted_at: m.deleted_at,
             version: m.version,
             extensions: m.extensions,
+            current_agent_slug: m.current_agent_slug,
+            previous_agent_slug: m.previous_agent_slug,
         }
     }
 }

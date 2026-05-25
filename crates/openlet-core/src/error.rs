@@ -77,6 +77,7 @@ pub enum FailureClass {
     ToolInvalidInput,
     ToolTimeout,
     ToolIo,
+    ToolNotAllowedInAgent,
     ToolUnimplemented,
 }
 
@@ -105,6 +106,7 @@ impl FailureClass {
             Self::ToolInvalidInput => "tool_invalid_input",
             Self::ToolTimeout => "tool_timeout",
             Self::ToolIo => "tool_io",
+            Self::ToolNotAllowedInAgent => "tool_not_allowed_in_agent",
             Self::ToolUnimplemented => "tool_unimplemented",
         }
     }
@@ -196,6 +198,11 @@ pub enum ToolError {
     Timeout,
     #[error("tool io: {0}")]
     Io(String),
+    /// Tool name not present in the active agent's `tool_allowlist`.
+    /// Surfaced to the model as a corrected-error tool result so it can
+    /// pivot to an allowed tool without seeing a permission failure.
+    #[error("tool '{tool}' not allowed in agent '{agent}'")]
+    NotAllowedInAgent { tool: String, agent: String },
     #[error("not implemented (Phase 1 stub)")]
     Unimplemented,
 }
@@ -251,6 +258,7 @@ impl ToolError {
             Self::InvalidInput(_) => FailureClass::ToolInvalidInput,
             Self::Timeout => FailureClass::ToolTimeout,
             Self::Io(_) => FailureClass::ToolIo,
+            Self::NotAllowedInAgent { .. } => FailureClass::ToolNotAllowedInAgent,
             Self::Unimplemented => FailureClass::ToolUnimplemented,
         }
     }

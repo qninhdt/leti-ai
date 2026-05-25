@@ -44,7 +44,7 @@ mod support;
 #[tokio::test]
 async fn canonical_plugin_set_drains_tools_and_agents() {
     let shell = stub_shell();
-    let plugins = all_plugins(shell);
+    let plugins = all_plugins(shell, stub_memory());
     let configs = HashMap::new();
     let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
 
@@ -101,12 +101,16 @@ async fn quota_stub_installs_with_default_config() {
     let configs = HashMap::new();
 
     // Baseline: canonical plugin set alone.
-    let baseline = install_all(all_plugins(stub_shell()), &configs, core_api.clone())
-        .await
-        .expect("install canonical baseline");
+    let baseline = install_all(
+        all_plugins(stub_shell(), stub_memory()),
+        &configs,
+        core_api.clone(),
+    )
+    .await
+    .expect("install canonical baseline");
 
     // With the quota stub appended.
-    let mut plugins = all_plugins(stub_shell());
+    let mut plugins = all_plugins(stub_shell(), stub_memory());
     plugins.push(Arc::new(QuotaStubPlugin::new()) as Arc<dyn Plugin>);
     let with_stub = install_all(plugins, &configs, core_api)
         .await
@@ -218,4 +222,108 @@ impl ShellExecutor for StubShell {
 
 fn stub_shell() -> Arc<dyn ShellExecutor> {
     Arc::new(StubShell)
+}
+
+fn stub_memory() -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
+    Arc::new(NoopMemory)
+}
+
+#[derive(Default)]
+struct NoopMemory;
+
+#[async_trait]
+impl openlet_core::adapters::memory_store::MemoryStore for NoopMemory {
+    async fn create_session(
+        &self,
+        _: openlet_core::types::agent::AgentId,
+        _: Option<SessionId>,
+    ) -> Result<SessionId, openlet_core::error::MemoryError> {
+        Ok(SessionId::new())
+    }
+    async fn get_session(
+        &self,
+        _: SessionId,
+    ) -> Result<Option<SessionMeta>, openlet_core::error::MemoryError> {
+        Ok(None)
+    }
+    async fn list_sessions(
+        &self,
+        _: openlet_core::types::session::SessionFilter,
+    ) -> Result<Vec<SessionMeta>, openlet_core::error::MemoryError> {
+        Ok(Vec::new())
+    }
+    async fn update_status(
+        &self,
+        _: SessionId,
+        _: openlet_core::types::session::SessionStatus,
+        _: &str,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn update_permission_mode(
+        &self,
+        _: SessionId,
+        _: openlet_core::types::permission::PermissionMode,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn switch_agent(
+        &self,
+        _: SessionId,
+        _: &str,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn update_session_extensions(
+        &self,
+        _: SessionId,
+        _: serde_json::Value,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn delete_session(&self, _: SessionId) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn append_message(
+        &self,
+        _: SessionId,
+        msg: openlet_core::types::message::Message,
+    ) -> Result<openlet_core::types::message::MessageId, openlet_core::error::MemoryError> {
+        Ok(msg.id)
+    }
+    async fn append_part(
+        &self,
+        _: openlet_core::types::message::MessageId,
+        part: openlet_core::types::part::Part,
+    ) -> Result<openlet_core::types::part::PartId, openlet_core::error::MemoryError> {
+        Ok(part.id())
+    }
+    async fn upsert_part(
+        &self,
+        _: openlet_core::types::message::MessageId,
+        _: openlet_core::types::part::PartId,
+        _: openlet_core::types::part::Part,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn list_messages(
+        &self,
+        _: SessionId,
+    ) -> Result<Vec<openlet_core::types::message::Message>, openlet_core::error::MemoryError> {
+        Ok(Vec::new())
+    }
+    async fn list_parts(
+        &self,
+        _: SessionId,
+        _: openlet_core::types::message::MessageId,
+    ) -> Result<Vec<openlet_core::types::part::Part>, openlet_core::error::MemoryError> {
+        Ok(Vec::new())
+    }
+    async fn record_read(
+        &self,
+        _: SessionId,
+        _: std::path::PathBuf,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
 }

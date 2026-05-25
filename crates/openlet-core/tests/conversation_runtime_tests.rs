@@ -67,6 +67,9 @@ impl MemoryStore for MockMemoryStore {
     ) -> Result<(), MemoryError> {
         Ok(())
     }
+    async fn switch_agent(&self, _: SessionId, _: &str) -> Result<(), MemoryError> {
+        Ok(())
+    }
     async fn update_session_extensions(
         &self,
         _: SessionId,

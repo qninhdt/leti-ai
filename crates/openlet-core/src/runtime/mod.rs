@@ -5,6 +5,7 @@
 //! (`conversation`) and the streaming-id bookkeeping (`turn_stream`)
 //! that bridges `Processor` to `MemoryStore` + `EventSink`.
 
+pub mod agent_allowlist;
 pub mod compaction;
 pub mod conversation;
 pub mod cost;

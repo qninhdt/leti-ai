@@ -39,7 +39,7 @@ async fn core_agents_plugin_registers_general_and_indexer() {
     );
     plugin.install(&mut ctx).await.expect("install");
     let agents = ctx.take_registered_agents();
-    assert_eq!(agents.len(), 2);
+    assert_eq!(agents.len(), 3);
 
     let mut registry = AgentRegistry::new();
     for def in agents {
@@ -47,9 +47,18 @@ async fn core_agents_plugin_registers_general_and_indexer() {
     }
     let general = AgentSlug::new("general").unwrap();
     let indexer = AgentSlug::new("indexer").unwrap();
+    let plan = AgentSlug::new("plan").unwrap();
     let g = registry.get(&general).expect("general present");
     let i = registry.get(&indexer).expect("indexer present");
+    let p = registry.get(&plan).expect("plan present");
     assert_eq!(g.tool_allowlist.len(), 8);
     assert_eq!(i.tool_allowlist.len(), 3);
+    // plan agent allowlist: read, list, grep, glob, web_search,
+    // web_fetch, enter_plan_mode, exit_plan_mode
+    assert_eq!(p.tool_allowlist.len(), 8);
+    assert!(p.tool_allowlist.iter().any(|t| t == "read"));
+    assert!(p.tool_allowlist.iter().any(|t| t == "exit_plan_mode"));
+    assert!(!p.tool_allowlist.iter().any(|t| t == "write"));
     assert!(!g.cacheable_prompt().is_empty());
+    assert!(!p.cacheable_prompt().is_empty());
 }

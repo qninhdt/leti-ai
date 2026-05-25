@@ -87,6 +87,15 @@ pub enum EventDto {
         options: Vec<AskOptionDto>,
         multi_select: bool,
     },
+    PlanModeEntered {
+        session_id: Uuid,
+        at: DateTime<Utc>,
+    },
+    PlanModeExited {
+        session_id: Uuid,
+        plan: String,
+        at: DateTime<Utc>,
+    },
     Heartbeat,
 }
 
@@ -266,6 +275,19 @@ impl From<AgentEvent> for EventDto {
                 question,
                 options: options.into_iter().map(AskOptionDto::from).collect(),
                 multi_select,
+            },
+            AgentEvent::PlanModeEntered { session_id, at } => Self::PlanModeEntered {
+                session_id: session_id.as_uuid(),
+                at,
+            },
+            AgentEvent::PlanModeExited {
+                session_id,
+                plan,
+                at,
+            } => Self::PlanModeExited {
+                session_id: session_id.as_uuid(),
+                plan,
+                at,
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

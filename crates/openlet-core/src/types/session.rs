@@ -80,6 +80,20 @@ pub struct SessionMeta {
     pub extensions: serde_json::Value,
     #[serde(default)]
     pub capabilities: SessionCapabilities,
+    /// Slug of the agent PROFILE the session is currently running.
+    /// `None` ⇒ runtime falls back to the default profile (`general`).
+    /// Distinct from `agent_id` (UUID principal that owns the
+    /// workspace); plan mode swaps THIS field, not the principal.
+    #[serde(default)]
+    pub current_agent_slug: Option<String>,
+    /// Slug of the agent profile the session was on BEFORE the current
+    /// `current_agent_slug`. Set by `MemoryStore::switch_agent` on
+    /// every transition so `ExitPlanMode` can restore the prior profile
+    /// without an explicit session-level "plan_mode" flag (plan mode IS
+    /// the agent profile). `None` when the session has never switched
+    /// profiles.
+    #[serde(default)]
+    pub previous_agent_slug: Option<String>,
 }
 
 /// Frontend affordances the session's caller exposes. Default = every

@@ -130,8 +130,9 @@ impl MemoryStore for SqliteMemoryStore {
         sqlx::query(
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
-                 version, created_at, updated_at, deleted_at, extensions, capabilities)
-               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}')"#,
+                 version, created_at, updated_at, deleted_at, extensions,
+                 capabilities, current_agent_slug, previous_agent_slug)
+               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}', NULL, NULL)"#,
         )
         .bind(&id_str)
         .bind(&agent_str)
@@ -150,7 +151,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
-                      version, created_at, updated_at, deleted_at, extensions, capabilities
+                      version, created_at, updated_at, deleted_at, extensions,
+                      capabilities, current_agent_slug, previous_agent_slug
                FROM sessions WHERE id = ?"#,
         )
         .bind(session.to_string())
@@ -164,7 +166,8 @@ impl MemoryStore for SqliteMemoryStore {
     async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {
         let mut sql = String::from(
             "SELECT id, agent_id, parent_session_id, status, permission_mode, \
-             version, created_at, updated_at, deleted_at, extensions, capabilities \
+             version, created_at, updated_at, deleted_at, extensions, capabilities, \
+             current_agent_slug, previous_agent_slug \
              FROM sessions WHERE 1=1",
         );
         if !filter.include_deleted {
@@ -221,6 +224,32 @@ impl MemoryStore for SqliteMemoryStore {
                WHERE id = ? AND deleted_at IS NULL"#,
         )
         .bind(mode_str(mode))
+        .bind(now_ms())
+        .bind(session.to_string())
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        if res.rows_affected() == 0 {
+            return Err(MemoryError::SessionNotFound);
+        }
+        Ok(())
+    }
+
+    async fn switch_agent(&self, session: SessionId, agent_slug: &str) -> Result<(), MemoryError> {
+        // Atomic SET previous := current; current := new. Done in a
+        // single statement so two concurrent switch_agent calls (e.g.
+        // EnterPlanMode + a stale ExitPlanMode racing) can't lose the
+        // pre-swap slug. SQLite serializes writers via the db lock,
+        // which collapses this read+write into a single executor pass.
+        let res = sqlx::query(
+            r#"UPDATE sessions
+               SET previous_agent_slug = current_agent_slug,
+                   current_agent_slug  = ?,
+                   updated_at          = ?
+               WHERE id = ? AND deleted_at IS NULL"#,
+        )
+        .bind(agent_slug)
         .bind(now_ms())
         .bind(session.to_string())
         .execute(&self.pool)
@@ -437,6 +466,7 @@ fn part_kind(part: &Part) -> &'static str {
         Part::StepStart { .. } => "step_start",
         Part::StepFinish { .. } => "step_finish",
         Part::Compaction { .. } => "compaction",
+        Part::Plan { .. } => "plan",
     }
 }
 
@@ -456,6 +486,8 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
     let capabilities: String = row.try_get("capabilities").map_err(map_io)?;
     let capabilities: SessionCapabilities = serde_json::from_str(&capabilities)
         .map_err(|e| MemoryError::Io(format!("capabilities json: {e}")))?;
+    let current_agent_slug: Option<String> = row.try_get("current_agent_slug").map_err(map_io)?;
+    let previous_agent_slug: Option<String> = row.try_get("previous_agent_slug").map_err(map_io)?;
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
@@ -469,6 +501,8 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
         version,
         extensions,
         capabilities,
+        current_agent_slug,
+        previous_agent_slug,
     })
 }
 

@@ -94,6 +94,26 @@ pub enum AgentEvent {
         options: Vec<AskOption>,
         multi_select: bool,
     },
+    /// `plan_mode.entered` — durable. Fired by `EnterPlanMode` after the
+    /// session's active agent slug is switched to the read-only `plan`
+    /// profile. Subscribers (TUI banner, audit log) latch on this so
+    /// they know to surface a "plan mode" indicator until the matching
+    /// `PlanModeExited` arrives.
+    PlanModeEntered {
+        session_id: SessionId,
+        at: DateTime<Utc>,
+    },
+    /// `plan_mode.exited` — durable. Carries the model's final plan
+    /// text so subscribers can render it without re-reading message
+    /// history. Emitted even when the session was not in plan mode
+    /// (F2.6 — `ExitPlanMode` is a no-op-with-event so a naive model
+    /// call still surfaces the plan to the operator).
+    PlanModeExited {
+        session_id: SessionId,
+        plan: String,
+        at: DateTime<Utc>,
+>>>>>>> 34ae823 (feat(core): add plan mode agent profile + EnterPlanMode/ExitPlanMode tools)
+    },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,
 }
