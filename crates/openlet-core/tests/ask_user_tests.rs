@@ -291,6 +291,8 @@ impl MemoryStore for StubMemory {
             version: "0.1.0".into(),
             extensions: serde_json::Value::Null,
             capabilities: caps,
+            current_agent_slug: None,
+            previous_agent_slug: None,
         }))
     }
     async fn list_sessions(&self, _: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {
@@ -302,6 +304,9 @@ impl MemoryStore for StubMemory {
         _: SessionStatus,
         _: &str,
     ) -> Result<(), MemoryError> {
+        Ok(())
+    }
+    async fn switch_agent(&self, _: SessionId, _: &str) -> Result<(), MemoryError> {
         Ok(())
     }
     async fn update_permission_mode(

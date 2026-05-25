@@ -112,7 +112,6 @@ pub enum AgentEvent {
         session_id: SessionId,
         plan: String,
         at: DateTime<Utc>,
->>>>>>> 34ae823 (feat(core): add plan mode agent profile + EnterPlanMode/ExitPlanMode tools)
     },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,

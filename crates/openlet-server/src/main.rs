@@ -450,7 +450,7 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
             events.clone(),
             Arc::new(config.clone()),
         ));
-    let installed = install_plugins(core_api, shell.clone()).await?;
+    let installed = install_plugins(core_api, shell.clone(), memory.clone()).await?;
     let provider = installed.provider.unwrap_or(provider);
     let hook_chains = Arc::new(installed.chains);
 

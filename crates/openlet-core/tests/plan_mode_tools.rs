@@ -147,6 +147,12 @@ impl InMemoryStore {
     }
 }
 
+impl Default for InMemoryStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl MemoryStore for InMemoryStore {
     async fn create_session(
@@ -231,6 +237,8 @@ impl MemoryStore for InMemoryStore {
 }
 
 fn ctx_with_bus(workspace: &std::path::Path, sid: SessionId, bus: Arc<RecordingBus>) -> ToolCtx {
+    use openlet_core::runtime::QuestionRegistry;
+    let memory: Arc<dyn MemoryStore> = Arc::new(InMemoryStore::default());
     ToolCtx {
         session_id: sid,
         agent_id: AgentId::new(),
@@ -243,6 +251,8 @@ fn ctx_with_bus(workspace: &std::path::Path, sid: SessionId, bus: Arc<RecordingB
         artifacts: Arc::new(DiscardArtifacts),
         read_history: ReadHistory::new(),
         cancel: CancellationToken::new(),
+        questions: Arc::new(QuestionRegistry::new()),
+        memory,
     }
 }
 
@@ -258,6 +268,7 @@ fn seed_meta(sid: SessionId, current: Option<&str>, previous: Option<&str>) -> S
         deleted_at: None,
         version: "0.1.0".into(),
         extensions: serde_json::Value::Null,
+        capabilities: openlet_core::types::session::SessionCapabilities::default(),
         current_agent_slug: current.map(str::to_string),
         previous_agent_slug: previous.map(str::to_string),
     }

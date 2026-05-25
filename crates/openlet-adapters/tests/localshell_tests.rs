@@ -160,6 +160,9 @@ fn noop_memory() -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
         ) -> Result<(), MemoryError> {
             Ok(())
         }
+        async fn switch_agent(&self, _: SessionId, _: &str) -> Result<(), MemoryError> {
+            Ok(())
+        }
         async fn update_permission_mode(
             &self,
             _: SessionId,
