@@ -257,9 +257,8 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             .unwrap_or(false);
         if !addr.ip().is_loopback() && !allow_non_loopback {
             anyhow::bail!(
-                "refusing to bind non-loopback address {} without OPENLET_ALLOW_NON_LOOPBACK=1; \
-                 the MVP server has no built-in auth and must not be exposed beyond loopback",
-                addr
+                "refusing to bind non-loopback address {addr} without OPENLET_ALLOW_NON_LOOPBACK=1; \
+                 the MVP server has no built-in auth and must not be exposed beyond loopback"
             );
         }
         if !addr.ip().is_loopback() {

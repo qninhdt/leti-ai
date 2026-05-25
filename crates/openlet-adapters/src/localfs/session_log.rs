@@ -128,13 +128,13 @@ impl Default for SecretRedactor {
         // redacted.
         let raw_patterns = [
             r"(?i)bearer\s+[A-Za-z0-9\-_.=]+",
-            r"sk-[A-Za-z0-9_\-]{16,}",                  // OpenAI / Anthropic
-            r"sk_live_[A-Za-z0-9]{16,}",                // Stripe
-            r"AKIA[0-9A-Z]{16}",                         // AWS
-            r"AIza[0-9A-Za-z_\-]{35}",                  // GCP
-            r"gh[ps]_[A-Za-z0-9]{36}",                   // GitHub PAT/server
-            r"gho_[A-Za-z0-9]{36}",                      // GitHub OAuth
-            r"xox[abp]-[A-Za-z0-9-]{10,}",              // Slack
+            r"sk-[A-Za-z0-9_\-]{16,}",     // OpenAI / Anthropic
+            r"sk_live_[A-Za-z0-9]{16,}",   // Stripe
+            r"AKIA[0-9A-Z]{16}",           // AWS
+            r"AIza[0-9A-Za-z_\-]{35}",     // GCP
+            r"gh[ps]_[A-Za-z0-9]{36}",     // GitHub PAT/server
+            r"gho_[A-Za-z0-9]{36}",        // GitHub OAuth
+            r"xox[abp]-[A-Za-z0-9-]{10,}", // Slack
             r"eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", // JWT
         ];
         let patterns = raw_patterns
@@ -153,7 +153,7 @@ impl SecretRedactor {
         // Whole-name match (case-insensitive) so `tokenizer` doesn't
         // false-positively trigger on `token`. Closes SA-F5.
         let lk = k.to_lowercase();
-        self.sensitive.iter().any(|s| lk == *s)
+        self.sensitive.contains(&lk)
     }
 
     pub fn redact_in_place(&self, v: &mut Value) {

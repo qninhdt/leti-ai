@@ -24,6 +24,7 @@ use crate::hooks::io::{OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx, OnC
 use crate::projection::LlmMessage;
 use crate::runtime::cost::{compute_cost, format_usd};
 use crate::runtime::processor::{Processor, ProcessorState};
+use crate::runtime::prompt::compose_system_prompt;
 use crate::runtime::turn_stream::StreamingPartTracker;
 use crate::types::event::{AgentEvent, Usage};
 use crate::types::message::{Message, MessageId, Role};
@@ -180,16 +181,24 @@ impl ConversationRuntime {
 
         // OnChatMessages — plugins rewrite the message list (compaction,
         // ablation, prompt-prefix injection). O(1) skip when empty.
+        // Compose the per-provider overlay onto the caller's system_prompt
+        // here, after OnChatParams has resolved the final model. Plugins
+        // observing OnChatMessages see (and can rewrite) the composed
+        // prompt.
+        let composed_system_prompt = Some(compose_system_prompt(
+            input.system_prompt.as_deref(),
+            &params.model,
+        ));
         let messages = if self.hook_chains.on_chat_messages.is_empty() {
             OnChatMessagesCtx {
                 model: params.model.clone(),
-                system_prompt: input.system_prompt,
+                system_prompt: composed_system_prompt,
                 messages: input.messages,
             }
         } else {
             let messages_ctx = OnChatMessagesCtx {
                 model: params.model.clone(),
-                system_prompt: input.system_prompt,
+                system_prompt: composed_system_prompt,
                 messages: input.messages,
             };
             match dispatch(&self.hook_chains.on_chat_messages, messages_ctx).await {

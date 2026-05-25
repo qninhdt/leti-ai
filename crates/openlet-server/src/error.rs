@@ -111,7 +111,11 @@ impl From<EventError> for AppError {
     fn from(e: EventError) -> Self {
         match e {
             EventError::BusClosed => Self::internal("event_bus_closed", "event bus closed"),
-            EventError::CursorTooFarBehind { requested, tip, window } => Self::new(
+            EventError::CursorTooFarBehind {
+                requested,
+                tip,
+                window,
+            } => Self::new(
                 axum::http::StatusCode::CONFLICT,
                 "cursor_too_far_behind",
                 format!(
@@ -132,15 +136,11 @@ impl From<PermissionError> for AppError {
             PermissionError::AskNotFound => {
                 Self::not_found("ask_not_found", "permission ask not found")
             }
-            PermissionError::AskExpired => {
-                Self::not_found("ask_expired", "permission ask expired")
-            }
+            PermissionError::AskExpired => Self::not_found("ask_expired", "permission ask expired"),
             PermissionError::Timeout => {
                 Self::conflict("ask_timeout", "permission ask already timed out")
             }
-            PermissionError::Unsupported(m) => {
-                Self::bad_request("unsupported_scope", m)
-            }
+            PermissionError::Unsupported(m) => Self::bad_request("unsupported_scope", m),
             PermissionError::Io(m) => Self::internal("permission_io", m),
             PermissionError::Unimplemented => Self::internal(
                 "permission_unimplemented",
@@ -168,20 +168,32 @@ impl From<ProviderError> for AppError {
         match e {
             ProviderError::MissingCredentials { .. } | ProviderError::Auth(_) => {
                 tracing::warn!(error = %e, "provider auth error");
-                Self::new(StatusCode::UNAUTHORIZED, "provider_auth", "upstream auth error")
+                Self::new(
+                    StatusCode::UNAUTHORIZED,
+                    "provider_auth",
+                    "upstream auth error",
+                )
             }
             ProviderError::RateLimit { retry_after_ms } => Self::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "provider_rate_limit",
-                format!("upstream rate limit (retry after {}ms)", retry_after_ms),
+                format!("upstream rate limit (retry after {retry_after_ms}ms)"),
             ),
             ProviderError::Network(_) => {
                 tracing::warn!(error = %e, "provider network error");
-                Self::new(StatusCode::BAD_GATEWAY, "provider_network", "upstream network error")
+                Self::new(
+                    StatusCode::BAD_GATEWAY,
+                    "provider_network",
+                    "upstream network error",
+                )
             }
             ProviderError::Decode(_) => {
                 tracing::warn!(error = %e, "provider decode error");
-                Self::new(StatusCode::BAD_GATEWAY, "provider_decode", "upstream decode error")
+                Self::new(
+                    StatusCode::BAD_GATEWAY,
+                    "provider_decode",
+                    "upstream decode error",
+                )
             }
             ProviderError::ContextWindowExceeded { .. } => Self::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
