@@ -129,6 +129,13 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
         .iter()
         .filter(|m| !matches!(m.role, LlmRole::System))
         .collect();
+    let request = LlmMessage {
+        role: LlmRole::User,
+        content: COMPACTION_REQUEST.to_owned(),
+        reasoning: None,
+        tool_calls: Vec::new(),
+        tool_call_id: None,
+    };
     if body.len() > keep {
         let split = body.len() - keep;
         for m in &body[..split] {
@@ -136,16 +143,19 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
         }
         // The summarization request goes after the older block so the
         // summarizer has the context above it before the instruction.
-        out.push(LlmMessage {
-            role: LlmRole::User,
-            content: COMPACTION_REQUEST.to_owned(),
-            reasoning: None,
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-        });
+        out.push(request);
         for m in &body[split..] {
             out.push((*m).clone());
         }
+    } else {
+        // Defense-in-depth: should_compact already returned Skip in this
+        // shape, but guarantee we never run a compaction turn without an
+        // explicit summarization instruction. Without this, the model
+        // produces unrelated text that gets stored as the summary.
+        for m in &body {
+            out.push((*m).clone());
+        }
+        out.push(request);
     }
     out
 }

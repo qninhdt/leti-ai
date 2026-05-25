@@ -5,8 +5,11 @@
 //! surface so external Cloud agents can extend or replace them without
 //! forking core.
 
+use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use openlet_core::adapters::model_provider::ModelProvider;
 use openlet_core::agent::AgentDefinition;
 use openlet_core::tools::ToolHandle;
@@ -15,6 +18,7 @@ use openlet_plugin_api::context::{CoreApi, PluginContext};
 use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_api::manifest::PluginManifest;
 use openlet_plugin_api::plugin::{Plugin, PluginError};
+use semver::Version;
 
 /// Returns the compile-time list of plugins shipped in this build.
 ///
@@ -93,15 +97,57 @@ pub async fn install_all(
     let mut tools = Vec::new();
     let mut provider: Option<Arc<dyn ModelProvider>> = None;
     let mut chains = HookChains::new();
+    let mut seen_ids: HashSet<String> = HashSet::with_capacity(plugins.len());
+
+    // Resolve `core` version once per boot from the workspace package
+    // version. Plugins declare a `core_version_req` semver range — boot
+    // refuses any plugin whose req doesn't match.
+    let core_version: Version = env!("CARGO_PKG_VERSION")
+        .parse()
+        .expect("CARGO_PKG_VERSION is a valid semver");
 
     for plugin in &plugins {
         let manifest = plugin.manifest();
+
+        if !seen_ids.insert(manifest.id.clone()) {
+            return Err(PluginError::Runtime(format!(
+                "duplicate plugin id '{}': two plugins claim the same identifier",
+                manifest.id
+            )));
+        }
+
+        if !manifest.core_version_req.matches(&core_version) {
+            return Err(PluginError::IncompatibleCoreVersion {
+                id: manifest.id.clone(),
+                req: manifest.core_version_req.to_string(),
+                have: core_version.to_string(),
+            });
+        }
+
         let raw_cfg = configs
             .get(&manifest.id)
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         let mut ctx = PluginContext::new(manifest.clone(), raw_cfg, Arc::clone(&core_api));
-        plugin.install(&mut ctx).await?;
+
+        // Catch panics inside `install` so a buggy plugin can't crash
+        // server boot. The error surfaces as PluginError::Install with
+        // a descriptive message; operators can disable the plugin via
+        // config and retry.
+        let install_result = AssertUnwindSafe(plugin.install(&mut ctx))
+            .catch_unwind()
+            .await;
+        match install_result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => return Err(e),
+            Err(_) => {
+                return Err(PluginError::Runtime(format!(
+                    "plugin '{}' install panicked",
+                    manifest.id
+                )));
+            }
+        }
+
         let regs = ctx.into_registrations();
 
         if let Some(new_provider) = regs.provider {

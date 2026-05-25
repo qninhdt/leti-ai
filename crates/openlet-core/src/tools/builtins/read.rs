@@ -19,6 +19,19 @@ const DEFAULT_READ_LIMIT: usize = 2000;
 const MAX_LINE_LENGTH: usize = 2000;
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 
+/// Floor `index` to the nearest UTF-8 char boundary at or below it.
+/// Slicing at a non-boundary panics; this keeps `&s[..cut]` safe for any
+/// `cut <= s.len()`. Equivalent of nightly `str::floor_char_boundary`.
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct ReadInput {
     /// Workspace-relative path (or absolute under workspace root).
@@ -98,9 +111,10 @@ impl Tool for ReadTool {
             }
             let trimmed = raw.strip_suffix('\n').unwrap_or(raw);
             let body = if trimmed.len() > MAX_LINE_LENGTH {
+                let cut = floor_char_boundary(trimmed, MAX_LINE_LENGTH);
                 format!(
                     "{}... (line truncated to {MAX_LINE_LENGTH} chars)",
-                    &trimmed[..MAX_LINE_LENGTH]
+                    &trimmed[..cut]
                 )
             } else {
                 trimmed.to_string()

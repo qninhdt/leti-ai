@@ -11,8 +11,10 @@
 //! 3. Error mapping: tool errors become `ToolResult` parts with `ok:
 //!    false` and a model-readable message.
 
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::Value;
 
@@ -125,7 +127,14 @@ pub async fn dispatch_batch(
     }
 
     out.into_iter()
-        .map(|o| o.expect("every slot filled"))
+        .enumerate()
+        .map(|(i, o)| {
+            o.unwrap_or_else(|| ToolDispatchResult {
+                call_id: format!("missing-slot-{i}"),
+                name: String::new(),
+                outcome: Err(ToolError::Io("tool result lost".into())),
+            })
+        })
         .collect()
 }
 
@@ -234,5 +243,13 @@ async fn run_one(
             ));
         }
     }
-    tool.run_json(ctx, inv.args.clone()).await
+    // Catch panics inside `run_json` so a buggy tool can't unwind the
+    // turn loop. Mirrors the dispatch hook protection in `dispatch.rs`.
+    match AssertUnwindSafe(tool.run_json(ctx, inv.args.clone()))
+        .catch_unwind()
+        .await
+    {
+        Ok(res) => res,
+        Err(_) => Err(ToolError::Io(format!("tool '{}' panicked", inv.name))),
+    }
 }

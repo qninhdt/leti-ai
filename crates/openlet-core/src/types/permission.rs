@@ -107,9 +107,15 @@ pub struct PermissionCtx {
 }
 
 /// Scope at which an "always" rule is recorded (§A new method).
+///
+/// `Global` rules apply to every session in the host. The other variants
+/// narrow the rule to a single workspace, agent, or session — the manager
+/// keeps the discriminant on the compiled rule and only consults rules
+/// whose scope matches the active [`PermissionCtx`] at evaluation time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case")]
 pub enum AlwaysScope {
+    Global,
     Workspace { path: PathBuf },
     Agent { id: String },
     Session { id: SessionId },

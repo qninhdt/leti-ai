@@ -13,6 +13,7 @@ use chrono::{DateTime, Utc};
 use openlet_adapters::localfs::SecretRedactor;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use uuid::Uuid;
 
 use crate::cli::{AuditArgs, AuditFormat};
 
@@ -86,7 +87,14 @@ fn resolve_path(args: &AuditArgs, data_dir: &Path) -> Result<PathBuf> {
         .session_id
         .as_ref()
         .ok_or_else(|| anyhow!("audit: pass --session-id <ID> or --file <PATH>"))?;
-    Ok(data_dir.join("sessions").join(format!("{id}.jsonl")))
+    // Reject non-UUID session ids before path-building so a caller
+    // can't escape the sessions/ directory via `..` / absolute paths /
+    // path separators baked into the input.
+    let parsed = Uuid::parse_str(id)
+        .with_context(|| format!("--session-id must be a UUID, got `{id}`"))?;
+    Ok(data_dir
+        .join("sessions")
+        .join(format!("{parsed}.jsonl")))
 }
 
 fn parse_ts(s: Option<&str>, flag: &str) -> Result<Option<DateTime<Utc>>> {
@@ -113,11 +121,28 @@ fn print_pretty(envelope: &Value, line_no: usize) {
         });
     let summary = serde_json::to_string(event).unwrap_or_else(|_| "{}".into());
     let snippet = if summary.len() > 240 {
-        format!("{}…", &summary[..240])
+        // `floor_char_boundary` (stable on 1.79+) walks back to the
+        // nearest UTF-8 boundary so we never slice through a multibyte
+        // codepoint when an event payload contains non-ASCII.
+        let cutoff = floor_char_boundary(&summary, 240);
+        format!("{}…", &summary[..cutoff])
     } else {
         summary
     };
     println!("{ts} [{kind}] (line {line_no}) {snippet}");
+}
+
+/// Inline copy of the unstable `str::floor_char_boundary` so audit
+/// printing never panics on multibyte cuts.
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    let mut i = index;
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 #[cfg(test)]

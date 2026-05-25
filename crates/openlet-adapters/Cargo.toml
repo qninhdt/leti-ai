@@ -37,6 +37,9 @@ tracing.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 openlet-test-mock-provider = { path = "../openlet-test-mock-provider" }

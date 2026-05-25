@@ -25,6 +25,11 @@ pub struct PermissionReplyDto {
     pub decision: PermissionReplyKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// Permission pattern to persist when `decision` is `always_*`.
+    /// Echoed verbatim from the original `permission.asked` event;
+    /// ignored for one-shot `allow`/`deny`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
 }
 
 impl PermissionReplyDto {

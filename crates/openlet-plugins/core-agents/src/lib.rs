@@ -51,8 +51,8 @@ impl Plugin for CoreAgentsPlugin {
     }
 
     async fn install(&self, ctx: &mut PluginContext) -> Result<(), PluginError> {
-        ctx.register_agent(general_agent());
-        ctx.register_agent(indexer_agent());
+        ctx.register_agent(general_agent())?;
+        ctx.register_agent(indexer_agent())?;
         Ok(())
     }
 }

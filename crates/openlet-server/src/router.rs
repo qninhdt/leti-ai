@@ -109,17 +109,55 @@ impl RouterBuilder {
 
     /// Finalize: attach trace+cors layers, mount Swagger UI from the
     /// accumulated OpenAPI doc, bind the state.
+    ///
+    /// CORS defaults to a closed policy (no origins allowed). Set
+    /// `OPENLET_CORS_ALLOW_ORIGINS` to a comma-separated origin list
+    /// (e.g. `https://app.example.com,https://admin.example.com`) to
+    /// allow cross-origin browsers; set `OPENLET_CORS_PERMISSIVE=1` for
+    /// dev-only `Access-Control-Allow-Origin: *` (warns on boot).
     pub fn build(self, state: AppState) -> Router {
         let (router, api) = self
             .inner
             .layer(TraceLayer::new_for_http())
-            .layer(CorsLayer::permissive())
+            .layer(build_cors_layer())
             .split_for_parts();
 
         router
             .merge(SwaggerUi::new("/doc").url("/doc/openapi.json", api))
             .with_state(state)
     }
+}
+
+/// Resolves the CORS layer from env. Closed by default; opt-in to
+/// per-origin allowlist or permissive mode.
+fn build_cors_layer() -> CorsLayer {
+    if std::env::var("OPENLET_CORS_PERMISSIVE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        tracing::warn!(
+            "OPENLET_CORS_PERMISSIVE=1 — CORS layer accepts any origin; \
+             do not enable in production"
+        );
+        return CorsLayer::permissive();
+    }
+
+    if let Ok(origins) = std::env::var("OPENLET_CORS_ALLOW_ORIGINS") {
+        let parsed: Vec<_> = origins
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<axum::http::HeaderValue>().ok())
+            .collect();
+        if !parsed.is_empty() {
+            return CorsLayer::new()
+                .allow_origin(parsed)
+                .allow_methods(tower_http::cors::AllowMethods::mirror_request())
+                .allow_headers(tower_http::cors::AllowHeaders::mirror_request());
+        }
+    }
+
+    CorsLayer::new()
 }
 
 /// Backward-compatible monolithic build. Equivalent to

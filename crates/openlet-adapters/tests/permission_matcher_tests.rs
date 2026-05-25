@@ -127,9 +127,7 @@ async fn cancel_resolves_with_deny() {
 async fn record_always_appends_runtime_rule() {
     let mgr = ConfigPermissionMgr::new();
     mgr.record_always(
-        openlet_core::types::permission::AlwaysScope::Session {
-            id: SessionId::new(),
-        },
+        openlet_core::types::permission::AlwaysScope::Global,
         rule("read:*.md", PermissionAction::Allow),
     )
     .await

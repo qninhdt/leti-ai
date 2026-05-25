@@ -109,9 +109,12 @@ impl PluginContext {
         Arc::clone(&self.core_api)
     }
 
-    /// Register an agent definition.
-    pub fn register_agent(&mut self, def: AgentDefinition) {
+    /// Register an agent definition. Manifest must declare
+    /// `Capability::Agent`.
+    pub fn register_agent(&mut self, def: AgentDefinition) -> Result<(), PluginError> {
+        self.assert_capability(&Capability::Agent, "Agent")?;
         self.registered_agents.push(def);
+        Ok(())
     }
 
     /// Drain agents registered during `install`.

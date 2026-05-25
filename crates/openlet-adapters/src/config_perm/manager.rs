@@ -124,7 +124,7 @@ impl PermissionManager for ConfigPermissionMgr {
 
         let action = {
             let g = self.inner.read().await;
-            g.evaluate(&req.permission)
+            g.evaluate(&ctx, &req.permission)
                 .map(|r| r.action)
                 .unwrap_or_else(|| fallback_for_mode(ctx.mode))
         };
@@ -178,11 +178,11 @@ impl PermissionManager for ConfigPermissionMgr {
 
     async fn record_always(
         &self,
-        _scope: AlwaysScope,
+        scope: AlwaysScope,
         rule: PermissionRule,
     ) -> Result<(), PermissionError> {
-        let compiled =
-            CompiledRule::from_rule(rule).map_err(|e| PermissionError::Io(e.to_string()))?;
+        let compiled = CompiledRule::from_rule_scoped(rule, scope)
+            .map_err(|e| PermissionError::Io(e.to_string()))?;
         let mut g = self.inner.write().await;
         g.push(compiled);
         Ok(())
@@ -263,10 +263,48 @@ mod tests {
     #[tokio::test]
     async fn record_always_appends_rule() {
         let m = ConfigPermissionMgr::new();
+        let session_id = SessionId::new();
+        m.record_always(
+            AlwaysScope::Session { id: session_id },
+            PermissionRule {
+                permission: "edit:*.md".into(),
+                action: PermissionAction::Allow,
+            },
+        )
+        .await
+        .unwrap();
+        let scoped_ctx = PermissionCtx {
+            session_id,
+            mode: PermissionMode::WorkspaceWrite,
+        };
+        let d = m.check(scoped_ctx, req("edit:notes.md")).await.unwrap();
+        assert!(matches!(d, Decision::Allow));
+    }
+
+    #[tokio::test]
+    async fn record_always_session_scope_does_not_leak_across_sessions() {
+        let m = ConfigPermissionMgr::new();
         m.record_always(
             AlwaysScope::Session {
                 id: SessionId::new(),
             },
+            PermissionRule {
+                permission: "edit:*.md".into(),
+                action: PermissionAction::Allow,
+            },
+        )
+        .await
+        .unwrap();
+        // Different session — rule must not apply.
+        let d = m.check(ctx(), req("edit:notes.md")).await.unwrap();
+        assert!(matches!(d, Decision::Pending { .. }));
+    }
+
+    #[tokio::test]
+    async fn record_always_global_scope_applies_everywhere() {
+        let m = ConfigPermissionMgr::new();
+        m.record_always(
+            AlwaysScope::Global,
             PermissionRule {
                 permission: "edit:*.md".into(),
                 action: PermissionAction::Allow,

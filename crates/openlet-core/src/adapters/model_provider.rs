@@ -58,6 +58,10 @@ pub enum FinishReason {
     /// A `before_turn` / `on_cost_tick` plugin returned `HookResult::Stop`.
     /// Loop terminates without emitting a regular `EndTurn`.
     Halted,
+    /// The turn loop hit `LoopContext::max_steps` without the model emitting
+    /// `EndTurn`. Distinct from `MaxTokens` (model-side cap) so cost/audit
+    /// telemetry can tell them apart.
+    MaxSteps,
 }
 
 /// Streaming chunk emitted by `chat_stream`.

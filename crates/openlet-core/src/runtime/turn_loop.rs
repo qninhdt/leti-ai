@@ -27,6 +27,7 @@ use crate::hooks::io::{
     AfterTurnCtx, BeforeTurnCtx, CompactionPhase, OnCompactionCtx, OnStepFinishCtx,
 };
 use crate::projection::LlmMessage;
+use crate::runtime::doom_guard::{self, DoomVerdict, ToolCallSig, TurnSummary as DoomTurnSummary};
 use crate::tools::{ReadHistory, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch};
 use crate::types::agent::AgentId;
 use crate::types::event::AgentEvent;
@@ -93,6 +94,7 @@ impl ConversationRuntime {
         // window healthy. Track the budget explicitly so the `continue;`
         // after a compaction doesn't burn a step.
         let mut model_steps: usize = 0;
+        let mut doom_history: Vec<DoomTurnSummary> = Vec::new();
         loop {
             if model_steps >= loop_ctx.max_steps {
                 break;
@@ -137,7 +139,6 @@ impl ConversationRuntime {
                         // it never issued.
                         let synth_id =
                             append_synthetic_request(memory, &loop_ctx.events, session_id).await?;
-                        superseded.push(synth_id);
                         // Build a one-shot compaction projection and run a
                         // turn. The result text becomes Part::Compaction.
                         let mut compact_input = input.clone();
@@ -147,7 +148,26 @@ impl ConversationRuntime {
                                 keep,
                             );
                         compact_input.tools = Vec::new();
-                        let outcome = self.run_turn(compact_input, cancel.clone()).await?;
+                        // If the compaction turn fails or is cancelled, the
+                        // synthetic "Summarize the conversation above" message
+                        // remains in storage as a real user turn. Roll it back
+                        // by superseding it in a no-op compaction part rather
+                        // than leaving it visible to subsequent projections.
+                        let outcome = match self.run_turn(compact_input, cancel.clone()).await {
+                            Ok(o) => o,
+                            Err(e) => {
+                                let _ = append_compaction_part(
+                                    memory,
+                                    &loop_ctx.events,
+                                    session_id,
+                                    String::new(),
+                                    vec![synth_id],
+                                    0,
+                                )
+                                .await;
+                                return Err(e);
+                            }
+                        };
                         // Drain the freshly produced assistant text into a Compaction part.
                         let summary = collect_assistant_text(
                             memory,
@@ -155,6 +175,24 @@ impl ConversationRuntime {
                             outcome.assistant_message_id,
                         )
                         .await?;
+                        // Refuse to persist an empty summary — that would
+                        // supersede older messages with a blank string and
+                        // silently lose history. Roll back the synthetic
+                        // request and the empty assistant turn, then bubble
+                        // the failure up so the caller can retry.
+                        if summary.trim().is_empty() {
+                            let _ = append_compaction_part(
+                                memory,
+                                &loop_ctx.events,
+                                session_id,
+                                String::new(),
+                                vec![synth_id, outcome.assistant_message_id],
+                                0,
+                            )
+                            .await;
+                            return Err(CoreError::ContextOverflowAfterCompaction);
+                        }
+                        superseded.push(synth_id);
                         // The compaction-turn's assistant message holds the
                         // verbatim summary as Part::Text; substitute it via
                         // the Compaction part on subsequent projections so
@@ -330,9 +368,49 @@ impl ConversationRuntime {
                 session_id,
                 ctx_for,
                 perm_ctx,
-                invocations,
+                invocations.clone(),
             )
             .await;
+
+            // Doom-guard check. Abort the loop if the model has spent the
+            // last `DEFAULT_THRESHOLD` turns issuing the same (or strictly
+            // narrowing) tool-call set without producing text or successful
+            // tool results. `doom_guard::check` is pure; we feed it a rolling
+            // history capped at `threshold + 1` to keep the slice cheap.
+            let summary = build_doom_summary(
+                memory,
+                session_id,
+                outcome.assistant_message_id,
+                &invocations,
+                &results,
+            )
+            .await?;
+            doom_history.push(summary);
+            if doom_history.len() > doom_guard::DEFAULT_THRESHOLD + 1 {
+                let drop = doom_history.len() - (doom_guard::DEFAULT_THRESHOLD + 1);
+                doom_history.drain(0..drop);
+            }
+            if let DoomVerdict::Abort { message } =
+                doom_guard::check(&doom_history, doom_guard::DEFAULT_THRESHOLD)
+            {
+                tracing::warn!(session_id = %session_id, "doom-loop detected; halting");
+                let _ = loop_ctx
+                    .events
+                    .publish(
+                        AgentEvent::Error {
+                            session_id: Some(session_id),
+                            code: "doom_loop".into(),
+                            message: message.clone(),
+                        },
+                        Persistence::Durable,
+                    )
+                    .await;
+                return Ok(LoopOutcome {
+                    steps: model_steps,
+                    finish_reason: FinishReason::Halted,
+                    final_assistant_message_id: outcome.assistant_message_id,
+                });
+            }
 
             // Append a tool-role message holding all results.
             let tool_msg_id =
@@ -343,7 +421,7 @@ impl ConversationRuntime {
         }
         Ok(LoopOutcome {
             steps: loop_ctx.max_steps,
-            finish_reason: FinishReason::MaxTokens,
+            finish_reason: FinishReason::MaxSteps,
             final_assistant_message_id: last_assistant_id.unwrap_or_default(),
         })
     }
@@ -470,4 +548,41 @@ async fn project_session_messages(
         &parts_by_msg,
         ProjectionCaps::default(),
     ))
+}
+
+/// Build a `TurnSummary` for the doom-guard from the assistant message just
+/// produced + the freshly-dispatched tool results. `had_text_output` reflects
+/// any non-empty `Part::Text` body; `had_successful_writes` is any tool result
+/// with `ok=true` from a tool the registry marks `parallel_safe=false` (write
+/// tools serialize). Tool-call signatures use `ToolCallSig::new` over the
+/// invocation's parsed args.
+async fn build_doom_summary(
+    memory: &Arc<dyn MemoryStore>,
+    session_id: SessionId,
+    assistant_message_id: MessageId,
+    invocations: &[ToolInvocation],
+    results: &[ToolDispatchResult],
+) -> Result<DoomTurnSummary, CoreError> {
+    let parts = memory.list_parts(session_id, assistant_message_id).await?;
+    let had_text_output = parts.iter().any(|p| matches!(p, Part::Text { text, .. } if !text.trim().is_empty()));
+    let had_successful_writes = results
+        .iter()
+        .any(|r| matches!(r.outcome, Ok(_)) && !is_read_only_tool(&r.name));
+    let mut tool_calls = std::collections::BTreeSet::new();
+    for inv in invocations {
+        tool_calls.insert(ToolCallSig::new(inv.name.clone(), &inv.args));
+    }
+    Ok(DoomTurnSummary {
+        had_text_output,
+        had_successful_writes,
+        tool_calls,
+    })
+}
+
+/// Names of read-only tools — used by the doom-guard to discriminate
+/// "writes succeeded" from "reads succeeded." Read-only successes don't
+/// reset the loop counter: an agent looping on `read` of the same path
+/// is still looping.
+fn is_read_only_tool(name: &str) -> bool {
+    matches!(name, "read" | "list" | "glob" | "grep")
 }

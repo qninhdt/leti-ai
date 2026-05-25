@@ -20,8 +20,12 @@ const MAX_STDERR: usize = 64 * 1024;
 
 /// Env vars passed to subprocesses. Anything else is dropped so a
 /// command can't leak `OPENROUTER_API_KEY` or similar via `env`.
+///
+/// `HOME` is intentionally excluded: combined with a login shell it
+/// lets a malicious LLM persist across sessions via `~/.bashrc`. We use
+/// `bash -c` (non-login) and let scripts that need a HOME use `TMPDIR`.
 const ENV_ALLOWLIST: &[&str] = &[
-    "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "SHELL", "TMPDIR",
+    "PATH", "USER", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "SHELL", "TMPDIR",
 ];
 
 #[derive(Debug, Clone)]
@@ -45,13 +49,18 @@ impl ShellExecutor for LocalShellExecutor {
         timeout_ms: u64,
     ) -> Result<BashOutput, ToolError> {
         let mut cmd = Command::new("bash");
-        cmd.arg("-lc")
+        cmd.arg("-c")
             .arg(command)
             .current_dir(&self.workspace_root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+
+        // Detach into our own process group so we can SIGKILL grandchildren
+        // (`cmd &`, `nohup`, `setsid`, `disown`) on timeout/cancel.
+        #[cfg(unix)]
+        cmd.process_group(0);
 
         cmd.env_clear();
         let scrubbed = scrubbed_env();
@@ -62,6 +71,8 @@ impl ShellExecutor for LocalShellExecutor {
         let mut child = cmd
             .spawn()
             .map_err(|e| ToolError::Io(format!("spawn bash: {e}")))?;
+        #[cfg(unix)]
+        let pgid = child.id().map(|p| p as i32);
         let mut stdout = child
             .stdout
             .take()
@@ -79,6 +90,8 @@ impl ShellExecutor for LocalShellExecutor {
         let exit_result = tokio::select! {
             biased;
             () = cancel.cancelled() => {
+                #[cfg(unix)]
+                if let Some(pid) = pgid { kill_group(pid); }
                 let _ = child.start_kill();
                 let _ = child.wait().await;
                 return Err(ToolError::Timeout);
@@ -88,6 +101,8 @@ impl ShellExecutor for LocalShellExecutor {
 
         let timed_out = exit_result.is_err();
         if timed_out {
+            #[cfg(unix)]
+            if let Some(pid) = pgid { kill_group(pid); }
             let _ = child.start_kill();
         }
         let exit_status = match exit_result {
@@ -132,4 +147,15 @@ fn scrubbed_env() -> HashMap<String, String> {
         out.insert("PATH".to_string(), "/usr/bin:/bin".to_string());
     }
     out
+}
+
+/// SIGKILL the entire process group, picking up backgrounded
+/// grandchildren that `kill_on_drop`/`start_kill` miss. `nix::killpg`
+/// keeps us inside `unsafe_code = "forbid"` (no raw libc FFI here).
+#[cfg(unix)]
+fn kill_group(pgid: i32) {
+    use nix::sys::signal::{Signal, killpg};
+    use nix::unistd::Pid;
+    // Errors (group already gone, EPERM on a reaped pid) are non-fatal.
+    let _ = killpg(Pid::from_raw(pgid), Signal::SIGKILL);
 }

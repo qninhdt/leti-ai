@@ -106,6 +106,20 @@ pub(crate) async fn write(
         fs::create_dir_all(parent)
             .await
             .map_err(|e| FsError::Io(e.to_string()))?;
+        // Re-canonicalize parent post-create. resolve_in_workspace resolves
+        // the deepest *pre-existing* ancestor and lexically appends the tail,
+        // so a symlink swap in the not-yet-created portion would slip past
+        // the boundary check. Recheck against root_canonical now that every
+        // dir on the path actually exists.
+        let parent_canonical = fs::canonicalize(parent)
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
+        let root_canonical = fs::canonicalize(root)
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
+        if !parent_canonical.starts_with(&root_canonical) {
+            return Err(FsError::OutsideWorkspace(path.display().to_string()));
+        }
     }
 
     if opts.atomic {

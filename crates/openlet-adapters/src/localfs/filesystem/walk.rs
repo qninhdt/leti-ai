@@ -13,6 +13,21 @@ use openlet_core::adapters::filesystem::{GlobOpts, GlobSort, GrepArgs, GrepHit};
 use openlet_core::error::FsError;
 use regex::RegexBuilder;
 
+/// Cap grep file size to bound memory + tail-latency on accidental
+/// loopback symlinks (e.g. `/proc/self/mem`) and giant binaries.
+const GREP_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Floor `index` to the nearest UTF-8 char boundary at or below it.
+fn floor_char_boundary(s: &str, mut index: usize) -> usize {
+    if index >= s.len() {
+        return s.len();
+    }
+    while !s.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
 pub(crate) async fn glob(
     root: &Path,
     pattern: &str,
@@ -94,8 +109,12 @@ pub(crate) async fn grep(root: &Path, args: GrepArgs) -> Result<Vec<GrepHit>, Fs
                     continue;
                 }
             }
-            let content = match std::fs::read_to_string(path) {
-                Ok(s) => s,
+            let content = match std::fs::metadata(path) {
+                Ok(m) if m.len() > GREP_MAX_FILE_BYTES => continue,
+                Ok(_) => match std::fs::read_to_string(path) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                },
                 Err(_) => continue,
             };
             for (idx, line) in content.lines().enumerate() {
@@ -104,7 +123,8 @@ pub(crate) async fn grep(root: &Path, args: GrepArgs) -> Result<Vec<GrepHit>, Fs
                 }
                 if re.is_match(line) {
                     let text = if line.len() > max_line_chars {
-                        format!("{}...", &line[..max_line_chars])
+                        let cut = floor_char_boundary(line, max_line_chars);
+                        format!("{}...", &line[..cut])
                     } else {
                         line.to_string()
                     };

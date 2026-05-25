@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
+use futures::FutureExt;
 use openlet_adapters::{
     bus::BroadcastBus,
     config_perm::ConfigPermissionMgr,
@@ -247,18 +248,60 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
+    let local_addr = listener.local_addr().ok();
 
-    info!(
-        bind = %config.bind_addr,
-        "bound localhost-only at http://{} (set OPENLET_BIND to expose)",
-        config.bind_addr
-    );
+    // Refuse non-loopback binds without explicit operator opt-in via
+    // OPENLET_ALLOW_NON_LOOPBACK=1. The MVP threat model assumes no auth
+    // in front of the API; binding to a routable address would expose
+    // every endpoint (incl. permission auto-approve) to the network.
+    if let Some(addr) = local_addr {
+        let allow_non_loopback = std::env::var("OPENLET_ALLOW_NON_LOOPBACK")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !addr.ip().is_loopback() && !allow_non_loopback {
+            anyhow::bail!(
+                "refusing to bind non-loopback address {} without OPENLET_ALLOW_NON_LOOPBACK=1; \
+                 the MVP server has no built-in auth and must not be exposed beyond loopback",
+                addr
+            );
+        }
+        if !addr.ip().is_loopback() {
+            tracing::warn!(
+                bind = %addr,
+                "bound NON-LOOPBACK address — every endpoint is exposed without auth; \
+                 ensure an authenticating reverse-proxy fronts this listener"
+            );
+        } else {
+            info!(bind = %addr, "bound loopback at http://{addr}");
+        }
+    }
 
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .context("serving axum")?;
+        .context("serving axum");
 
+    // Drive Plugin::shutdown after axum returns. Plugins holding
+    // resources (sockets, billing-flush state, audit handles) get a
+    // chance to drain before the process exits. Per-plugin shutdown is
+    // panic-isolated so a buggy plugin can't strand the others.
+    for plugin in installed.plugins.iter() {
+        let id = plugin.manifest().id.clone();
+        let result = std::panic::AssertUnwindSafe(plugin.shutdown())
+            .catch_unwind()
+            .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(plugin = %id, error = %e, "plugin shutdown returned error");
+            }
+            Err(_) => {
+                tracing::warn!(plugin = %id, "plugin shutdown panicked");
+            }
+        }
+    }
+
+    serve_result?;
     info!("openlet-server stopped");
     Ok(())
 }

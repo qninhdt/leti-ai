@@ -216,6 +216,7 @@ fn finish_reason_label(reason: FinishReason) -> &'static str {
         FinishReason::EndTurn => "end_turn",
         FinishReason::ToolUse => "tool_use",
         FinishReason::MaxTokens => "max_tokens",
+        FinishReason::MaxSteps => "max_steps",
         FinishReason::Length => "length",
         FinishReason::ContentFilter => "content_filter",
         FinishReason::Error => "error",
