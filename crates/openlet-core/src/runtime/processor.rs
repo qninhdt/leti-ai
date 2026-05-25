@@ -13,6 +13,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::adapters::model_provider::{ChatDelta, FinishReason};
+
+/// Hard cap on `pending_tool_calls` per turn. An adversarial provider
+/// stream could announce `tool_call_index = u32::MAX` repeatedly and
+/// grow the BTreeMap without bound. Closes ISSUE-A11.
+const MAX_PENDING_TOOL_CALLS: usize = 64;
 use crate::error::ProviderError;
 use crate::types::event::{DeltaKind, Usage};
 
@@ -127,6 +132,13 @@ impl Processor {
                             existing.call_id
                         )));
                     }
+                }
+                if state.pending_tool_calls.len() >= MAX_PENDING_TOOL_CALLS
+                    && !state.pending_tool_calls.contains_key(&index)
+                {
+                    return Err(ProviderError::Decode(format!(
+                        "too many pending tool calls (cap {MAX_PENDING_TOOL_CALLS})"
+                    )));
                 }
                 state.pending_tool_calls.insert(
                     index,
