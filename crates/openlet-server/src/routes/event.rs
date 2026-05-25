@@ -71,6 +71,9 @@ pub async fn stream(
 
     let replay: Vec<DeliveredEvent> = match (session_filter, last_event_id) {
         (Some(sid), Some(after)) => state.events.replay_since(sid, after).await?,
+        // Global SSE with Last-Event-ID — query the unfiltered durable
+        // log so a reconnecting global subscriber doesn't drop events.
+        (None, Some(after)) => state.events.replay_since_global(after).await?,
         _ => Vec::new(),
     };
 
@@ -150,10 +153,11 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         | AgentEvent::PartDelta { session_id, .. }
         | AgentEvent::PartUpdated { session_id, .. }
         | AgentEvent::StepFinished { session_id, .. }
-        | AgentEvent::PermissionAsked { session_id, .. } => Some(*session_id),
+        | AgentEvent::PermissionAsked { session_id, .. }
+        | AgentEvent::PermissionResolved { session_id, .. } => Some(*session_id),
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }
-        AgentEvent::PermissionResolved { .. } | AgentEvent::Heartbeat => None,
+        AgentEvent::Heartbeat => None,
     }
 }

@@ -111,6 +111,13 @@ impl From<EventError> for AppError {
     fn from(e: EventError) -> Self {
         match e {
             EventError::BusClosed => Self::internal("event_bus_closed", "event bus closed"),
+            EventError::CursorTooFarBehind { requested, tip, window } => Self::new(
+                axum::http::StatusCode::CONFLICT,
+                "cursor_too_far_behind",
+                format!(
+                    "Last-Event-ID {requested} is more than {window} rows behind tip {tip}; reconnect without Last-Event-ID"
+                ),
+            ),
             EventError::Io(m) => Self::internal("event_io", m),
             EventError::Unimplemented => {
                 Self::internal("event_unimplemented", "event sink not implemented")

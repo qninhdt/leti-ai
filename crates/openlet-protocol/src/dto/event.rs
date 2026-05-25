@@ -62,6 +62,7 @@ pub enum EventDto {
         request: PermissionRequestDto,
     },
     PermissionResolved {
+        session_id: Uuid,
         ask_id: Uuid,
         decision: String,
     },
@@ -197,7 +198,12 @@ impl From<AgentEvent> for EventDto {
                 session_id: session_id.as_uuid(),
                 request: PermissionRequestDto::from_request(ask_id.0, &request),
             },
-            AgentEvent::PermissionResolved { ask_id, decision } => Self::PermissionResolved {
+            AgentEvent::PermissionResolved {
+                session_id,
+                ask_id,
+                decision,
+            } => Self::PermissionResolved {
+                session_id: session_id.as_uuid(),
                 ask_id: ask_id.0,
                 decision: decision_label(&decision),
             },

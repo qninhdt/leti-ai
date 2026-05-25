@@ -260,6 +260,12 @@ impl ToolError {
 pub enum EventError {
     #[error("event bus closed")]
     BusClosed,
+    #[error("cursor {requested} too far behind tip {tip} (window {window})")]
+    CursorTooFarBehind {
+        requested: i64,
+        tip: i64,
+        window: i64,
+    },
     #[error("storage io: {0}")]
     Io(String),
     #[error("not implemented (Phase 1 stub)")]

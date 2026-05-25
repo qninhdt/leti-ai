@@ -58,8 +58,13 @@ pub enum AgentEvent {
         ask_id: AskId,
         request: PermissionRequest,
     },
-    /// `permission.resolved` — durable.
-    PermissionResolved { ask_id: AskId, decision: Decision },
+    /// `permission.resolved` — durable. `session_id` carried so per-session
+    /// SSE replay queries return the resolution alongside the matching ask.
+    PermissionResolved {
+        session_id: SessionId,
+        ask_id: AskId,
+        decision: Decision,
+    },
     /// `error` — durable.
     Error {
         session_id: Option<SessionId>,

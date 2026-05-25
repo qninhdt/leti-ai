@@ -5,6 +5,7 @@ use crate::permission::Deferred;
 use crate::types::permission::{
     AlwaysScope, AskId, Decision, PermissionCtx, PermissionRequest, PermissionRule,
 };
+use crate::types::session::SessionId;
 
 /// Permission gate consulted before any sensitive tool call.
 ///
@@ -36,6 +37,12 @@ pub trait PermissionManager: Send + Sync + 'static {
     /// `.await`s the deferred. Returns `None` if the ask was already
     /// taken or never existed. Sync because it's just a map mutation.
     fn take_deferred(&self, ask_id: AskId) -> Option<Deferred<Decision>>;
+
+    /// Read-only peek at a pending ask's session id. The HTTP route uses
+    /// this to publish `PermissionResolved` to the correct session
+    /// before consuming the ask via `accept_ask` / `reply`. Returns
+    /// `None` if the ask was already consumed.
+    fn peek_session_id(&self, ask_id: AskId) -> Option<SessionId>;
 
     /// Atomic ask acceptance: consumes the pending ask, persists the
     /// rule scoped to `scope`, pushes it onto the in-memory ruleset, and

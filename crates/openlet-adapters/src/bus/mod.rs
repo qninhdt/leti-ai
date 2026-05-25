@@ -109,6 +109,23 @@ impl EventSink for BroadcastBus {
             })
             .collect())
     }
+
+    async fn replay_since_global(
+        &self,
+        after_id: i64,
+    ) -> Result<Vec<DeliveredEvent>, EventError> {
+        let Some(repo) = &self.repo else {
+            return Ok(Vec::new());
+        };
+        let rows = repo.list_since_global(after_id).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, ev)| DeliveredEvent {
+                event_id: Some(id),
+                event: ev,
+            })
+            .collect())
+    }
 }
 
 /// Extract the session id from an `AgentEvent` so it can be written to
@@ -121,10 +138,11 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         | AgentEvent::PartDelta { session_id, .. }
         | AgentEvent::PartUpdated { session_id, .. }
         | AgentEvent::StepFinished { session_id, .. }
-        | AgentEvent::PermissionAsked { session_id, .. } => Some(*session_id),
+        | AgentEvent::PermissionAsked { session_id, .. }
+        | AgentEvent::PermissionResolved { session_id, .. } => Some(*session_id),
         AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
             *session_id
         }
-        AgentEvent::PermissionResolved { .. } | AgentEvent::Heartbeat => None,
+        AgentEvent::Heartbeat => None,
     }
 }

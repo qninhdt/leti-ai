@@ -43,4 +43,14 @@ pub trait EventSink: Send + Sync + 'static {
     ) -> Result<Vec<DeliveredEvent>, EventError> {
         Ok(Vec::new())
     }
+
+    /// Global replay (no session filter). Used by the global SSE channel
+    /// when `Last-Event-ID` is present without a session filter.
+    /// Default impl returns empty for stubs.
+    async fn replay_since_global(
+        &self,
+        _after_id: i64,
+    ) -> Result<Vec<DeliveredEvent>, EventError> {
+        Ok(Vec::new())
+    }
 }

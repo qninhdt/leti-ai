@@ -30,6 +30,13 @@ pub async fn reply(
 ) -> Result<StatusCode, AppError> {
     let ask = AskId(ask_id);
 
+    // Resolve session_id from the pending ask BEFORE consuming it so
+    // the PermissionResolved event can be routed to the correct session.
+    let session_id = state
+        .permission
+        .peek_session_id(ask)
+        .ok_or_else(|| AppError::not_found("ask_not_found", "permission ask not found"))?;
+
     // For `always_*` decisions, use `accept_ask` — atomic take + persist
     // + push + resolve, with the rule pattern derived from the ORIGINAL
     // ask (never from client input). Closes the privilege-escalation
@@ -64,6 +71,7 @@ pub async fn reply(
         .events
         .publish(
             AgentEvent::PermissionResolved {
+                session_id,
                 ask_id: ask,
                 decision: resolved_decision,
             },

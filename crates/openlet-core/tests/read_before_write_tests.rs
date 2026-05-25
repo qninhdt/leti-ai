@@ -59,6 +59,12 @@ impl PermissionManager for AllowAll {
     ) -> Option<openlet_core::permission::Deferred<Decision>> {
         None
     }
+    fn peek_session_id(
+        &self,
+        _: AskId,
+    ) -> Option<openlet_core::types::session::SessionId> {
+        None
+    }
     async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
         Ok(())
     }
