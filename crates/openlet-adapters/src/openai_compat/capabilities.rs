@@ -65,6 +65,10 @@ pub fn capabilities_for(model: &str) -> ProviderCapabilities {
         supports_vision: vision,
         supports_document_input: documents,
         max_image_bytes: 0,
+        max_completion_tokens_param: false,
+        strip_sampling_params: false,
+        reject_is_error_field: false,
+        max_request_body_bytes: 0,
     }
 }
 

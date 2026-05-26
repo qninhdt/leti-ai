@@ -204,16 +204,3 @@ pub trait ModelProvider: Send + Sync + 'static {
     /// native Messages API lands.
     fn apply_cache_markers(&self, _messages: &mut Vec<LlmMessage>, _hint: CacheHint) {}
 }
-
-/// Per-model capability flags. The runtime queries this at turn-start
-/// (NOT once per provider) so a single provider can advertise different
-/// capabilities for different models — e.g. OpenAI's gpt-4o supports
-/// vision while gpt-3.5-turbo does not. `max_image_bytes = 0` means
-/// "no provider-side cap"; the upload route still enforces the global
-/// 25MB hard cap.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ProviderCapabilities {
-    pub supports_vision: bool,
-    pub supports_document_input: bool,
-    pub max_image_bytes: usize,
-}

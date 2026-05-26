@@ -24,7 +24,6 @@ use openlet_core::adapters::model_provider::{
 };
 use openlet_core::error::ProviderError;
 
-use super::capabilities::capabilities_for;
 use super::chunk_decoder::decode_chunk;
 use super::prefix_shaping::{apply_request_shaping, detect_quirks};
 use super::pricing::pricing_for;
