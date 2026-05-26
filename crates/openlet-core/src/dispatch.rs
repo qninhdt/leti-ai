@@ -89,21 +89,28 @@ impl HookChains {
     /// Sort every chain in canonical order: priority desc, manifest_id
     /// asc, registration_index asc. Idempotent.
     pub fn sort_all(&mut self) {
-        sort_chain(&mut self.before_turn);
-        sort_chain(&mut self.after_turn);
-        sort_chain(&mut self.on_chat_params);
-        sort_chain(&mut self.on_chat_messages);
-        sort_chain(&mut self.on_chat_headers);
-        sort_chain(&mut self.before_tool_call);
-        sort_chain(&mut self.after_tool_call);
-        sort_chain(&mut self.on_permission_ask);
-        sort_chain(&mut self.on_message);
-        sort_chain(&mut self.on_cost_tick);
-        sort_chain(&mut self.on_step_finish);
-        sort_chain(&mut self.on_compaction);
-        sort_chain(&mut self.on_session_status);
-        sort_chain(&mut self.on_event);
-        sort_chain(&mut self.notification);
+        macro_rules! sort_each {
+            ($($field:ident),+ $(,)?) => {
+                $(sort_chain(&mut self.$field);)+
+            };
+        }
+        sort_each!(
+            before_turn,
+            after_turn,
+            on_chat_params,
+            on_chat_messages,
+            on_chat_headers,
+            before_tool_call,
+            after_tool_call,
+            on_permission_ask,
+            on_message,
+            on_cost_tick,
+            on_step_finish,
+            on_compaction,
+            on_session_status,
+            on_event,
+            notification,
+        );
     }
 }
 
