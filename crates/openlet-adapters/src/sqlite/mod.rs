@@ -8,6 +8,7 @@ pub mod event_repo;
 pub mod memory_store;
 pub mod permission_repo;
 pub mod pool;
+pub(crate) mod rows;
 
 pub use memory_store::SqliteMemoryStore;
 pub use pool::{MIGRATOR, open_in_memory, open_pool, run_migrations};
