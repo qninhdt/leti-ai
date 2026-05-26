@@ -95,6 +95,11 @@ similar = "2.6"
 tempfile = "3.10"
 nix = { version = "0.29", default-features = false, features = ["signal"] }
 
+# Test-only (workspace dev-dependencies)
+rstest = { version = "0.23", default-features = false }
+proptest = { version = "1.5", default-features = false, features = ["std"] }
+wiremock = "0.6"
+
 # Internal crates
 openlet-core = { path = "crates/openlet-core" }
 openlet-adapters = { path = "crates/openlet-adapters" }

@@ -43,6 +43,9 @@ nix = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 openlet-test-mock-provider = { path = "../openlet-test-mock-provider" }
+rstest.workspace = true
+proptest.workspace = true
+wiremock.workspace = true
 
 [lints]
 workspace = true

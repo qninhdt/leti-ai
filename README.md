@@ -114,7 +114,9 @@ cargo audit
 ( cd tui && npm run typecheck && npm test && npm pack --dry-run )
 ```
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full developer flow.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full developer flow and
+[`docs/testing-conventions.md`](docs/testing-conventions.md) for the
+integration-test stack (rstest, proptest, wiremock) and conventions.
 
 ## Plan
 
