@@ -10,6 +10,7 @@ pub mod core_api_impl;
 pub mod diagnostics;
 pub mod error;
 pub mod events;
+pub(crate) mod mention;
 pub mod middleware;
 pub mod notif_bucket;
 pub mod openapi;
