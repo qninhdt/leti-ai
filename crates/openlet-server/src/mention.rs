@@ -20,10 +20,7 @@ use openlet_core::types::part::Part;
 use crate::app_state::AppState;
 
 #[must_use]
-pub(crate) fn rewrite_mention_into_subagent_task(
-    parts: Vec<Part>,
-    state: &AppState,
-) -> Vec<Part> {
+pub(crate) fn rewrite_mention_into_subagent_task(parts: Vec<Part>, state: &AppState) -> Vec<Part> {
     let Some(first_text) = parts.iter().find_map(|p| match p {
         Part::Text { text, .. } => Some(text.clone()),
         _ => None,

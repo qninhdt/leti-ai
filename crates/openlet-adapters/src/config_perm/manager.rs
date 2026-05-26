@@ -296,4 +296,3 @@ impl PermissionManager for ConfigPermissionMgr {
         Ok(())
     }
 }
-

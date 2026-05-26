@@ -23,12 +23,12 @@ use crate::hooks::{
     },
 };
 
-/// Hard ceiling on how long a single hook may run. Mirrors the
-/// claude-code 5s `timeout` knob and gives a buggy plugin no way to
-/// stall a turn indefinitely. Per-hook overrides land in slice 3c.
-///
-/// (Constant lives in `runner.rs` next to the dispatch loop that uses
-/// it.)
+// Hard ceiling on how long a single hook may run. Mirrors the
+// claude-code 5s `timeout` knob and gives a buggy plugin no way to
+// stall a turn indefinitely. Per-hook overrides land in slice 3c.
+// Constant lives in `runner.rs` next to the dispatch loop that uses it.
+
+// ---
 
 /// Future type returned by a hook closure.
 pub type HookFuture<I> = Pin<Box<dyn Future<Output = HookResult<I>> + Send + 'static>>;

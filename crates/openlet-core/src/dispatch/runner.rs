@@ -12,9 +12,7 @@ use std::time::Duration;
 
 use futures::FutureExt;
 
-use super::{
-    DispatchOutcome, FaultKind, HookEntry, HookResult, OnEventCtx, PluginFault,
-};
+use super::{DispatchOutcome, FaultKind, HookEntry, HookResult, OnEventCtx, PluginFault};
 
 /// Per-hook execution timeout. A hook future that doesn't complete
 /// within this surfaces as `Denied` (panic/timeout discriminator).

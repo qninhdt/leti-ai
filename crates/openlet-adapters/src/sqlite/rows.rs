@@ -11,11 +11,11 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::session::{SessionCapabilities, SessionId, SessionMeta};
 
-use super::codec::{decode_json, from_ms, map_io, parse_mode, parse_role, parse_status, parse_uuid};
+use super::codec::{
+    decode_json, from_ms, map_io, parse_mode, parse_role, parse_status, parse_uuid,
+};
 
-pub(crate) fn row_to_session(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<SessionMeta, MemoryError> {
+pub(crate) fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryError> {
     let id_str: String = row.try_get("id").map_err(map_io)?;
     let agent_id_str: String = row.try_get("agent_id").map_err(map_io)?;
     let parent: Option<String> = row.try_get("parent_session_id").map_err(map_io)?;
@@ -52,9 +52,7 @@ pub(crate) fn row_to_session(
     })
 }
 
-pub(crate) fn row_to_message(
-    row: sqlx::sqlite::SqliteRow,
-) -> Result<Message, MemoryError> {
+pub(crate) fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<Message, MemoryError> {
     let id_str: String = row.try_get("id").map_err(map_io)?;
     let session_str: String = row.try_get("session_id").map_err(map_io)?;
     let role: String = row.try_get("role").map_err(map_io)?;
