@@ -12,7 +12,6 @@
 //! That keeps the parent's `session_cost` query consistent with the
 //! true tree-wide spend.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -20,7 +19,7 @@ use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::error::CoreError;
-use openlet_core::projection::{ProjectionCaps, project_for_llm};
+use openlet_core::projection::ProjectionCaps;
 use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus, plan_subagent_spawn};
 use openlet_core::runtime::{LoopContext, TurnInput};
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
@@ -235,25 +234,11 @@ async fn drive_subagent(
 ) -> Result<(), CoreError> {
     let registry = state.task_registry.clone();
 
-    let messages = state.memory.list_messages(child_session_id).await?;
-    let mut parts_by_msg: HashMap<MessageId, Vec<Part>> = HashMap::with_capacity(messages.len());
-    for m in &messages {
-        let parts = state.memory.list_parts(child_session_id, m.id).await?;
-        parts_by_msg.insert(m.id, parts);
-    }
-    let llm_messages = project_for_llm(&messages, &parts_by_msg, ProjectionCaps::default());
+    let llm_messages =
+        crate::turn_driver::project_session(&state, child_session_id, ProjectionCaps::default())
+            .await?;
 
-    let tools: Vec<openlet_core::adapters::model_provider::ToolSpec> = state
-        .tool_registry
-        .iter()
-        .map(
-            |(name, handle)| openlet_core::adapters::model_provider::ToolSpec {
-                name: name.to_string(),
-                description: handle.description().to_string(),
-                parameters: handle.input_schema(),
-            },
-        )
-        .collect();
+    let tools = crate::turn_driver::tool_specs(&state);
 
     let read_history = state
         .read_histories
@@ -296,7 +281,7 @@ async fn drive_subagent(
         tools,
     };
 
-    let memory: Arc<dyn openlet_core::adapters::MemoryStore> = state.memory.clone();
+    let memory = crate::turn_driver::memory_arc(&state);
     let outcome = state
         .runtime
         .run_loop(&memory, loop_ctx, input, child_cancel.clone())

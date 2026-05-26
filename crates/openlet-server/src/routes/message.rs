@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
-use openlet_core::projection::{ProjectionCaps, project_for_llm};
+use openlet_core::projection::ProjectionCaps;
 use openlet_core::runtime::{LoopContext, TurnInput};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
@@ -213,7 +213,6 @@ async fn drive_loop(
     agent_id: openlet_core::types::agent::AgentId,
     cancel: CancellationToken,
 ) -> Result<(), openlet_core::error::CoreError> {
-    use std::collections::HashMap;
     let agent = state
         .agents
         .get(&agent_id)
@@ -222,13 +221,6 @@ async fn drive_loop(
         ))?
         .clone();
 
-    // Project full session into LLM messages.
-    let messages = state.memory.list_messages(session_id).await?;
-    let mut parts_by_msg: HashMap<MessageId, Vec<Part>> = HashMap::with_capacity(messages.len());
-    for m in &messages {
-        let parts = state.memory.list_parts(session_id, m.id).await?;
-        parts_by_msg.insert(m.id, parts);
-    }
     // Resolve provider capabilities by model so vision-capable
     // sessions don't degrade attachments to text. Uses the workspace's
     // configured default model — Phase 5 wires per-session model
@@ -240,20 +232,10 @@ async fn drive_loop(
         supports_image_input: provider_caps.supports_vision,
         supports_document_input: provider_caps.supports_document_input,
     };
-    let llm_messages = project_for_llm(&messages, &parts_by_msg, projection_caps);
+    let llm_messages =
+        crate::turn_driver::project_session(&state, session_id, projection_caps).await?;
 
-    // Materialize tool specs from registry.
-    let tools: Vec<openlet_core::adapters::model_provider::ToolSpec> = state
-        .tool_registry
-        .iter()
-        .map(
-            |(name, handle)| openlet_core::adapters::model_provider::ToolSpec {
-                name: name.to_string(),
-                description: handle.description().to_string(),
-                parameters: handle.input_schema(),
-            },
-        )
-        .collect();
+    let tools = crate::turn_driver::tool_specs(&state);
 
     let session_meta = state.memory.get_session(session_id).await?.ok_or(
         openlet_core::error::CoreError::Memory(openlet_core::error::MemoryError::SessionNotFound),
@@ -302,7 +284,7 @@ async fn drive_loop(
         tools,
     };
 
-    let memory: Arc<dyn openlet_core::adapters::MemoryStore> = state.memory.clone();
+    let memory = crate::turn_driver::memory_arc(&state);
     state
         .runtime
         .run_loop(&memory, loop_ctx, input, cancel)
