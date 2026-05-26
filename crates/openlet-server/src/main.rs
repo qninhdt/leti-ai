@@ -477,7 +477,18 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
             events.clone(),
             Arc::new(config.clone()),
         ));
-    let installed = install_plugins(core_api, shell.clone(), memory.clone()).await?;
+    let task_registry_dr = Arc::new(openlet_core::runtime::subagent::TaskRegistry::from_env());
+    let subagent_spawner_dr = Arc::new(openlet_server::RuntimeSubagentSpawner::new());
+    let spawner_dyn_dr: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> =
+        subagent_spawner_dr.clone();
+    let installed = install_plugins(
+        core_api,
+        shell.clone(),
+        memory.clone(),
+        task_registry_dr.clone(),
+        spawner_dyn_dr,
+    )
+    .await?;
     let provider = installed.provider.unwrap_or(provider);
     let hook_chains = Arc::new(installed.chains);
 

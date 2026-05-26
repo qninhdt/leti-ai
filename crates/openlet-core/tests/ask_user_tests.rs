@@ -174,6 +174,8 @@ fn test_ctx_with(
         cancel,
         questions,
         memory,
+        task_registry: Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32)),
+        agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
     }
 }
 
@@ -293,6 +295,7 @@ impl MemoryStore for StubMemory {
             capabilities: caps,
             current_agent_slug: None,
             previous_agent_slug: None,
+            depth: 0,
         }))
     }
     async fn list_sessions(&self, _: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {

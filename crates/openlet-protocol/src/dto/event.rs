@@ -120,8 +120,6 @@ pub enum EventDto {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd: Option<String>,
     },
->>>>>>> f6c9fb5 (feat(core): add in-process subagent task tool + task_status + @subagent)
-    },
     Heartbeat,
 }
 
@@ -369,7 +367,6 @@ impl From<AgentEvent> for EventDto {
                 task_id,
                 output,
                 cost_usd,
-            },
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

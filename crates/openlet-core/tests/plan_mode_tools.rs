@@ -253,6 +253,8 @@ fn ctx_with_bus(workspace: &std::path::Path, sid: SessionId, bus: Arc<RecordingB
         cancel: CancellationToken::new(),
         questions: Arc::new(QuestionRegistry::new()),
         memory,
+        task_registry: Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32)),
+        agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
     }
 }
 
@@ -271,6 +273,7 @@ fn seed_meta(sid: SessionId, current: Option<&str>, previous: Option<&str>) -> S
         capabilities: openlet_core::types::session::SessionCapabilities::default(),
         current_agent_slug: current.map(str::to_string),
         previous_agent_slug: previous.map(str::to_string),
+        depth: 0,
     }
 }
 

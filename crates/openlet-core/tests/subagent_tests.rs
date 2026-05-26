@@ -88,6 +88,9 @@ fn make_session(depth: u8) -> SessionMeta {
         deleted_at: None,
         version: "0.1.0".to_string(),
         extensions: serde_json::Value::Null,
+        capabilities: openlet_core::types::session::SessionCapabilities::default(),
+        current_agent_slug: None,
+        previous_agent_slug: None,
         depth,
     }
 }

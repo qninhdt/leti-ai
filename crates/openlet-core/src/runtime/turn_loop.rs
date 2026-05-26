@@ -21,7 +21,6 @@ use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::FinishReason;
 use crate::adapters::permission_manager::PermissionManager;
 use crate::adapters::tool_executor::ToolCtx;
-use crate::agent::AgentRegistry;
 use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::CoreError;
 use crate::hooks::io::{
@@ -428,7 +427,7 @@ impl ConversationRuntime {
             // have swapped the agent (EnterPlanMode), so the next batch
             // must see the new allowlist.
             let allowlist_outcome =
-                resolve_allowlist(memory, session_id, loop_ctx.agent_registry.as_ref()).await;
+                resolve_allowlist(memory, session_id, Some(&loop_ctx.agent_registry)).await;
             let (allowed, denied) =
                 partition_by_allowlist(&invocations, allowlist_outcome.as_ref());
             let dispatched_results = if allowed.is_empty() {

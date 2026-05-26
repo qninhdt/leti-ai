@@ -103,6 +103,9 @@ pub fn plan_subagent_spawn(
         deleted_at: None,
         version: parent.version.clone(),
         extensions: parent.extensions.clone(),
+        capabilities: parent.capabilities,
+        current_agent_slug: parent.current_agent_slug.clone(),
+        previous_agent_slug: parent.previous_agent_slug.clone(),
         depth: next_depth,
     };
 

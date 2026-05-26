@@ -281,6 +281,8 @@ async fn drive_subagent(
         max_steps: 50,
         agent: agent_def,
         hook_chains: state.hook_chains.clone(),
+        questions: state.questions.clone(),
+        memory: state.memory.clone(),
         task_registry: state.task_registry.clone(),
         agent_registry: state.agent_registry.clone(),
     };
