@@ -10,14 +10,9 @@
 //! `Stop` or `Deny`. Panics from any single entry are isolated so a
 //! buggy plugin cannot crash the server.
 
-use std::any::Any;
 use std::future::Future;
-use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
-
-use futures::FutureExt;
 
 use crate::hooks::{
     HookKind, HookResult, Priority,
@@ -31,7 +26,9 @@ use crate::hooks::{
 /// Hard ceiling on how long a single hook may run. Mirrors the
 /// claude-code 5s `timeout` knob and gives a buggy plugin no way to
 /// stall a turn indefinitely. Per-hook overrides land in slice 3c.
-const HOOK_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// (Constant lives in `runner.rs` next to the dispatch loop that uses
+/// it.)
 
 /// Future type returned by a hook closure.
 pub type HookFuture<I> = Pin<Box<dyn Future<Output = HookResult<I>> + Send + 'static>>;
@@ -172,139 +169,8 @@ pub struct PluginFault {
 
 /// Run a hook chain. Each entry is invoked sequentially; the input
 /// threads through `Continue`/`Replace` and the chain halts on `Stop` or
-/// `Deny`. Panics are isolated at TWO points: closure construction
-/// (caught via `catch_unwind` before the future is polled) and future
-/// polling (caught via [`FutureExt::catch_unwind`] while awaiting). Both
-/// surface as `Denied` so a buggy plugin halts only its own chain.
-pub async fn dispatch<I>(chain: &[HookEntry<I>], mut input: I) -> DispatchOutcome<I>
-where
-    I: Send + 'static,
-{
-    for entry in chain {
-        let func = entry.func.clone();
-        let manifest_id = entry.manifest_id.clone();
-        let kind = entry.kind;
-        let fut = match std::panic::catch_unwind(AssertUnwindSafe(|| func(input))) {
-            Ok(f) => f,
-            Err(payload) => {
-                let panic_msg = downcast_panic(payload);
-                tracing::error!(
-                    plugin = %manifest_id,
-                    hook = ?kind,
-                    phase = "construction",
-                    panic = %panic_msg,
-                    "plugin hook panicked; chain halted",
-                );
-                return DispatchOutcome::Denied {
-                    reason: format!("plugin {manifest_id} hook {kind:?} panicked at construction"),
-                    feedback: None,
-                    plugin_fault: Some(PluginFault {
-                        plugin_id: manifest_id.clone(),
-                        hook: kind,
-                        kind: FaultKind::ConstructionPanic,
-                        message: panic_msg,
-                    }),
-                };
-            }
-        };
-        let polled = tokio::time::timeout(HOOK_TIMEOUT, AssertUnwindSafe(fut).catch_unwind()).await;
-        match polled {
-            Err(_) => {
-                tracing::error!(
-                    plugin = %manifest_id,
-                    hook = ?kind,
-                    timeout_ms = HOOK_TIMEOUT.as_millis() as u64,
-                    "plugin hook exceeded timeout; chain halted",
-                );
-                return DispatchOutcome::Denied {
-                    reason: format!("plugin {manifest_id} hook {kind:?} timed out"),
-                    feedback: None,
-                    plugin_fault: Some(PluginFault {
-                        plugin_id: manifest_id.clone(),
-                        hook: kind,
-                        kind: FaultKind::Timeout,
-                        message: format!("exceeded {}ms hook timeout", HOOK_TIMEOUT.as_millis(),),
-                    }),
-                };
-            }
-            Ok(Ok(HookResult::Continue(next))) => input = next,
-            Ok(Ok(HookResult::Replace(next))) => {
-                tracing::info!(
-                    plugin = %manifest_id,
-                    hook = ?kind,
-                    "plugin hook returned Replace; mutated context forwarded",
-                );
-                input = next;
-            }
-            Ok(Ok(HookResult::Stop(next))) => return DispatchOutcome::Stopped(next),
-            Ok(Ok(HookResult::Deny { reason, feedback })) => {
-                return DispatchOutcome::Denied {
-                    reason,
-                    feedback,
-                    plugin_fault: None,
-                };
-            }
-            Ok(Err(payload)) => {
-                let panic_msg = downcast_panic(payload);
-                tracing::error!(
-                    plugin = %manifest_id,
-                    hook = ?kind,
-                    phase = "polling",
-                    panic = %panic_msg,
-                    "plugin hook panicked; chain halted",
-                );
-                return DispatchOutcome::Denied {
-                    reason: format!("plugin {manifest_id} hook {kind:?} panicked while awaiting"),
-                    feedback: None,
-                    plugin_fault: Some(PluginFault {
-                        plugin_id: manifest_id.clone(),
-                        hook: kind,
-                        kind: FaultKind::PollPanic,
-                        message: panic_msg,
-                    }),
-                };
-            }
-        }
-    }
-    DispatchOutcome::Completed(input)
-}
-
-/// Specialized runner for [`HookKind::OnEvent`] — wraps [`dispatch`] and
-/// downgrades `Stopped`/`Denied` outcomes to `Completed` so a buggy
-/// observer plugin cannot swallow events for downstream observers.
-///
-/// On `Stopped` the (possibly mutated) ctx flows through. On `Denied`,
-/// timeout, or panic the original `event` is preserved so SSE / audit
-/// log / replay still see it — only the offending plugin's mutation is
-/// discarded. Per amendment §4: OnEvent is firehose; Stop/Deny MUST NOT
-/// silence non-buggy observers downstream.
-pub async fn dispatch_event(chain: &[HookEntry<OnEventCtx>], input: OnEventCtx) -> OnEventCtx {
-    let original = OnEventCtx {
-        event: input.event.clone(),
-    };
-    match dispatch(chain, input).await {
-        DispatchOutcome::Completed(ctx) => ctx,
-        DispatchOutcome::Stopped(ctx) => {
-            tracing::warn!(
-                "on_event hook returned Stop; downgraded to Continue (firehose contract)"
-            );
-            ctx
-        }
-        DispatchOutcome::Denied {
-            reason,
-            feedback,
-            plugin_fault,
-        } => {
-            tracing::warn!(
-                reason = %reason,
-                feedback = ?feedback,
-                fault = ?plugin_fault,
-                "on_event hook returned Deny/timeout/panic; preserved original event (firehose contract)",
-            );
-            original
-        }
-    }
-}
+pub mod runner;
+pub use runner::{dispatch, dispatch_event};
 
 /// Build an [`AgentEvent::PluginError`] from a [`PluginFault`].
 /// Runtime dispatch sites publish the result on durable persistence so
@@ -374,14 +240,4 @@ pub async fn publish_denied_warn(
         feedback = ?feedback,
         "hook denied; halting turn"
     );
-}
-
-fn downcast_panic(payload: Box<dyn Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        return (*s).to_string();
-    }
-    if let Some(s) = payload.downcast_ref::<String>() {
-        return s.clone();
-    }
-    "(non-string panic payload)".to_string()
 }
