@@ -359,8 +359,7 @@ async fn install_plugins(
     task_registry: Arc<openlet_core::runtime::subagent::TaskRegistry>,
     spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner>,
 ) -> anyhow::Result<FinalizedRegistry> {
-    let plugins =
-        openlet_plugin_registry::all_plugins(shell, memory, task_registry, spawner);
+    let plugins = openlet_plugin_registry::all_plugins(shell, memory, task_registry, spawner);
     let configs = std::collections::HashMap::new();
     install_all(plugins, &configs, core_api)
         .await

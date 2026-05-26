@@ -6,7 +6,6 @@
 //! bytes (status line + headers + body) and closes the connection.
 
 use std::io;
-use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -263,7 +262,3 @@ async fn write_response(stream: &mut TcpStream, resp: Response) -> io::Result<()
     stream.flush().await?;
     Ok(())
 }
-
-// Suppress unused-field warning on SocketAddr import path.
-#[allow(dead_code)]
-fn _addr_marker(_: SocketAddr) {}

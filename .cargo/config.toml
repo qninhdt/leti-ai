@@ -1,0 +1,34 @@
+[build]
+# Cap parallelism — full 12-thread builds peak above 14 GB RAM and OOM on
+# 16 GB machines. 4 jobs keeps peak memory under ~6 GB while still using
+# all cores during the link/wait phases.
+jobs = 4
+
+[profile.dev]
+# rustc spawns one codegen unit per worker. Capping units AND jobs
+# together is what actually reduces concurrent memory pressure;
+# capping jobs alone still lets rustc-internal codegen blow up.
+codegen-units = 16
+# Skip debug-info on dependencies. They dominate target/ size and
+# linker memory; we still get debug info on workspace crates.
+debug = "line-tables-only"
+incremental = true
+# Smaller debug-assertions surface; removes ~20% of monomorphisations
+# that get inlined away anyway.
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+# Dependencies almost never need debug info during dev. Strips the
+# bulk of linker memory pressure (sqlx, tokio, axum macro expansions).
+debug = false
+opt-level = 0
+
+[profile.test]
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
+split-debuginfo = "unpacked"
+
+[profile.test.package."*"]
+debug = false
+opt-level = 0

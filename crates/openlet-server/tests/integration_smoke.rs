@@ -111,7 +111,12 @@ async fn quota_stub_installs_with_default_config() {
 
     // Baseline: canonical plugin set alone.
     let baseline = install_all(
-        all_plugins(stub_shell(), stub_memory(), stub_task_registry(), stub_spawner()),
+        all_plugins(
+            stub_shell(),
+            stub_memory(),
+            stub_task_registry(),
+            stub_spawner(),
+        ),
         &configs,
         core_api.clone(),
     )
@@ -119,7 +124,12 @@ async fn quota_stub_installs_with_default_config() {
     .expect("install canonical baseline");
 
     // With the quota stub appended.
-    let mut plugins = all_plugins(stub_shell(), stub_memory(), stub_task_registry(), stub_spawner());
+    let mut plugins = all_plugins(
+        stub_shell(),
+        stub_memory(),
+        stub_task_registry(),
+        stub_spawner(),
+    );
     plugins.push(Arc::new(QuotaStubPlugin::new()) as Arc<dyn Plugin>);
     let with_stub = install_all(plugins, &configs, core_api)
         .await

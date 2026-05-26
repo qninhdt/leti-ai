@@ -3,6 +3,7 @@
 //! `pool` exposes the connection helper + embedded migrations; `memory_store`
 //! is the `MemoryStore` impl backed by sqlx.
 
+pub(crate) mod codec;
 pub mod event_repo;
 pub mod memory_store;
 pub mod permission_repo;

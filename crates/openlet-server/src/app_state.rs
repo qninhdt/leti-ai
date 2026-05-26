@@ -134,3 +134,40 @@ pub struct AppState {
     /// `OPENLET_SUBAGENT_MAX_PER_SESSION` (default 32) per ROOT session.
     pub task_registry: Arc<TaskRegistry>,
 }
+
+impl AppState {
+    /// Look up a session or return a 404 `AppError`. Centralises the
+    /// `get_session(sid)? .ok_or_else(...)` shape used by every route
+    /// that takes a `:id` path param.
+    pub async fn require_session(
+        &self,
+        sid: SessionId,
+    ) -> Result<openlet_core::types::session::SessionMeta, crate::error::AppError> {
+        self.memory
+            .get_session(sid)
+            .await?
+            .ok_or_else(|| crate::error::AppError::not_found("session_not_found", "Not found"))
+    }
+
+    /// Atomically request cancellation of an in-flight turn for `sid`.
+    /// Returns `true` if THIS call was the one that flipped the CAS gate
+    /// (and thus emitted the `Cancelling` status); subsequent callers see
+    /// `false` and no-op. Idempotent across HTTP DELETE, abort, and the
+    /// plugin `cancel_session` core_api path.
+    pub async fn try_cancel_active_turn(&self, sid: SessionId) -> bool {
+        let Some(handle) = self.active_turns.get(&sid).map(|h| h.clone()) else {
+            return false;
+        };
+        if !handle.request_cancel() {
+            return false;
+        }
+        handle.cancel.cancel();
+        crate::events::publish_status(
+            &self.events,
+            sid,
+            openlet_core::types::session::SessionStatus::Cancelling,
+        )
+        .await;
+        true
+    }
+}

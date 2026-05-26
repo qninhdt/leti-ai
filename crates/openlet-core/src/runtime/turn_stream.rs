@@ -13,11 +13,10 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
-
 use crate::adapters::event_sink::{EventSink, Persistence};
 use crate::adapters::memory_store::MemoryStore;
 use crate::error::CoreError;
+use crate::runtime::persist::append_part_with_event;
 use crate::runtime::processor::{ProcessorEvent, ProcessorPart};
 use crate::types::event::{AgentEvent, DeltaKind};
 use crate::types::message::MessageId;
@@ -46,12 +45,24 @@ impl StreamingPartTracker {
             ProcessorEvent::PartDelta { kind, delta } => {
                 let part_id = match kind {
                     DeltaKind::Text => {
-                        self.ensure_text(memory, events, session_id, message_id)
-                            .await?
+                        self.ensure_streaming_part(
+                            memory,
+                            events,
+                            session_id,
+                            message_id,
+                            DeltaKind::Text,
+                        )
+                        .await?
                     }
                     DeltaKind::Reasoning => {
-                        self.ensure_reasoning(memory, events, session_id, message_id)
-                            .await?
+                        self.ensure_streaming_part(
+                            memory,
+                            events,
+                            session_id,
+                            message_id,
+                            DeltaKind::Reasoning,
+                        )
+                        .await?
                     }
                     // Slice-2: tool args have no part_id mapping yet.
                     DeltaKind::ToolArgs => return Ok(()),
@@ -89,7 +100,7 @@ impl StreamingPartTracker {
         match part {
             ProcessorPart::Text { text } => {
                 let part_id = self
-                    .ensure_text(memory, events, session_id, message_id)
+                    .ensure_streaming_part(memory, events, session_id, message_id, DeltaKind::Text)
                     .await?;
                 memory
                     .upsert_part(message_id, part_id, Part::Text { id: part_id, text })
@@ -107,7 +118,13 @@ impl StreamingPartTracker {
             }
             ProcessorPart::Reasoning { text, signature: _ } => {
                 let part_id = self
-                    .ensure_reasoning(memory, events, session_id, message_id)
+                    .ensure_streaming_part(
+                        memory,
+                        events,
+                        session_id,
+                        message_id,
+                        DeltaKind::Reasoning,
+                    )
                     .await?;
                 memory
                     .upsert_part(message_id, part_id, Part::Reasoning { id: part_id, text })
@@ -129,51 +146,33 @@ impl StreamingPartTracker {
                 args,
             } => {
                 let part_id = PartId::new();
-                memory
-                    .append_part(
-                        message_id,
-                        Part::ToolCall {
-                            id: part_id,
-                            call_id,
-                            name,
-                            args,
-                        },
-                    )
-                    .await?;
-                events
-                    .publish(
-                        AgentEvent::PartCreated {
-                            session_id,
-                            message_id,
-                            part_id,
-                            at: Utc::now(),
-                        },
-                        Persistence::Durable,
-                    )
-                    .await?;
+                append_part_with_event(
+                    memory,
+                    events,
+                    session_id,
+                    message_id,
+                    Part::ToolCall {
+                        id: part_id,
+                        call_id,
+                        name,
+                        args,
+                    },
+                )
+                .await?;
             }
             ProcessorPart::StepFinish { reason, usage } => {
                 let part_id = PartId::new();
-                memory
-                    .append_part(
-                        message_id,
-                        Part::StepFinish {
-                            id: part_id,
-                            reason: reason.clone(),
-                        },
-                    )
-                    .await?;
-                events
-                    .publish(
-                        AgentEvent::PartCreated {
-                            session_id,
-                            message_id,
-                            part_id,
-                            at: Utc::now(),
-                        },
-                        Persistence::Durable,
-                    )
-                    .await?;
+                append_part_with_event(
+                    memory,
+                    events,
+                    session_id,
+                    message_id,
+                    Part::StepFinish {
+                        id: part_id,
+                        reason: reason.clone(),
+                    },
+                )
+                .await?;
                 events
                     .publish(
                         AgentEvent::StepFinished {
@@ -191,73 +190,42 @@ impl StreamingPartTracker {
         Ok(())
     }
 
-    async fn ensure_text(
+    /// Allocate (lazily) and persist an empty streaming-part shell for
+    /// either text or reasoning deltas, returning its id. Subsequent calls
+    /// for the same `kind` return the cached id without re-publishing.
+    /// Panics on `DeltaKind::ToolArgs` — caller must filter that branch.
+    async fn ensure_streaming_part(
         &mut self,
         memory: &Arc<dyn MemoryStore>,
         events: &Arc<dyn EventSink>,
         session_id: SessionId,
         message_id: MessageId,
+        kind: DeltaKind,
     ) -> Result<PartId, CoreError> {
-        if let Some(id) = self.text_part {
+        let slot = match kind {
+            DeltaKind::Text => &mut self.text_part,
+            DeltaKind::Reasoning => &mut self.reasoning_part,
+            DeltaKind::ToolArgs => unreachable!(
+                "ensure_streaming_part is only called for Text/Reasoning; tool args have no part shell"
+            ),
+        };
+        if let Some(id) = *slot {
             return Ok(id);
         }
         let id = PartId::new();
-        memory
-            .append_part(
-                message_id,
-                Part::Text {
-                    id,
-                    text: String::new(),
-                },
-            )
-            .await?;
-        events
-            .publish(
-                AgentEvent::PartCreated {
-                    session_id,
-                    message_id,
-                    part_id: id,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await?;
-        self.text_part = Some(id);
-        Ok(id)
-    }
-
-    async fn ensure_reasoning(
-        &mut self,
-        memory: &Arc<dyn MemoryStore>,
-        events: &Arc<dyn EventSink>,
-        session_id: SessionId,
-        message_id: MessageId,
-    ) -> Result<PartId, CoreError> {
-        if let Some(id) = self.reasoning_part {
-            return Ok(id);
-        }
-        let id = PartId::new();
-        memory
-            .append_part(
-                message_id,
-                Part::Reasoning {
-                    id,
-                    text: String::new(),
-                },
-            )
-            .await?;
-        events
-            .publish(
-                AgentEvent::PartCreated {
-                    session_id,
-                    message_id,
-                    part_id: id,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await?;
-        self.reasoning_part = Some(id);
+        let part = match kind {
+            DeltaKind::Text => Part::Text {
+                id,
+                text: String::new(),
+            },
+            DeltaKind::Reasoning => Part::Reasoning {
+                id,
+                text: String::new(),
+            },
+            DeltaKind::ToolArgs => unreachable!(),
+        };
+        append_part_with_event(memory, events, session_id, message_id, part).await?;
+        *slot = Some(id);
         Ok(id)
     }
 }

@@ -27,7 +27,7 @@ use openlet_plugin_api::hooks::{
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
 use rust_decimal::Decimal;
-use semver::{Version, VersionReq};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 
 /// Per-plugin config block. Maps `user_id` → starting balance USD.
@@ -69,7 +69,7 @@ impl QuotaStubPlugin {
                     Capability::Hook(HookKind::OnCostTick),
                     Capability::Hook(HookKind::BeforeTurn),
                 ],
-                core_version_req: VersionReq::parse(">=0.1.0").expect("static version req"),
+                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
                 default_priority: 50,
                 config_schema: None,
             },

@@ -28,7 +28,6 @@ use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
-use rust_decimal::Decimal;
 use tokio::sync::OnceCell;
 
 use crate::app_state::AppState;
@@ -364,6 +363,5 @@ async fn drive_subagent(
         .await;
 
     registry.finalize(task_id);
-    let _ = Decimal::ZERO; // silence unused import on minimal builds
     Ok(())
 }

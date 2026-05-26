@@ -348,6 +348,34 @@ pub async fn publish_fault_if_any<I>(
     }
 }
 
+/// Handle a `Denied` outcome from a hook chain: publish the plugin
+/// fault event (if any) and emit a tracing warn with the deny reason
+/// + feedback. Centralises the 3-site pattern in `conversation.rs` /
+///   `turn_loop.rs` where a denied chat/turn hook halts the loop.
+pub async fn publish_denied_warn(
+    events: &std::sync::Arc<dyn crate::adapters::event_sink::EventSink>,
+    session_id: Option<crate::types::session::SessionId>,
+    hook_label: &'static str,
+    reason: &str,
+    feedback: &Option<String>,
+    plugin_fault: Option<&PluginFault>,
+) {
+    if let Some(fault) = plugin_fault {
+        let _ = events
+            .publish(
+                plugin_error_event(session_id, fault),
+                crate::adapters::event_sink::Persistence::Durable,
+            )
+            .await;
+    }
+    tracing::warn!(
+        hook = hook_label,
+        reason = %reason,
+        feedback = ?feedback,
+        "hook denied; halting turn"
+    );
+}
+
 fn downcast_panic(payload: Box<dyn Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
         return (*s).to_string();

@@ -13,6 +13,7 @@ pub mod prefix_shaping;
 pub mod pricing;
 pub mod provider;
 pub mod sse;
+pub(crate) mod stream;
 pub mod wire;
 
 pub use prefix_shaping::{apply_request_shaping, detect_quirks};

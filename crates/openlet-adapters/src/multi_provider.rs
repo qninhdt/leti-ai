@@ -26,6 +26,8 @@ use openlet_core::error::ProviderError;
 use openlet_core::projection::LlmMessage;
 use tokio_util::sync::CancellationToken;
 
+use crate::model_match::strict_prefix;
+
 /// Closed taxonomy of provider backends. Adding a new entry requires
 /// touching the [`MultiProvider`] resolver below — intentional so
 /// routing changes are explicit, not implicit.
@@ -85,7 +87,7 @@ impl MultiProvider {
         let kind = self
             .prefix_overrides
             .iter()
-            .find(|(k, _)| matches_strict_prefix(model, k))
+            .find(|(k, _)| strict_prefix(model, k))
             .map(|(_, v)| *v)
             .unwrap_or_else(|| detect_provider_kind(model));
 
@@ -147,14 +149,11 @@ impl ModelProvider for MultiProvider {
         // resolve via a synthetic model name from the first message.
         // Caller can also pre-route by calling the backend directly
         // when the model name is known at the call site.
-        // No-op when we can't determine the model — safe default.
-        if let Some(_first) = messages.first() {
-            // We don't know the model from messages alone. Defer to
-            // the `openai_compat` backend's no-op default; integrators
-            // that want Anthropic markers route via the resolved
-            // backend at the call site.
-            self.openai_compat.apply_cache_markers(messages, hint);
-        }
+        // We don't know the model from messages alone. Defer to the
+        // `openai_compat` backend's no-op default; integrators that
+        // want Anthropic markers route via the resolved backend at
+        // the call site.
+        self.openai_compat.apply_cache_markers(messages, hint);
     }
 }
 

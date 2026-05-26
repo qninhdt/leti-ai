@@ -25,7 +25,7 @@ use openlet_core::tools::builtins::{
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
-use semver::{Version, VersionReq};
+use semver::Version;
 
 /// Erase a typed `Tool` impl into the object-safe handle the plugin
 /// API stores. Mirrors `ToolRegistryBuilder::register` in spirit but
@@ -74,7 +74,7 @@ impl CoreToolsPlugin {
                     .into(),
                 author: Some("Openlet".into()),
                 capabilities: vec![Capability::Tool],
-                core_version_req: VersionReq::parse(">=0.1.0").expect("static version req"),
+                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
                 default_priority: 50,
                 config_schema: None,
             },

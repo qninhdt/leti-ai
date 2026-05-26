@@ -17,12 +17,14 @@
 pub mod mention_parser;
 pub mod scoped_permissions;
 pub mod task_registry;
+pub mod task_types;
 
 pub use mention_parser::parse_subagent_mention;
 pub use scoped_permissions::ScopedPermissionManager;
-pub use task_registry::{
+pub use task_registry::TaskRegistry;
+pub use task_types::{
     DEFAULT_MAX_DEPTH, DEFAULT_MAX_PER_SESSION, MAX_OUTPUT_BYTES, SpawnError, TaskHandle, TaskId,
-    TaskRegistry, TaskSnapshot, TaskStatus,
+    TaskSnapshot, TaskStatus,
 };
 
 use std::sync::Arc;

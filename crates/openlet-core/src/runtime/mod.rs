@@ -11,12 +11,14 @@ pub mod compaction;
 pub mod conversation;
 pub mod cost;
 pub mod doom_guard;
+pub(crate) mod persist;
 pub mod processor;
 pub mod prompt;
 pub mod question_registry;
 pub mod subagent;
 pub mod token_estimate;
 pub mod turn_loop;
+mod turn_loop_helpers;
 mod turn_stream;
 
 pub use compaction::{

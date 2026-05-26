@@ -19,16 +19,13 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
-use uuid::Uuid;
-
-use crate::adapters::event_sink::{EventSink, Persistence};
+use crate::adapters::event_sink::EventSink;
 use crate::adapters::memory_store::MemoryStore;
 use crate::agent::AgentDefinition;
 use crate::error::CoreError;
 use crate::projection::LlmMessage;
+use crate::runtime::persist::{append_message_with_event, append_part_with_event};
 use crate::runtime::token_estimate::estimate_conversation_tokens;
-use crate::types::event::AgentEvent;
 use crate::types::message::{Message, MessageId, Role};
 use crate::types::part::{Part, PartId};
 use crate::types::session::SessionId;
@@ -88,28 +85,12 @@ pub async fn append_synthetic_request(
     events: &Arc<dyn EventSink>,
     session_id: SessionId,
 ) -> Result<MessageId, CoreError> {
-    let msg = Message {
-        id: MessageId::new(),
-        session_id,
-        role: Role::User,
-        created_at: Utc::now(),
-    };
-    let mid = memory.append_message(session_id, msg).await?;
+    let mid = append_message_with_event(memory, events, session_id, Role::User).await?;
     let part = Part::Text {
         id: PartId::new(),
         text: COMPACTION_REQUEST.to_owned(),
     };
     memory.append_part(mid, part).await?;
-    events
-        .publish(
-            AgentEvent::MessageCreated {
-                session_id,
-                message_id: mid,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await?;
     Ok(mid)
 }
 
@@ -172,13 +153,7 @@ pub async fn append_compaction_part(
     superseded: Vec<MessageId>,
     original_token_count: u32,
 ) -> Result<MessageId, CoreError> {
-    let msg = Message {
-        id: MessageId::new(),
-        session_id,
-        role: Role::Assistant,
-        created_at: Utc::now(),
-    };
-    let mid = memory.append_message(session_id, msg).await?;
+    let mid = append_message_with_event(memory, events, session_id, Role::Assistant).await?;
     let part_id = PartId::new();
     let part = Part::Compaction {
         id: part_id,
@@ -189,28 +164,7 @@ pub async fn append_compaction_part(
             .collect::<Vec<_>>(),
         original_token_count,
     };
-    memory.append_part(mid, part).await?;
-    events
-        .publish(
-            AgentEvent::MessageCreated {
-                session_id,
-                message_id: mid,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await?;
-    events
-        .publish(
-            AgentEvent::PartCreated {
-                session_id,
-                message_id: mid,
-                part_id,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await?;
+    append_part_with_event(memory, events, session_id, mid, part).await?;
     Ok(mid)
 }
 
@@ -223,12 +177,6 @@ pub fn superseded_messages(msgs: &[Message], keep: usize) -> Vec<MessageId> {
     }
     let split = body.len() - keep;
     body[..split].iter().map(|m| m.id).collect()
-}
-
-/// Sentinel: parse a UUID-shaped string back to `MessageId`.
-#[must_use]
-pub fn parse_message_id(raw: &str) -> Option<MessageId> {
-    Uuid::parse_str(raw).ok().map(MessageId)
 }
 
 #[cfg(test)]

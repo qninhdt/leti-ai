@@ -7,11 +7,9 @@
 //! closures so they can read session state, record cost, and emit
 //! events from any dispatch site.
 
-use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use dashmap::DashMap;
 use openlet_adapters::localfs::SecretRedactor;
 use openlet_core::adapters::event_sink::{EventSink, Persistence};
@@ -26,6 +24,8 @@ use openlet_plugin_api::context::CoreApi;
 use rust_decimal::Decimal;
 
 use crate::app_state::TurnHandle;
+use crate::events::publish_status;
+use crate::notif_bucket::NotifBucket;
 
 pub struct CoreApiImpl {
     pub memory: Arc<dyn MemoryStore>,
@@ -50,59 +50,6 @@ pub struct CoreApiImpl {
     notif_buckets: Arc<DashMap<SessionId, Arc<NotifBucket>>>,
     notif_redactor: Arc<SecretRedactor>,
 }
-
-/// Token bucket: 10 capacity, refill 10/sec. Cumulative across plugins
-/// (per-session, not per-plugin) so a single misbehaving plugin can't
-/// be hidden by another well-behaved one's quota.
-#[derive(Debug)]
-struct NotifBucket {
-    tokens: AtomicU32,
-    last_refill_ms: AtomicI64,
-}
-
-impl NotifBucket {
-    fn new() -> Self {
-        Self {
-            tokens: AtomicU32::new(NOTIF_BUCKET_CAPACITY),
-            last_refill_ms: AtomicI64::new(Utc::now().timestamp_millis()),
-        }
-    }
-
-    /// Try to take one token. Refills lazily on each call. Returns
-    /// `true` if a token was consumed (allow), `false` if drained
-    /// (drop notification).
-    fn try_take(&self) -> bool {
-        let now_ms = Utc::now().timestamp_millis();
-        let last = self.last_refill_ms.load(Ordering::Acquire);
-        let elapsed_ms = now_ms.saturating_sub(last);
-        if elapsed_ms >= NOTIF_REFILL_INTERVAL_MS {
-            // Refill at 10 tokens/sec → cap at capacity.
-            let refill = (elapsed_ms / NOTIF_REFILL_INTERVAL_MS).min(i64::from(u32::MAX)) as u32;
-            self.last_refill_ms.store(now_ms, Ordering::Release);
-            let prev = self.tokens.load(Ordering::Acquire);
-            let next = prev.saturating_add(refill).min(NOTIF_BUCKET_CAPACITY);
-            self.tokens.store(next, Ordering::Release);
-        }
-        // CAS decrement.
-        loop {
-            let cur = self.tokens.load(Ordering::Acquire);
-            if cur == 0 {
-                return false;
-            }
-            if self
-                .tokens
-                .compare_exchange(cur, cur - 1, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-            {
-                return true;
-            }
-        }
-    }
-}
-
-const NOTIF_BUCKET_CAPACITY: u32 = 10;
-/// 100ms per token → 10 tokens/sec. Refill happens lazily on `try_take`.
-const NOTIF_REFILL_INTERVAL_MS: i64 = 100;
 
 impl CoreApiImpl {
     #[must_use]
@@ -173,8 +120,6 @@ impl CoreApi for CoreApiImpl {
     }
 
     fn read_config(&self, key: &str) -> Result<serde_json::Value, String> {
-        // Phase 7: max_cost_per_session_usd removed; cost cap is plugin-only.
-        // Plugins that need a cap should track it themselves (see test-quota-stub).
         match key {
             "default_model" => Ok(serde_json::Value::String(self.config.default_model.clone())),
             "bind_addr" => Ok(serde_json::Value::String(self.config.bind_addr.clone())),
@@ -183,10 +128,9 @@ impl CoreApi for CoreApiImpl {
     }
 
     async fn cancel_session(&self, session_id: SessionId, reason: String) {
-        // Use the CAS gate so concurrent abort/DELETE/cancel_session
-        // emit exactly one Cancelling event (closes C6-server). Don't
-        // remove the slot — driving task removes its own on exit
-        // (closes C1-server stale-finalizer race).
+        // CAS gate so concurrent abort/DELETE/cancel_session emit exactly
+        // one Cancelling event. Don't remove the slot — driving task
+        // removes its own on exit (closes C1-server stale-finalizer race).
         let mut emitted = false;
         if let Some(active) = self.active_turns.get() {
             if let Some(handle) = active.get(&session_id).map(|h| h.clone()) {
@@ -219,17 +163,7 @@ impl CoreApi for CoreApiImpl {
                 "cancel_session: status write failed"
             );
         }
-        let _ = self
-            .events
-            .publish(
-                AgentEvent::SessionStatus {
-                    session_id,
-                    status: SessionStatus::Cancelling,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await;
+        publish_status(&self.events, session_id, SessionStatus::Cancelling).await;
     }
 
     async fn emit_notification(
@@ -327,36 +261,4 @@ impl CoreApi for CoreApiImpl {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn notif_bucket_drops_after_capacity() {
-        let bucket = NotifBucket::new();
-        // 10 capacity → first 10 succeed.
-        for _ in 0..NOTIF_BUCKET_CAPACITY {
-            assert!(bucket.try_take(), "should succeed within capacity");
-        }
-        // 11th in the same instant → drops.
-        assert!(
-            !bucket.try_take(),
-            "11th emit must drop (rate limit triggered)"
-        );
-    }
-
-    #[test]
-    fn notif_bucket_refills_after_interval() {
-        let bucket = NotifBucket::new();
-        for _ in 0..NOTIF_BUCKET_CAPACITY {
-            assert!(bucket.try_take());
-        }
-        // Force a refill window by rewinding `last_refill_ms` 1 sec.
-        bucket
-            .last_refill_ms
-            .store(Utc::now().timestamp_millis() - 1_000, Ordering::Release);
-        // After refill, capacity restores. We don't assert the exact
-        // count because the refill formula is `elapsed / interval`;
-        // 1 sec / 100ms = 10, capped at capacity.
-        assert!(bucket.try_take(), "post-refill emit should succeed");
-    }
-}
+mod tests {}

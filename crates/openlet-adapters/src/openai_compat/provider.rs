@@ -10,38 +10,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use bytes::Bytes;
-use futures::{Stream, StreamExt};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use reqwest::{Client, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use openlet_core::adapters::model_provider::{
-    ChatDelta, ChatRequest, ChatStream, ModelPricing, ModelProvider, ProviderCapabilities,
+    ChatRequest, ChatStream, ModelPricing, ModelProvider, ProviderCapabilities,
 };
 use openlet_core::error::ProviderError;
 
-use super::chunk_decoder::decode_chunk;
 use super::prefix_shaping::{apply_request_shaping, detect_quirks};
 use super::pricing::pricing_for;
-use super::sse::SseParser;
+use super::stream::spawn_decoder;
 use super::wire::to_wire;
 
 /// Default OpenRouter base URL. Override via `OpenAiCompatProvider::new`
 /// for self-hosted gateways or testing against `wiremock`.
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
-
-/// Max time we wait between SSE bytes before treating the connection as
-/// stalled. OpenRouter sends comment heartbeats so this should never trip
-/// under normal operation.
-const STREAM_IDLE_TIMEOUT_MS: u64 = 60_000;
-
-/// Internal channel capacity. Provider-side back-pressure: if the consumer
-/// (Processor) is slower than the network, we cap buffered deltas at this.
-const DELTA_CHANNEL_CAPACITY: usize = 64;
 
 #[derive(Clone)]
 pub struct OpenAiCompatProvider {
@@ -226,95 +212,4 @@ fn truncate(s: &str, max: usize) -> String {
     } else {
         format!("{}…", &s[..max])
     }
-}
-
-/// Spawn a decoder task: reads `reqwest::Response::bytes_stream`, runs the
-/// SSE parser + chunk decoder, forwards `ChatDelta` items into an mpsc.
-/// The returned receiver is wrapped as a `Stream`.
-fn spawn_decoder<S>(
-    mut bytes_stream: S,
-    cancel: CancellationToken,
-) -> impl Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin + 'static
-where
-    S: Stream<Item = reqwest::Result<Bytes>> + Send + Unpin + 'static,
-{
-    let (tx, rx) = mpsc::channel::<Result<ChatDelta, ProviderError>>(DELTA_CHANNEL_CAPACITY);
-    let cancel_inner = cancel.clone();
-
-    tokio::spawn(async move {
-        let mut parser = SseParser::new();
-        let idle = Duration::from_millis(STREAM_IDLE_TIMEOUT_MS);
-
-        loop {
-            let next = tokio::time::timeout(idle, bytes_stream.next());
-            let chunk = tokio::select! {
-                () = cancel_inner.cancelled() => {
-                    let _ = tx.send(Err(ProviderError::Cancelled)).await;
-                    return;
-                }
-                res = next => match res {
-                    Ok(Some(Ok(bytes))) => bytes,
-                    Ok(Some(Err(e))) => {
-                        let _ = tx.send(Err(ProviderError::Network(e.to_string()))).await;
-                        return;
-                    }
-                    Ok(None) => break,
-                    Err(_) => {
-                        let _ = tx
-                            .send(Err(ProviderError::Network("idle timeout".into())))
-                            .await;
-                        return;
-                    }
-                }
-            };
-
-            let frames = match parser.push(&chunk) {
-                Ok(f) => f,
-                Err(e) => {
-                    let _ = tx.send(Err(e)).await;
-                    return;
-                }
-            };
-
-            for frame in frames {
-                if frame.is_done() {
-                    return;
-                }
-                if frame.is_heartbeat() || frame.data.is_empty() {
-                    continue;
-                }
-                match decode_chunk(&frame.data) {
-                    Ok(deltas) => {
-                        for d in deltas {
-                            if tx.send(Ok(d)).await.is_err() {
-                                return;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx.send(Err(e)).await;
-                        return;
-                    }
-                }
-            }
-        }
-
-        // Drain trailing frame if upstream closed without a blank line.
-        if let Ok(tail) = parser.finish() {
-            for frame in tail {
-                if frame.is_done() || frame.is_heartbeat() || frame.data.is_empty() {
-                    continue;
-                }
-                if let Ok(deltas) = decode_chunk(&frame.data) {
-                    for d in deltas {
-                        if tx.send(Ok(d)).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    ReceiverStream::new(rx)
 }

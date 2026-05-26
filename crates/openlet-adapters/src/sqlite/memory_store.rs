@@ -6,18 +6,21 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use chrono::{DateTime, TimeZone, Utc};
 use sqlx::{Row, SqlitePool};
-use uuid::Uuid;
 
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::error::MemoryError;
 use openlet_core::types::agent::AgentId;
-use openlet_core::types::message::{Message, MessageId, Role};
+use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::PermissionMode;
 use openlet_core::types::session::{
     SessionCapabilities, SessionFilter, SessionId, SessionMeta, SessionStatus,
+};
+
+use super::codec::{
+    decode_json, encode_json, from_ms, map_io, mode_str, now_ms, parse_mode, parse_role,
+    parse_status, parse_uuid, part_kind, role_str, status_str,
 };
 
 #[derive(Debug, Clone)]
@@ -35,81 +38,6 @@ impl SqliteMemoryStore {
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
-}
-
-fn now_ms() -> i64 {
-    Utc::now().timestamp_millis()
-}
-
-fn from_ms(ms: i64) -> DateTime<Utc> {
-    Utc.timestamp_millis_opt(ms)
-        .single()
-        .unwrap_or_else(Utc::now)
-}
-
-fn map_io(e: sqlx::Error) -> MemoryError {
-    MemoryError::Io(e.to_string())
-}
-
-fn role_str(r: Role) -> &'static str {
-    match r {
-        Role::System => "system",
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::Tool => "tool",
-    }
-}
-
-fn parse_role(s: &str) -> Result<Role, MemoryError> {
-    match s {
-        "system" => Ok(Role::System),
-        "user" => Ok(Role::User),
-        "assistant" => Ok(Role::Assistant),
-        "tool" => Ok(Role::Tool),
-        other => Err(MemoryError::Io(format!("unknown role: {other}"))),
-    }
-}
-
-fn status_str(s: SessionStatus) -> &'static str {
-    match s {
-        SessionStatus::Idle => "idle",
-        SessionStatus::Running => "running",
-        SessionStatus::Cancelling => "cancelling",
-        SessionStatus::Cancelled => "cancelled",
-        SessionStatus::Errored => "errored",
-    }
-}
-
-fn parse_status(s: &str) -> Result<SessionStatus, MemoryError> {
-    match s {
-        "idle" => Ok(SessionStatus::Idle),
-        "running" => Ok(SessionStatus::Running),
-        "cancelling" => Ok(SessionStatus::Cancelling),
-        "cancelled" => Ok(SessionStatus::Cancelled),
-        "errored" => Ok(SessionStatus::Errored),
-        other => Err(MemoryError::Io(format!("unknown status: {other}"))),
-    }
-}
-
-fn mode_str(m: PermissionMode) -> &'static str {
-    match m {
-        PermissionMode::ReadOnly => "read_only",
-        PermissionMode::WorkspaceWrite => "workspace_write",
-        PermissionMode::Danger => "danger",
-    }
-}
-
-fn parse_mode(s: &str) -> Result<PermissionMode, MemoryError> {
-    match s {
-        "read_only" => Ok(PermissionMode::ReadOnly),
-        "workspace_write" => Ok(PermissionMode::WorkspaceWrite),
-        "danger" => Ok(PermissionMode::Danger),
-        other => Err(MemoryError::Io(format!("unknown mode: {other}"))),
-    }
-}
-
-fn parse_uuid(s: &str) -> Result<Uuid, MemoryError> {
-    Uuid::parse_str(s).map_err(|e| MemoryError::Io(format!("uuid parse: {e}")))
 }
 
 #[async_trait]
@@ -267,8 +195,7 @@ impl MemoryStore for SqliteMemoryStore {
         session: SessionId,
         extensions: serde_json::Value,
     ) -> Result<(), MemoryError> {
-        let json = serde_json::to_string(&extensions)
-            .map_err(|e| MemoryError::Io(format!("extensions json: {e}")))?;
+        let json = encode_json(&extensions, "extensions json")?;
         let res = sqlx::query(
             r#"UPDATE sessions SET extensions = ?, updated_at = ?
                WHERE id = ? AND deleted_at IS NULL"#,
@@ -348,8 +275,7 @@ impl MemoryStore for SqliteMemoryStore {
     async fn append_part(&self, msg: MessageId, part: Part) -> Result<PartId, MemoryError> {
         let id = part.id();
         let kind = part_kind(&part);
-        let payload = serde_json::to_string(&part)
-            .map_err(|e| MemoryError::Io(format!("encode part: {e}")))?;
+        let payload = encode_json(&part, "encode part")?;
 
         // Single atomic INSERT — see append_message rationale (B/I2).
         let mut tx = self.pool.begin().await.map_err(map_io)?;
@@ -382,8 +308,7 @@ impl MemoryStore for SqliteMemoryStore {
         part: Part,
     ) -> Result<(), MemoryError> {
         let kind = part_kind(&part);
-        let payload = serde_json::to_string(&part)
-            .map_err(|e| MemoryError::Io(format!("encode part: {e}")))?;
+        let payload = encode_json(&part, "encode part")?;
 
         let res = sqlx::query(
             r#"UPDATE parts SET kind = ?, payload = ?
@@ -448,26 +373,10 @@ impl MemoryStore for SqliteMemoryStore {
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {
             let payload: String = row.try_get("payload").map_err(map_io)?;
-            let part: Part = serde_json::from_str(&payload)
-                .map_err(|e| MemoryError::Io(format!("decode part: {e}")))?;
+            let part: Part = decode_json(&payload, "decode part")?;
             out.push(part);
         }
         Ok(out)
-    }
-}
-
-fn part_kind(part: &Part) -> &'static str {
-    match part {
-        Part::Text { .. } => "text",
-        Part::Reasoning { .. } => "reasoning",
-        Part::ToolCall { .. } => "tool_call",
-        Part::ToolResult { .. } => "tool_result",
-        Part::Image { .. } => "image",
-        Part::Document { .. } => "document",
-        Part::StepStart { .. } => "step_start",
-        Part::StepFinish { .. } => "step_finish",
-        Part::Compaction { .. } => "compaction",
-        Part::Plan { .. } => "plan",
     }
 }
 
@@ -482,11 +391,9 @@ fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta, MemoryErr
     let updated_at: i64 = row.try_get("updated_at").map_err(map_io)?;
     let deleted_at: Option<i64> = row.try_get("deleted_at").map_err(map_io)?;
     let extensions: String = row.try_get("extensions").map_err(map_io)?;
-    let extensions = serde_json::from_str(&extensions)
-        .map_err(|e| MemoryError::Io(format!("extensions json: {e}")))?;
+    let extensions = decode_json(&extensions, "extensions json")?;
     let capabilities: String = row.try_get("capabilities").map_err(map_io)?;
-    let capabilities: SessionCapabilities = serde_json::from_str(&capabilities)
-        .map_err(|e| MemoryError::Io(format!("capabilities json: {e}")))?;
+    let capabilities: SessionCapabilities = decode_json(&capabilities, "capabilities json")?;
     let current_agent_slug: Option<String> = row.try_get("current_agent_slug").map_err(map_io)?;
     let previous_agent_slug: Option<String> = row.try_get("previous_agent_slug").map_err(map_io)?;
     let depth: i64 = row.try_get("depth").map_err(map_io)?;

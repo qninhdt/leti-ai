@@ -148,14 +148,3 @@ fn tool_to_wire(t: &ToolSpec) -> OpenAiTool<'_> {
         },
     }
 }
-
-// Suppress unused-import lint when only `to_wire` is exercised.
-#[allow(dead_code)]
-fn _project_msg_alias(m: &ProjMsg) -> &str {
-    match m.role {
-        LlmRole::System => "system",
-        LlmRole::User => "user",
-        LlmRole::Assistant => "assistant",
-        LlmRole::Tool => "tool",
-    }
-}

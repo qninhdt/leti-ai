@@ -99,6 +99,20 @@ pub enum Decision {
     },
 }
 
+impl Decision {
+    /// Stable wire label. Used by the protocol DTO so the wire format
+    /// only carries the outcome — never the (optionally-PII) feedback
+    /// or ask-id payload.
+    #[must_use]
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Allow => "allow",
+            Self::Deny { .. } => "deny",
+            Self::Pending { .. } => "pending",
+        }
+    }
+}
+
 /// Per-call context attached to every `PermissionManager::check` call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PermissionCtx {

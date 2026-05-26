@@ -10,7 +10,7 @@ mod plan;
 use async_trait::async_trait;
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
-use semver::{Version, VersionReq};
+use semver::Version;
 
 pub use general::{GENERAL_CACHEABLE, general_agent};
 pub use indexer::indexer_agent;
@@ -38,7 +38,7 @@ impl CoreAgentsPlugin {
                 description: "Ships the general assistant + indexer + plan-mode agents.".into(),
                 author: Some("Openlet".into()),
                 capabilities: vec![Capability::Agent],
-                core_version_req: VersionReq::parse(">=0.1.0").expect("static version req"),
+                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
                 default_priority: 50,
                 config_schema: None,
             },

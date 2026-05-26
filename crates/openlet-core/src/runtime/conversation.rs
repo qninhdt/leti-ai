@@ -164,16 +164,15 @@ impl ConversationRuntime {
                     feedback,
                     plugin_fault,
                 } => {
-                    if let Some(fault) = plugin_fault.as_ref() {
-                        let _ = self
-                            .events
-                            .publish(
-                                crate::dispatch::plugin_error_event(Some(session_id), fault),
-                                Persistence::Durable,
-                            )
-                            .await;
-                    }
-                    tracing::warn!(reason = %reason, feedback = ?feedback, "on_chat_params denied; halting turn");
+                    crate::dispatch::publish_denied_warn(
+                        &self.events,
+                        Some(session_id),
+                        "on_chat_params",
+                        &reason,
+                        &feedback,
+                        plugin_fault.as_ref(),
+                    )
+                    .await;
                     return Err(CoreError::Provider(ProviderError::Cancelled));
                 }
             }
@@ -208,16 +207,15 @@ impl ConversationRuntime {
                     feedback,
                     plugin_fault,
                 } => {
-                    if let Some(fault) = plugin_fault.as_ref() {
-                        let _ = self
-                            .events
-                            .publish(
-                                crate::dispatch::plugin_error_event(Some(session_id), fault),
-                                Persistence::Durable,
-                            )
-                            .await;
-                    }
-                    tracing::warn!(reason = %reason, feedback = ?feedback, "on_chat_messages denied; halting turn");
+                    crate::dispatch::publish_denied_warn(
+                        &self.events,
+                        Some(session_id),
+                        "on_chat_messages",
+                        &reason,
+                        &feedback,
+                        plugin_fault.as_ref(),
+                    )
+                    .await;
                     return Err(CoreError::Provider(ProviderError::Cancelled));
                 }
             }

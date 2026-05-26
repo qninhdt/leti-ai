@@ -3,16 +3,14 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use chrono::Utc;
-use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::types::agent::AgentId;
-use openlet_core::types::event::AgentEvent;
 use openlet_core::types::session::{SessionFilter, SessionId};
 use openlet_protocol::{CreateSessionDto, SessionDto, SetModeDto};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
 use crate::error::AppError;
+use crate::events::publish_status;
 
 /// `POST /v1/session` — create session.
 #[utoipa::path(
@@ -84,11 +82,7 @@ pub async fn get_one(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<SessionDto>, AppError> {
-    let meta = state
-        .memory
-        .get_session(SessionId::from(id))
-        .await?
-        .ok_or_else(|| AppError::not_found("session_not_found", "session not found"))?;
+    let meta = state.require_session(SessionId::from(id)).await?;
     Ok(Json(SessionDto::from(meta)))
 }
 
@@ -111,39 +105,21 @@ pub async fn delete(
     // Cancel any in-flight turn BEFORE marking the session terminal so
     // the LLM can't keep streaming on a session the client thinks is
     // gone (closes C5-server). Idempotent via CAS gate.
-    if let Some(handle) = state.active_turns.get(&sid).map(|h| h.clone()) {
-        if handle.request_cancel() {
-            handle.cancel.cancel();
-            let _ = state
-                .events
-                .publish(
-                    AgentEvent::SessionStatus {
-                        session_id: sid,
-                        status: openlet_core::types::session::SessionStatus::Cancelling,
-                        at: Utc::now(),
-                    },
-                    Persistence::Durable,
-                )
-                .await;
-        }
+    let exit_notify = state.active_turns.get(&sid).map(|h| h.exited.clone());
+    let _ = state.try_cancel_active_turn(sid).await;
+    if let Some(exited) = exit_notify {
         // Wait for the driving task's Drop guard to signal exit. Notify
         // permits-on-await semantics: if the task already exited, this
         // resolves immediately the next loop iteration.
-        let _ =
-            tokio::time::timeout(std::time::Duration::from_secs(5), handle.exited.notified()).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), exited.notified()).await;
     }
     state.memory.delete_session(sid).await?;
-    let _ = state
-        .events
-        .publish(
-            AgentEvent::SessionStatus {
-                session_id: sid,
-                status: openlet_core::types::session::SessionStatus::Cancelled,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await;
+    publish_status(
+        &state.events,
+        sid,
+        openlet_core::types::session::SessionStatus::Cancelled,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

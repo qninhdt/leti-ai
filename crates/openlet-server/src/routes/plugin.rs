@@ -6,7 +6,6 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::types::event::AgentEvent;
 use serde::{Deserialize, Serialize};
@@ -78,6 +77,3 @@ pub async fn health(
     }
     Ok(Json(PluginHealthDto { id, healthy: true }))
 }
-
-#[allow(dead_code)]
-const _: StatusCode = StatusCode::OK;

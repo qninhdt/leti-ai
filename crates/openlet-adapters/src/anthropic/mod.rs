@@ -28,18 +28,22 @@ use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 
 use crate::openai_compat::OpenAiCompatProvider;
+use crate::stub_provider::StubVisionProvider;
 
 /// Default Anthropic Messages API base. Kept for documentation —
 /// today's stub uses OpenAI-compat shape so this base will reject
 /// requests until the native adapter lands.
 pub const DEFAULT_BASE_URL: &str = "https://api.anthropic.com/v1";
 
-/// Stub Anthropic provider. Delegates to [`OpenAiCompatProvider`] for
-/// the wire call; overrides `capabilities()` for known vision-capable
-/// claude families.
+/// Anthropic per-image cap: ~5 MB before they reject.
+const ANTHROPIC_MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// Stub Anthropic provider. Delegates to [`OpenAiCompatProvider`] via
+/// [`StubVisionProvider`]; flips vision flags for known claude
+/// vision-capable families.
 #[derive(Clone)]
 pub struct AnthropicProvider {
-    inner: Arc<OpenAiCompatProvider>,
+    inner: StubVisionProvider,
 }
 
 impl AnthropicProvider {
@@ -47,9 +51,7 @@ impl AnthropicProvider {
     /// (`https://openrouter.ai/api/v1`) until the native adapter lands.
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: Option<SecretString>) -> Self {
-        Self {
-            inner: Arc::new(OpenAiCompatProvider::new(base_url, api_key)),
-        }
+        Self::from_openai_compat(Arc::new(OpenAiCompatProvider::new(base_url, api_key)))
     }
 
     /// Wrap an existing OpenAI-compat client (e.g. the one built by the
@@ -57,7 +59,9 @@ impl AnthropicProvider {
     /// retries / proxies on the inner client.
     #[must_use]
     pub fn from_openai_compat(inner: Arc<OpenAiCompatProvider>) -> Self {
-        Self { inner }
+        Self {
+            inner: StubVisionProvider::new(inner, is_vision_model, ANTHROPIC_MAX_IMAGE_BYTES),
+        }
     }
 }
 
@@ -76,22 +80,11 @@ impl ModelProvider for AnthropicProvider {
     }
 
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
-        let mut caps = self.inner.capabilities(model);
-        // Vision: claude sonnet/opus/haiku 3+ all accept images. Older
-        // claude-2 / claude-instant did not.
-        if is_vision_model(model) {
-            caps.supports_vision = true;
-            caps.supports_document_input = true;
-            // Anthropic per-image cap: ~5 MB before they reject.
-            caps.max_image_bytes = 5 * 1024 * 1024;
-        }
-        caps
+        self.inner.capabilities(model)
     }
 
-    fn apply_cache_markers(&self, _messages: &mut Vec<LlmMessage>, _hint: CacheHint) {
-        // STUB: real impl injects `cache_control: {type: "ephemeral"}`
-        // into the system + last user turn content blocks. Today's
-        // OpenAI-compat shape has no equivalent, so this is a no-op.
+    fn apply_cache_markers(&self, messages: &mut Vec<LlmMessage>, hint: CacheHint) {
+        self.inner.apply_cache_markers(messages, hint);
     }
 }
 

@@ -310,7 +310,7 @@ impl From<AgentEvent> for EventDto {
             } => Self::PermissionResolved {
                 session_id: session_id.as_uuid(),
                 ask_id: ask_id.0,
-                decision: decision_label(&decision),
+                decision: decision.label().to_string(),
             },
             AgentEvent::Error {
                 session_id,
@@ -416,13 +416,9 @@ impl From<AgentEvent> for EventDto {
     }
 }
 
-/// Stable wire label for a `Decision`. Server-side enum carries a
-/// `feedback` payload but the wire format only needs the outcome.
+/// Stable wire label for a `Decision` — delegates to `Decision::label()`
+/// in `openlet_core::types::permission`.
+#[allow(dead_code)]
 fn decision_label(d: &openlet_core::types::permission::Decision) -> String {
-    use openlet_core::types::permission::Decision;
-    match d {
-        Decision::Allow => "allow".to_string(),
-        Decision::Deny { .. } => "deny".to_string(),
-        Decision::Pending { .. } => "pending".to_string(),
-    }
+    d.label().to_string()
 }

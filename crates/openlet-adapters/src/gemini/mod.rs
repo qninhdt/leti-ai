@@ -25,17 +25,21 @@ use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 
 use crate::openai_compat::OpenAiCompatProvider;
+use crate::stub_provider::StubVisionProvider;
 
 /// Default Gemini API base. Stub today; native adapter swaps to
 /// `streamGenerateContent` against this base.
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1";
 
-/// Stub Gemini provider. Delegates to [`OpenAiCompatProvider`] for the
-/// wire call; overrides `capabilities()` for known vision-capable
-/// gemini families.
+/// Gemini per-image cap: ~20 MB.
+const GEMINI_MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Stub Gemini provider. Delegates to [`OpenAiCompatProvider`] via
+/// [`StubVisionProvider`]; flips vision flags for known gemini
+/// vision-capable families.
 #[derive(Clone)]
 pub struct GeminiProvider {
-    inner: Arc<OpenAiCompatProvider>,
+    inner: StubVisionProvider,
 }
 
 impl GeminiProvider {
@@ -43,15 +47,15 @@ impl GeminiProvider {
     /// (`https://openrouter.ai/api/v1`) until the native adapter lands.
     #[must_use]
     pub fn new(base_url: impl Into<String>, api_key: Option<SecretString>) -> Self {
-        Self {
-            inner: Arc::new(OpenAiCompatProvider::new(base_url, api_key)),
-        }
+        Self::from_openai_compat(Arc::new(OpenAiCompatProvider::new(base_url, api_key)))
     }
 
     /// Wrap an existing OpenAI-compat client.
     #[must_use]
     pub fn from_openai_compat(inner: Arc<OpenAiCompatProvider>) -> Self {
-        Self { inner }
+        Self {
+            inner: StubVisionProvider::new(inner, is_vision_model, GEMINI_MAX_IMAGE_BYTES),
+        }
     }
 }
 
@@ -70,20 +74,11 @@ impl ModelProvider for GeminiProvider {
     }
 
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
-        let mut caps = self.inner.capabilities(model);
-        if is_vision_model(model) {
-            caps.supports_vision = true;
-            caps.supports_document_input = true;
-            // Gemini per-image cap: ~20 MB.
-            caps.max_image_bytes = 20 * 1024 * 1024;
-        }
-        caps
+        self.inner.capabilities(model)
     }
 
-    fn apply_cache_markers(&self, _messages: &mut Vec<LlmMessage>, _hint: CacheHint) {
-        // STUB: Gemini auto-caches; native adapter would also expose
-        // explicit `cachedContent` references for cross-turn reuse.
-        // Today no-op — auto-caching covers the common path.
+    fn apply_cache_markers(&self, messages: &mut Vec<LlmMessage>, hint: CacheHint) {
+        self.inner.apply_cache_markers(messages, hint);
     }
 }
 

@@ -24,6 +24,7 @@ use uuid::Uuid;
 
 use crate::app_state::{AppState, TurnHandle};
 use crate::error::AppError;
+use crate::events::publish_status;
 
 /// Drop-guard that releases the `active_turns` slot if any `?` propagates
 /// before we commit it to the spawned task. Once `committed = true`, the
@@ -60,11 +61,7 @@ pub async fn prompt_async(
     Json(body): Json<CreateMessageDto>,
 ) -> Result<(StatusCode, Json<PromptAckDto>), AppError> {
     let sid = SessionId::from(id);
-    let meta = state
-        .memory
-        .get_session(sid)
-        .await?
-        .ok_or_else(|| AppError::not_found("session_not_found", "session not found"))?;
+    let meta = state.require_session(sid).await?;
     if matches!(
         meta.status,
         SessionStatus::Cancelled | SessionStatus::Errored
@@ -157,17 +154,7 @@ pub async fn prompt_async(
         .memory
         .update_status(sid, SessionStatus::Running, "prompt_async")
         .await?;
-    state
-        .events
-        .publish(
-            AgentEvent::SessionStatus {
-                session_id: sid,
-                status: SessionStatus::Running,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await?;
+    publish_status(&state.events, sid, SessionStatus::Running).await;
 
     // All ?-propagating work is done. Commit the slot to the spawned
     // task — SlotGuard now drops without releasing.
@@ -205,17 +192,7 @@ pub async fn prompt_async(
             .memory
             .update_status(sid, final_status, status_reason(&outcome, &cancel))
             .await;
-        let _ = task_state
-            .events
-            .publish(
-                AgentEvent::SessionStatus {
-                    session_id: sid,
-                    status: final_status,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await;
+        publish_status(&task_state.events, sid, final_status).await;
         if let Err(err) = outcome {
             tracing::warn!(session = %sid, error = %err, "turn loop ended with error");
         }
