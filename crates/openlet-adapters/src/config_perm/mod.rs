@@ -7,6 +7,8 @@
 //! interactive-ask flow.
 
 mod manager;
+#[cfg(test)]
+mod manager_tests;
 mod matcher;
 mod ruleset;
 
