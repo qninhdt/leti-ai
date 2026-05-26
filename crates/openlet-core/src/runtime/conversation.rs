@@ -20,7 +20,7 @@ use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::{ChatRequest, FinishReason, ModelProvider, ToolSpec};
 use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::{CoreError, ProviderError};
-use crate::hooks::io::{OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx, OnCostTickCtx};
+use crate::hooks::io::{OnChatParamsCtx, OnCostTickCtx};
 use crate::projection::LlmMessage;
 use crate::runtime::cost::{compute_cost, format_usd};
 use crate::runtime::processor::{Processor, ProcessorState};
@@ -145,95 +145,50 @@ impl ConversationRuntime {
 
         // OnChatParams — plugins mutate model / max_tokens / temperature.
         // O(1) skip when no plugin registered the chain.
-        let params = if self.hook_chains.on_chat_params.is_empty() {
+        let params = crate::runtime::chat_hooks::run_chat_params(
+            &self.hook_chains,
+            &self.events,
+            session_id,
             OnChatParamsCtx {
                 model,
                 max_tokens: input.max_tokens,
                 temperature: input.temperature,
-            }
-        } else {
-            let params_ctx = OnChatParamsCtx {
-                model: model.clone(),
-                max_tokens: input.max_tokens,
-                temperature: input.temperature,
-            };
-            match dispatch(&self.hook_chains.on_chat_params, params_ctx).await {
-                DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => c,
-                DispatchOutcome::Denied {
-                    reason,
-                    feedback,
-                    plugin_fault,
-                } => {
-                    crate::dispatch::publish_denied_warn(
-                        &self.events,
-                        Some(session_id),
-                        "on_chat_params",
-                        &reason,
-                        &feedback,
-                        plugin_fault.as_ref(),
-                    )
-                    .await;
-                    return Err(CoreError::Provider(ProviderError::Cancelled));
-                }
-            }
-        };
+            },
+        )
+        .await?;
 
         // OnChatMessages — plugins rewrite the message list (compaction,
-        // ablation, prompt-prefix injection). O(1) skip when empty.
-        // Compose the per-provider overlay onto the caller's system_prompt
-        // here, after OnChatParams has resolved the final model. Plugins
-        // observing OnChatMessages see (and can rewrite) the composed
-        // prompt.
+        // ablation, prompt-prefix injection). Compose the per-provider
+        // overlay onto the caller's system_prompt here, after
+        // OnChatParams has resolved the final model. Plugins observing
+        // OnChatMessages see (and can rewrite) the composed prompt.
         let composed_system_prompt = Some(compose_system_prompt(
             input.system_prompt.as_deref(),
             &params.model,
         ));
-        let messages = if self.hook_chains.on_chat_messages.is_empty() {
-            OnChatMessagesCtx {
-                model: params.model.clone(),
-                system_prompt: composed_system_prompt,
-                messages: input.messages,
-            }
-        } else {
-            let messages_ctx = OnChatMessagesCtx {
-                model: params.model.clone(),
-                system_prompt: composed_system_prompt,
-                messages: input.messages,
-            };
-            match dispatch(&self.hook_chains.on_chat_messages, messages_ctx).await {
-                DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => c,
-                DispatchOutcome::Denied {
-                    reason,
-                    feedback,
-                    plugin_fault,
-                } => {
-                    crate::dispatch::publish_denied_warn(
-                        &self.events,
-                        Some(session_id),
-                        "on_chat_messages",
-                        &reason,
-                        &feedback,
-                        plugin_fault.as_ref(),
-                    )
-                    .await;
-                    return Err(CoreError::Provider(ProviderError::Cancelled));
-                }
-            }
-        };
+        let messages = crate::runtime::chat_hooks::run_chat_messages(
+            &self.hook_chains,
+            &self.events,
+            session_id,
+            crate::runtime::chat_hooks::build_messages_ctx(
+                params.model.clone(),
+                composed_system_prompt,
+                input.messages,
+            ),
+        )
+        .await?;
 
         // OnChatHeaders — auth/tracing headers per provider call. Phase
         // 4 widens `ModelProvider::chat_stream` to consume the headers;
         // for now plugins can register and observe (audit logs, metrics)
         // but any `Replace` mutation is silently dropped until phase 4.
-        // O(1) skip when empty.
-        if !self.hook_chains.on_chat_headers.is_empty() {
-            let headers_ctx = OnChatHeadersCtx {
-                model: params.model.clone(),
-                headers: Vec::new(),
-            };
-            let headers_outcome = dispatch(&self.hook_chains.on_chat_headers, headers_ctx).await;
-            publish_fault_if_any(&self.events, Some(session_id), &headers_outcome).await;
-        }
+        crate::runtime::chat_hooks::run_chat_headers(
+            &self.hook_chains,
+            &self.events,
+            session_id,
+            &params.model,
+        )
+        .await;
 
         let req = ChatRequest {
             model: params.model.clone(),

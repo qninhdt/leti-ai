@@ -7,6 +7,7 @@
 
 pub mod agent_allowlist;
 pub mod attachments;
+pub(crate) mod chat_hooks;
 pub mod compaction;
 pub mod conversation;
 pub mod cost;
