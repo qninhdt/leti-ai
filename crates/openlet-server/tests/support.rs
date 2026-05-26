@@ -193,6 +193,15 @@ impl CoreApi for NoopCoreApi {
         Ok(serde_json::Value::Null)
     }
     async fn cancel_session(&self, _: openlet_core::types::session::SessionId, _: String) {}
+    async fn emit_notification(
+        &self,
+        _: Option<openlet_core::types::session::SessionId>,
+        _: openlet_core::hooks::io::NotificationLevel,
+        _: String,
+        _: String,
+        _: String,
+    ) {
+    }
 }
 
 /// Test stub for `SubagentSpawner` — every call returns

@@ -26,6 +26,7 @@ use openlet_core::error::ProviderError;
 
 use super::capabilities::capabilities_for;
 use super::chunk_decoder::decode_chunk;
+use super::prefix_shaping::{apply_request_shaping, detect_quirks};
 use super::pricing::pricing_for;
 use super::sse::SseParser;
 use super::wire::to_wire;
@@ -117,7 +118,10 @@ impl ModelProvider for OpenAiCompatProvider {
                     env_var: "OPENROUTER_API_KEY",
                 })?;
 
-        let body = to_wire(&req);
+        let mut body = serde_json::to_value(to_wire(&req))
+            .map_err(|e| ProviderError::Network(format!("body encode: {e}")))?;
+        let caps = detect_quirks(&req.model);
+        apply_request_shaping(&mut body, caps)?;
         let url = format!("{}/chat/completions", self.inner.base_url);
 
         let mut headers = HeaderMap::new();
@@ -175,7 +179,12 @@ impl ModelProvider for OpenAiCompatProvider {
     }
 
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
-        capabilities_for(model)
+        // Capabilities mirror the prefix-shaper detection so callers
+        // (router, projector, request builder) get a single source of
+        // truth for quirk flags. Vision is OFF by default — the
+        // OpenAI-compat adapter is the catch-all and shouldn't claim
+        // multimodal support unilaterally.
+        detect_quirks(model)
     }
 }
 

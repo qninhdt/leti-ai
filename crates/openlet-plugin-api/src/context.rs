@@ -19,9 +19,10 @@ use crate::dispatch::{HookChains, HookEntry, HookFuture};
 use crate::hooks::{
     HookKind, HookResult, Priority,
     io::{
-        AfterToolCallCtx, AfterTurnCtx, BeforeToolCallCtx, BeforeTurnCtx, OnChatHeadersCtx,
-        OnChatMessagesCtx, OnChatParamsCtx, OnCompactionCtx, OnCostTickCtx, OnEventCtx,
-        OnMessageCtx, OnPermissionAskCtx, OnSessionStatusCtx, OnStepFinishCtx,
+        AfterToolCallCtx, AfterTurnCtx, BeforeToolCallCtx, BeforeTurnCtx, NotificationCtx,
+        NotificationLevel, OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx, OnCompactionCtx,
+        OnCostTickCtx, OnEventCtx, OnMessageCtx, OnPermissionAskCtx, OnSessionStatusCtx,
+        OnStepFinishCtx,
     },
 };
 use crate::manifest::{Capability, PluginManifest};
@@ -50,6 +51,7 @@ pub struct PluginContext {
     pub(crate) on_compaction: Vec<HookEntry<OnCompactionCtx>>,
     pub(crate) on_session_status: Vec<HookEntry<OnSessionStatusCtx>>,
     pub(crate) on_event: Vec<HookEntry<OnEventCtx>>,
+    pub(crate) notification: Vec<HookEntry<NotificationCtx>>,
 }
 
 /// Drained registrations from a `PluginContext`. The host merges every
@@ -90,6 +92,7 @@ impl PluginContext {
             on_compaction: Vec::new(),
             on_session_status: Vec::new(),
             on_event: Vec::new(),
+            notification: Vec::new(),
         }
     }
 
@@ -170,6 +173,7 @@ impl PluginContext {
                 on_compaction: self.on_compaction,
                 on_session_status: self.on_session_status,
                 on_event: self.on_event,
+                notification: self.notification,
             },
         }
     }
@@ -316,6 +320,42 @@ impl_on_hook!(
     OnSessionStatusCtx
 );
 impl_on_hook!(on_event, on_event, HookKind::OnEvent, OnEventCtx);
+impl_on_hook!(
+    on_notification,
+    notification,
+    HookKind::Notification,
+    NotificationCtx
+);
+
+impl PluginContext {
+    /// Emit a user-facing notification. Pushes a [`NotificationCtx`]
+    /// through the [`CoreApi::emit_notification`] back-channel which the
+    /// host runs through both the notification hook chain and the SSE
+    /// `notification.emitted` event.
+    ///
+    /// `body` is redacted by the host before SSE emission. Per-session
+    /// rate limiting (10/sec cumulative across plugins) caps misbehaving
+    /// plugins from flooding the channel — overflow drops the
+    /// notification and emits a `tracing::warn!` so cloud operators can
+    /// see the offender without parsing logs.
+    pub async fn emit_notification(
+        &self,
+        session_id: Option<openlet_core::types::session::SessionId>,
+        level: NotificationLevel,
+        title: impl Into<String>,
+        body: impl Into<String>,
+    ) {
+        self.core_api
+            .emit_notification(
+                session_id,
+                level,
+                title.into(),
+                body.into(),
+                self.manifest.id.clone(),
+            )
+            .await;
+    }
+}
 
 /// Typed back-channel into core. Plugins receive an `Arc<dyn CoreApi>`
 /// inside `install` and may clone it into hook closures so they can
@@ -375,5 +415,23 @@ pub trait CoreApi: Send + Sync + 'static {
         &self,
         session_id: openlet_core::types::session::SessionId,
         reason: String,
+    );
+
+    /// Plugin-emitted user-facing notification fan-out. Implementations
+    /// MUST: (1) run the [`HookKind::Notification`] chain so observer
+    /// plugins see it, (2) apply the secret redactor to `body`,
+    /// (3) enforce a per-session cumulative rate limit (10/sec) and drop
+    /// surplus emits with a tracing warn, (4) publish
+    /// `AgentEvent::NotificationEmitted` durably for SSE replay.
+    ///
+    /// `plugin_id` is set by `PluginContext::emit_notification` from
+    /// the manifest — plugins cannot spoof this field.
+    async fn emit_notification(
+        &self,
+        session_id: Option<openlet_core::types::session::SessionId>,
+        level: NotificationLevel,
+        title: String,
+        body: String,
+        plugin_id: String,
     );
 }

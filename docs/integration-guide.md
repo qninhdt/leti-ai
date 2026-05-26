@@ -173,3 +173,72 @@ bumps the major when the extension API breaks. Pin your plugin's
   downstream integrators. The runnable `examples/integration-shape/`
   reference crate is deferred until a concrete downstream integrator
   (Cloud) lands and informs its shape.
+
+## Workspace routing (multi-tenant)
+
+Cloud deployments serve multiple workspaces from a single binary. The
+`openlet-server::workspace_resolver` + `middleware::workspace_routing`
+modules make this routing pluggable.
+
+### Trait surface
+
+```rust
+use openlet_server::workspace_resolver::{WorkspaceResolver, WorkspaceError};
+use std::sync::Arc;
+
+#[async_trait::async_trait]
+impl WorkspaceResolver for cloud::CloudResolver {
+    async fn resolve(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Arc<openlet_server::AppState>, WorkspaceError> {
+        // Look up the workspace's BYOK keys + plugin set, build a per-
+        // workspace AppState, and cache it. Cache invalidation is the
+        // integrator's responsibility — when the control plane mutates
+        // a workspace, evict its cached entry.
+        self.cache.get_or_build(workspace_id).await
+    }
+}
+```
+
+### Mount order (CRITICAL)
+
+```text
+auth middleware → WorkspaceRoutingLayer → handler
+```
+
+`WorkspaceRoutingLayer` and the `WorkspaceRoutingGuard` extractor BOTH
+refuse to proceed unless an `AuthPrincipal` is already in the request
+extensions. Mounting workspace routing before auth produces 401 on
+every request — loud-fail by design, because skipping auth before
+workspace lookup is a cross-tenant data exposure.
+
+```rust
+let resolver = cloud::CloudResolver::new(control_plane);
+let app = Router::new()
+    .route("/v1/turn", post(handler))
+    .layer(openlet_server::WorkspaceRoutingLayer::new(resolver))
+    .layer(cloud::AuthLayer::new(jwt_validator));  // mounts FIRST → runs FIRST
+```
+
+The HTTP header `x-openlet-workspace` selects the workspace. Header
+parsing is lenient (missing → falls back to `default`) so single-tenant
+deployments work with the included `StaticWorkspaceResolver`.
+
+### Per-workspace data root
+
+```rust
+use openlet_server::workspace_data_root;
+
+let ws_root = workspace_data_root(&data_dir, workspace_id)?;
+// → {data_dir}/workspaces/{ws_id}/   (path-traversal-safe)
+let db_path = ws_root.join("db.sqlite");
+```
+
+`workspace_data_root` rejects ids containing `/`, `\`, `..`, NUL, or
+control characters. Each workspace's SQLite + artifact root lives in a
+distinct subdirectory so a path-traversal bug in id parsing cannot leak
+data across tenants.
+
+See `docs/multi-provider.md` for the per-workspace BYOK pattern with
+`MultiProvider`.

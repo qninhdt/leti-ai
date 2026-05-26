@@ -129,6 +129,51 @@ pub struct ModelPricing {
 pub type ChatStream =
     Box<dyn Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin + 'static>;
 
+/// Static, model-aware capability flags. Returned by
+/// [`ModelProvider::capabilities`] so the runtime can ask one provider
+/// "do you support vision for this model?" instead of hard-coding
+/// per-model branches in the projector or request builder.
+///
+/// All flags default `false` so a provider that doesn't advertise a
+/// capability is safe by construction. `max_request_body_bytes = 0`
+/// means "no provider-side cap; defer to the global server limit".
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct ProviderCapabilities {
+    /// Provider accepts inline image inputs (multimodal vision).
+    pub supports_vision: bool,
+    /// Provider accepts inline document inputs (PDFs, etc.).
+    pub supports_document_input: bool,
+    /// Per-image upper bound enforced by the upstream API (0 = unset).
+    pub max_image_bytes: usize,
+    /// `gpt-5*` family routes the response-token cap through
+    /// `max_completion_tokens` rather than `max_tokens`. Adapters
+    /// switch the JSON field name based on this flag.
+    pub max_completion_tokens_param: bool,
+    /// `o1*` / `o3*` reasoning models and `grok-3-mini` reject
+    /// `temperature` / `top_p` / `frequency_penalty` /
+    /// `presence_penalty`. Adapters drop those fields when this is
+    /// true.
+    pub strip_sampling_params: bool,
+    /// Moonshot Kimi rejects requests carrying an `is_error` field on
+    /// tool result messages — adapters omit the field when this is
+    /// true. (Other providers tolerate it.)
+    pub reject_is_error_field: bool,
+    /// Pre-flight body-size cap. DashScope rejects > 6 MiB; OpenAI
+    /// stops at 100 MiB. `0` means "no cap; rely on global limit".
+    pub max_request_body_bytes: usize,
+}
+
+/// Hint for [`ModelProvider::apply_cache_markers`]. The runtime decides
+/// which boundaries it'd like cached; the provider chooses how (or
+/// whether) to mark them. Anthropic injects `cache_control` blocks;
+/// OpenAI-compat / Gemini auto-cache so the call is a no-op there.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheHint {
+    pub system_prompt: bool,
+    pub tool_definitions: bool,
+    pub last_user_turn: bool,
+}
+
 /// Wraps an LLM provider — local mock, OpenAI-compat, OpenRouter.
 ///
 /// Implementations MUST be cancellation-aware: dropping `chat_stream` or
@@ -152,6 +197,12 @@ pub trait ModelProvider: Send + Sync + 'static {
     fn capabilities(&self, _model: &str) -> ProviderCapabilities {
         ProviderCapabilities::default()
     }
+
+    /// Inject prompt-cache markers into `_messages` before the
+    /// request is built. Default no-op suits providers that auto-cache
+    /// (OpenAI-compat, Gemini). Anthropic stub overrides this once the
+    /// native Messages API lands.
+    fn apply_cache_markers(&self, _messages: &mut Vec<LlmMessage>, _hint: CacheHint) {}
 }
 
 /// Per-model capability flags. The runtime queries this at turn-start

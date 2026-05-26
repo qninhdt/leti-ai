@@ -150,8 +150,8 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         // SubagentOutput / SubagentFinished are addressed by task_id, not
         // session_id — the SSE replay row is keyed off the parent via
         // SubagentStarted, so leaving session_id NULL here is safe.
-        AgentEvent::SubagentOutput { .. }
-        | AgentEvent::SubagentFinished { .. }
-        | AgentEvent::Heartbeat => None,
+        AgentEvent::SubagentOutput { .. } | AgentEvent::SubagentFinished { .. } => None,
+        AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
+        AgentEvent::Heartbeat => None,
     }
 }

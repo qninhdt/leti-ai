@@ -87,8 +87,7 @@ impl UsageWire {
             input_tokens: self.prompt_tokens,
             output_tokens: self.completion_tokens,
             cached_input_tokens: cached,
-            cache_write_tokens: 0,
-            reasoning_tokens: 0,
+            ..Default::default()
         }
     }
 }
@@ -145,8 +144,7 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
                     .as_ref()
                     .map(|d| d.cached_tokens)
                     .unwrap_or(0),
-                cache_write_tokens: 0,
-                reasoning_tokens: 0,
+                ..Default::default()
             });
             out.push(ChatDelta::Finish {
                 reason: mapped,

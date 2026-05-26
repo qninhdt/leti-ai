@@ -42,7 +42,15 @@ pub fn compute_cost(usage: &Usage, pricing: &ModelPricing) -> Decimal {
         total += Decimal::new(usage.cached_input_tokens as i64, 0) / mtok * cr;
     }
     if let Some(cw) = pricing.cache_write_per_mtok {
-        total += Decimal::new(usage.cache_write_tokens as i64, 0) / mtok * cw;
+        // Sum both cache-write counters — providers populate one or
+        // the other (Anthropic uses `cache_creation_input_tokens`,
+        // DashScope uses `cache_write_tokens`). Adapters write to
+        // exactly one field so this can't double-charge in practice;
+        // belt-and-suspenders sum keeps it correct if both are set.
+        let writes = usage
+            .cache_write_tokens
+            .saturating_add(usage.cache_creation_input_tokens);
+        total += Decimal::new(writes as i64, 0) / mtok * cw;
     }
     total
 }
@@ -133,5 +141,25 @@ mod tests {
         // cache_write 200*3.75/M    = 0.00075
         // total                       0.0024
         assert_eq!(format_usd(cost), "0.0024");
+    }
+
+    #[test]
+    fn cache_creation_input_tokens_alias_charges_at_write_rate() {
+        // Anthropic populates cache_creation_input_tokens; cost calc
+        // sums both write counters so a provider using either field
+        // gets billed exactly once at the cache_write rate.
+        let u = Usage {
+            input_tokens: 0,
+            cache_creation_input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let p = ModelPricing {
+            input_per_mtok: Decimal::from_str("3.00").unwrap(),
+            output_per_mtok: Decimal::from_str("15.00").unwrap(),
+            cached_input_per_mtok: None,
+            cache_write_per_mtok: Some(Decimal::from_str("3.75").unwrap()),
+        };
+        let cost = compute_cost(&u, &p);
+        assert_eq!(format_usd(cost), "3.7500");
     }
 }

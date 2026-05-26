@@ -96,6 +96,15 @@ impl CoreApi for RecordingCore {
             .unwrap()
             .push((session_id, reason));
     }
+    async fn emit_notification(
+        &self,
+        _: Option<SessionId>,
+        _: openlet_core::hooks::io::NotificationLevel,
+        _: String,
+        _: String,
+        _: String,
+    ) {
+    }
 }
 
 /// Install the plugin and drain its chains. Mirrors what

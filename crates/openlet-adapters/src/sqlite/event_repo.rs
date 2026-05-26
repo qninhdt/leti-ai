@@ -149,6 +149,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::SubagentStarted { .. } => "subagent.started",
         AgentEvent::SubagentOutput { .. } => "subagent.output",
         AgentEvent::SubagentFinished { .. } => "subagent.finished",
+        AgentEvent::NotificationEmitted { .. } => "notification.emitted",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }

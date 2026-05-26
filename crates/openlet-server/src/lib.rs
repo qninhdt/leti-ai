@@ -9,16 +9,24 @@ pub mod cli;
 pub mod core_api_impl;
 pub mod diagnostics;
 pub mod error;
+pub mod middleware;
 pub mod openapi;
 pub mod router;
 pub mod routes;
 pub mod subagent_spawner;
+pub mod workspace_resolver;
 
 pub use app_state::{AgentResources, AppState, TurnHandle};
 pub use app_state_builder::{AppStateBuilder, AppStateBuilderError};
 pub use error::AppError;
+pub use middleware::{
+    AuthPrincipal, WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer,
+};
 pub use router::RouterBuilder;
 pub use subagent_spawner::RuntimeSubagentSpawner;
+pub use workspace_resolver::{
+    StaticWorkspaceResolver, WorkspaceError, WorkspaceResolver, workspace_data_root,
+};
 
 /// Re-export of `router::build` under a shorter name for tests + the
 /// reference binary. Equivalent to `RouterBuilder::default().build(state)`.

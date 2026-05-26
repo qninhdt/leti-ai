@@ -202,6 +202,9 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // Hook closures only invoke CoreApi from inside dispatch sites, so
     // the runtime is guaranteed to be set before any plugin call.
     core_api_impl.set_runtime(runtime.clone());
+    // Notification dispatch reads the chain set; bind here once chains
+    // are sorted but before any plugin emits.
+    core_api_impl.set_hook_chains(hook_chains.clone());
 
     // Tool registry rebuilt from plugin-drained handles. `core-tools`
     // is the first plugin contributor (the eight built-ins); downstream

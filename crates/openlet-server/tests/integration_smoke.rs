@@ -218,6 +218,15 @@ impl CoreApi for NoopCoreApi {
         Ok(Value::Null)
     }
     async fn cancel_session(&self, _: SessionId, _: String) {}
+    async fn emit_notification(
+        &self,
+        _: Option<SessionId>,
+        _: openlet_core::hooks::io::NotificationLevel,
+        _: String,
+        _: String,
+        _: String,
+    ) {
+    }
 }
 
 struct StubShell;

@@ -38,6 +38,11 @@ pub enum HookKind {
     OnCompaction,
     OnSessionStatus,
     OnEvent,
+    /// Plugin-emitted user-facing notification (cloud TUI banner,
+    /// integrator's webhook, audit-trail flag). Fan-out only — the
+    /// chain runs after `PluginContext::emit_notification` so other
+    /// plugins can observe / mutate / suppress.
+    Notification,
 }
 
 impl HookKind {
@@ -61,6 +66,7 @@ impl HookKind {
             Self::OnCompaction => "on_compaction",
             Self::OnSessionStatus => "on_session_status",
             Self::OnEvent => "on_event",
+            Self::Notification => "notification",
         }
     }
 }
@@ -276,5 +282,37 @@ pub mod io {
     #[derive(Debug, Default)]
     pub struct OnEventCtx {
         pub event: Option<AgentEvent>,
+    }
+
+    /// Severity for [`NotificationCtx`]. Maps to UI banner styling and
+    /// integrator log level. `Error` does NOT terminate the turn — the
+    /// notification surface is observation-only; quota / safety stops
+    /// still go through `OnCostTick` / `BeforeToolCall::Deny`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum NotificationLevel {
+        #[default]
+        Info,
+        Warn,
+        Error,
+    }
+
+    /// User-facing notification emitted by a plugin via
+    /// `PluginContext::emit_notification`. Other notification hooks
+    /// observe; SSE event `NotificationEmitted` fans out to clients.
+    ///
+    /// `body` is redacted by [`crate::redactor::SecretRedactor`] before
+    /// SSE emission. Per-session rate limiting (10/sec cumulative across
+    /// plugins) caps misbehaving plugins from flooding the channel —
+    /// overflow drops the notification and emits a tracing warn.
+    #[derive(Debug, Default)]
+    pub struct NotificationCtx {
+        pub session_id: Option<SessionId>,
+        pub level: NotificationLevel,
+        pub title: String,
+        pub body: String,
+        /// Plugin id of the original emitter — set by the runtime, not
+        /// the plugin. Read-only inside hook closures.
+        pub source_plugin: String,
     }
 }

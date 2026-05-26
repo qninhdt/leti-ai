@@ -151,6 +151,17 @@ pub enum AgentEvent {
         output: String,
         cost_usd: Option<String>,
     },
+    /// `notification.emitted` — durable. Plugin-emitted user-facing
+    /// notification. `body` has been redacted by the secret redactor
+    /// before publish. Per-session rate-limit drops surplus emits and
+    /// emits a tracing warn instead.
+    NotificationEmitted {
+        session_id: Option<SessionId>,
+        level: NotificationLevel,
+        title: String,
+        body: String,
+        plugin_id: String,
+    },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,
 }
@@ -174,6 +185,18 @@ pub struct AskOption {
     pub description: Option<String>,
 }
 
+/// Severity for `NotificationEmitted`. Wire mirror of
+/// [`crate::hooks::io::NotificationLevel`] — kept here so adapters /
+/// DTOs depend on `event.rs` only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationLevel {
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
 /// Streaming delta kind (`part.delta` payload discriminator).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -194,9 +217,23 @@ pub enum DeltaKind {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Read-side cached prompt tokens. OpenRouter / Anthropic /
+    /// DashScope all expose a "this prompt was served from cache"
+    /// counter — keep it distinct from `input_tokens` so cost calc
+    /// doesn't double-charge.
     pub cached_input_tokens: u64,
+    /// Tokens written into a fresh cache slot during this turn.
+    /// Anthropic ephemeral cache and DashScope context cache both
+    /// charge for cache writes at a higher rate than reads.
     #[serde(default)]
     pub cache_write_tokens: u64,
+    /// Alias for `cache_write_tokens` matching the Anthropic Messages
+    /// API field name. Kept additive so plugins that already write
+    /// `cache_write_tokens` still work; one of the two is sufficient.
+    /// Cost math sums both: a turn that populates EITHER field gets
+    /// charged once at the cache_write rate.
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
 }

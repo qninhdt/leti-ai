@@ -148,6 +148,7 @@ fn event_kind(ev: &AgentEvent) -> &'static str {
         AgentEvent::SubagentStarted { .. } => "subagent.started",
         AgentEvent::SubagentOutput { .. } => "subagent.output",
         AgentEvent::SubagentFinished { .. } => "subagent.finished",
+        AgentEvent::NotificationEmitted { .. } => "notification.emitted",
         AgentEvent::Heartbeat => "heartbeat",
     }
 }
@@ -172,8 +173,8 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         AgentEvent::SubagentStarted {
             parent_session_id, ..
         } => Some(*parent_session_id),
-        AgentEvent::SubagentOutput { .. }
-        | AgentEvent::SubagentFinished { .. }
-        | AgentEvent::Heartbeat => None,
+        AgentEvent::SubagentOutput { .. } | AgentEvent::SubagentFinished { .. } => None,
+        AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
+        AgentEvent::Heartbeat => None,
     }
 }

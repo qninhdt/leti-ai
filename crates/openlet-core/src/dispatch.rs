@@ -22,9 +22,9 @@ use futures::FutureExt;
 use crate::hooks::{
     HookKind, HookResult, Priority,
     io::{
-        AfterToolCallCtx, AfterTurnCtx, BeforeToolCallCtx, BeforeTurnCtx, OnChatHeadersCtx,
-        OnChatMessagesCtx, OnChatParamsCtx, OnCompactionCtx, OnCostTickCtx, OnEventCtx,
-        OnMessageCtx, OnPermissionAskCtx, OnSessionStatusCtx, OnStepFinishCtx,
+        AfterToolCallCtx, AfterTurnCtx, BeforeToolCallCtx, BeforeTurnCtx, NotificationCtx,
+        OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx, OnCompactionCtx, OnCostTickCtx,
+        OnEventCtx, OnMessageCtx, OnPermissionAskCtx, OnSessionStatusCtx, OnStepFinishCtx,
     },
 };
 
@@ -80,6 +80,7 @@ pub struct HookChains {
     pub on_compaction: Vec<HookEntry<OnCompactionCtx>>,
     pub on_session_status: Vec<HookEntry<OnSessionStatusCtx>>,
     pub on_event: Vec<HookEntry<OnEventCtx>>,
+    pub notification: Vec<HookEntry<NotificationCtx>>,
 }
 
 impl HookChains {
@@ -105,6 +106,7 @@ impl HookChains {
         sort_chain(&mut self.on_compaction);
         sort_chain(&mut self.on_session_status);
         sort_chain(&mut self.on_event);
+        sort_chain(&mut self.notification);
     }
 }
 

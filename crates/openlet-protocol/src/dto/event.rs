@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use openlet_core::types::event::{AgentEvent, AskOption, AttachmentKind, DeltaKind, Usage};
+use openlet_core::types::event::{
+    AgentEvent, AskOption, AttachmentKind, DeltaKind, NotificationLevel, Usage,
+};
 use openlet_core::types::session::SessionStatus;
 
 use super::permission::PermissionRequestDto;
@@ -120,6 +122,14 @@ pub enum EventDto {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd: Option<String>,
     },
+    NotificationEmitted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<Uuid>,
+        level: NotificationLevelDto,
+        title: String,
+        body: String,
+        plugin_id: String,
+    },
     Heartbeat,
 }
 
@@ -153,6 +163,26 @@ impl From<AskOption> for AskOptionDto {
         Self {
             label: o.label,
             description: o.description,
+        }
+    }
+}
+
+/// Wire mirror of [`openlet_core::types::event::NotificationLevel`].
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationLevelDto {
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
+impl From<NotificationLevel> for NotificationLevelDto {
+    fn from(l: NotificationLevel) -> Self {
+        match l {
+            NotificationLevel::Info => Self::Info,
+            NotificationLevel::Warn => Self::Warn,
+            NotificationLevel::Error => Self::Error,
         }
     }
 }
@@ -367,6 +397,19 @@ impl From<AgentEvent> for EventDto {
                 task_id,
                 output,
                 cost_usd,
+            },
+            AgentEvent::NotificationEmitted {
+                session_id,
+                level,
+                title,
+                body,
+                plugin_id,
+            } => Self::NotificationEmitted {
+                session_id: session_id.map(|s| s.as_uuid()),
+                level: level.into(),
+                title,
+                body,
+                plugin_id,
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

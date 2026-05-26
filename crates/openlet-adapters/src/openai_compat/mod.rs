@@ -9,9 +9,11 @@
 
 pub mod capabilities;
 pub mod chunk_decoder;
+pub mod prefix_shaping;
 pub mod pricing;
 pub mod provider;
 pub mod sse;
 pub mod wire;
 
+pub use prefix_shaping::{apply_request_shaping, detect_quirks};
 pub use provider::{DEFAULT_BASE_URL, OpenAiCompatProvider};
