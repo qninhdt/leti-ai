@@ -87,16 +87,10 @@ impl IntoResponse for AppError {
 impl From<MemoryError> for AppError {
     fn from(e: MemoryError) -> Self {
         match e {
-            MemoryError::SessionNotFound => {
-                Self::not_found("session_not_found", "session not found")
-            }
-            MemoryError::MessageNotFound => {
-                Self::not_found("message_not_found", "message not found")
-            }
+            MemoryError::SessionNotFound => Self::not_found("session_not_found", e.to_string()),
+            MemoryError::MessageNotFound => Self::not_found("message_not_found", e.to_string()),
             MemoryError::Io(m) => Self::internal("memory_io", m),
-            MemoryError::Unimplemented => {
-                Self::internal("memory_unimplemented", "memory store not implemented")
-            }
+            MemoryError::Unimplemented => Self::internal("memory_unimplemented", e.to_string()),
         }
     }
 }
@@ -108,9 +102,7 @@ impl From<ArtifactError> for AppError {
                 Self::not_found("artifact_not_found", format!("artifact not found: {p}"))
             }
             ArtifactError::Io(m) => Self::internal("artifact_io", m),
-            ArtifactError::Unimplemented => {
-                Self::internal("artifact_unimplemented", "artifact store not implemented")
-            }
+            ArtifactError::Unimplemented => Self::internal("artifact_unimplemented", e.to_string()),
         }
     }
 }
@@ -118,7 +110,7 @@ impl From<ArtifactError> for AppError {
 impl From<EventError> for AppError {
     fn from(e: EventError) -> Self {
         match e {
-            EventError::BusClosed => Self::internal("event_bus_closed", "event bus closed"),
+            EventError::BusClosed => Self::internal("event_bus_closed", e.to_string()),
             EventError::CursorTooFarBehind {
                 requested,
                 tip,
@@ -131,9 +123,7 @@ impl From<EventError> for AppError {
                 ),
             ),
             EventError::Io(m) => Self::internal("event_io", m),
-            EventError::Unimplemented => {
-                Self::internal("event_unimplemented", "event sink not implemented")
-            }
+            EventError::Unimplemented => Self::internal("event_unimplemented", e.to_string()),
         }
     }
 }
@@ -141,19 +131,14 @@ impl From<EventError> for AppError {
 impl From<PermissionError> for AppError {
     fn from(e: PermissionError) -> Self {
         match e {
-            PermissionError::AskNotFound => {
-                Self::not_found("ask_not_found", "permission ask not found")
-            }
-            PermissionError::AskExpired => Self::not_found("ask_expired", "permission ask expired"),
-            PermissionError::Timeout => {
-                Self::conflict("ask_timeout", "permission ask already timed out")
-            }
+            PermissionError::AskNotFound => Self::not_found("ask_not_found", e.to_string()),
+            PermissionError::AskExpired => Self::not_found("ask_expired", e.to_string()),
+            PermissionError::Timeout => Self::conflict("ask_timeout", e.to_string()),
             PermissionError::Unsupported(m) => Self::bad_request("unsupported_scope", m),
             PermissionError::Io(m) => Self::internal("permission_io", m),
-            PermissionError::Unimplemented => Self::internal(
-                "permission_unimplemented",
-                "permission manager not implemented",
-            ),
+            PermissionError::Unimplemented => {
+                Self::internal("permission_unimplemented", e.to_string())
+            }
         }
     }
 }

@@ -6,11 +6,11 @@
 //! override semantics. Drift in any of these would make compaction
 //! decisions wrong.
 
+use openlet_core::projection::LlmToolCall;
 use openlet_core::projection::{LlmMessage, LlmRole};
 use openlet_core::runtime::token_estimate::{
     CHARS_PER_TOKEN, anchored_estimate, estimate_conversation_tokens, estimate_message_tokens,
 };
-use openlet_core::projection::LlmToolCall;
 use proptest::prelude::*;
 
 fn user_msg(content: String) -> LlmMessage {

@@ -17,16 +17,12 @@ use common::mock_tool::{FailingTool, NoopTool, PanickingTool, SlowTool, make_reg
 use openlet_core::adapters::artifact_store::ArtifactStore;
 use openlet_core::adapters::event_sink::{EventSink, Persistence};
 use openlet_core::adapters::memory_store::MemoryStore;
-use openlet_core::adapters::model_provider::{
-    ChatDelta, ChatRequest, FinishReason, ModelProvider,
-};
+use openlet_core::adapters::model_provider::{ChatDelta, ChatRequest, FinishReason, ModelProvider};
 use openlet_core::adapters::permission_manager::PermissionManager;
 use openlet_core::error::ToolError;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::AgentEvent;
-use openlet_core::types::permission::{
-    Decision, PermissionCtx, PermissionMode, PermissionRequest,
-};
+use openlet_core::types::permission::{Decision, PermissionCtx, PermissionMode, PermissionRequest};
 use openlet_core::types::session::SessionId;
 use tokio_util::sync::CancellationToken;
 
@@ -79,12 +75,8 @@ async fn scripted_provider_observes_cancellation() {
     // Push a turn that would never naturally Finish — cancellation
     // should synthesise a Cancelled finish frame.
     provider.push_turn(vec![
-        Ok(ChatDelta::Content {
-            text: "a".into(),
-        }),
-        Ok(ChatDelta::Content {
-            text: "b".into(),
-        }),
+        Ok(ChatDelta::Content { text: "a".into() }),
+        Ok(ChatDelta::Content { text: "b".into() }),
     ]);
 
     let cancel = CancellationToken::new();

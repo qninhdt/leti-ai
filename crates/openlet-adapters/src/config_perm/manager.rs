@@ -254,7 +254,12 @@ impl PermissionManager for ConfigPermissionMgr {
         self.pending.get(&ask_id).map(|e| e.ctx.session_id)
     }
 
-    async fn accept_ask(&self, ask_id: AskId, scope: AlwaysScope) -> Result<(), PermissionError> {
+    async fn accept_ask(
+        &self,
+        ask_id: AskId,
+        scope: AlwaysScope,
+        action: PermissionAction,
+    ) -> Result<(), PermissionError> {
         match &scope {
             AlwaysScope::Global | AlwaysScope::Session { .. } => {}
             AlwaysScope::Workspace { .. } | AlwaysScope::Agent { .. } => {
@@ -270,7 +275,7 @@ impl PermissionManager for ConfigPermissionMgr {
             .ok_or(PermissionError::AskExpired)?;
         let rule = PermissionRule {
             permission: ask.request.permission.clone(),
-            action: PermissionAction::Allow,
+            action,
         };
         let compiled = match CompiledRule::from_rule_scoped(rule.clone(), scope.clone()) {
             Ok(c) => c,
@@ -292,7 +297,21 @@ impl PermissionManager for ConfigPermissionMgr {
             }
         }
         self.inner.write().await.push(compiled);
-        let _ = ask.sender.send(Decision::Allow);
+        // Resolve the in-flight ask with the Decision matching the
+        // persisted action — AlwaysDeny must NOT silently allow.
+        // `Ask` is invalid here: accept_ask is the user's response to a
+        // pending ask, not a re-ask. Reject up front.
+        let resolution = match action {
+            PermissionAction::Allow => Decision::Allow,
+            PermissionAction::Deny => Decision::Deny { feedback: None },
+            PermissionAction::Ask => {
+                self.pending.insert(id, ask);
+                return Err(PermissionError::Unsupported(
+                    "accept_ask requires Allow or Deny action".into(),
+                ));
+            }
+        };
+        let _ = ask.sender.send(resolution);
         Ok(())
     }
 }

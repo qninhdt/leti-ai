@@ -31,7 +31,8 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, EventFilter};
 use openlet_core::types::message::MessageId;
 use openlet_core::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionMode, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionMode,
+    PermissionRequest, PermissionRule,
 };
 use openlet_core::types::session::SessionId;
 use schemars::JsonSchema;
@@ -72,7 +73,12 @@ impl PermissionManager for AllowAll {
     fn peek_session_id(&self, _: AskId) -> Option<openlet_core::types::session::SessionId> {
         None
     }
-    async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
+    async fn accept_ask(
+        &self,
+        _: AskId,
+        _: AlwaysScope,
+        _: PermissionAction,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }

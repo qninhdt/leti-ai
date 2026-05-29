@@ -81,7 +81,25 @@ pub async fn run(args: AuditArgs, data_dir: &Path) -> Result<()> {
 
 fn resolve_path(args: &AuditArgs, data_dir: &Path) -> Result<PathBuf> {
     if let Some(file) = &args.file {
-        return Ok(file.clone());
+        // `--file` is a convenience for replaying rotated logs that the
+        // SessionLogger has renamed (`<id>.jsonl.1`). Constrain it to
+        // the data_dir/sessions/ subtree so the audit pretty-printer
+        // can't be repurposed as a "redact-and-print arbitrary file"
+        // tool. Symlink escapes are handled by canonicalizing both
+        // sides and asserting prefix.
+        let sessions_root = data_dir.join("sessions");
+        let canonical_root = std::fs::canonicalize(&sessions_root)
+            .with_context(|| format!("canonicalizing sessions root {}", sessions_root.display()))?;
+        let canonical_file = std::fs::canonicalize(file)
+            .with_context(|| format!("canonicalizing --file {}", file.display()))?;
+        if !canonical_file.starts_with(&canonical_root) {
+            return Err(anyhow!(
+                "--file must resolve under {} (got {})",
+                canonical_root.display(),
+                canonical_file.display()
+            ));
+        }
+        return Ok(canonical_file);
     }
     let id = args
         .session_id

@@ -21,7 +21,8 @@ use crate::adapters::permission_manager::PermissionManager;
 use crate::error::PermissionError;
 use crate::permission::Deferred;
 use crate::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionRequest,
+    PermissionRule,
 };
 use crate::types::session::SessionId;
 
@@ -107,7 +108,12 @@ impl PermissionManager for ScopedPermissionManager {
         self.parent.peek_session_id(ask_id)
     }
 
-    async fn accept_ask(&self, ask_id: AskId, scope: AlwaysScope) -> Result<(), PermissionError> {
-        self.parent.accept_ask(ask_id, scope).await
+    async fn accept_ask(
+        &self,
+        ask_id: AskId,
+        scope: AlwaysScope,
+        action: PermissionAction,
+    ) -> Result<(), PermissionError> {
+        self.parent.accept_ask(ask_id, scope, action).await
     }
 }

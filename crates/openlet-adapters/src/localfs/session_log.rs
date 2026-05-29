@@ -94,7 +94,23 @@ impl SessionLogger {
         let mut w = BufWriter::new(file);
         w.write_all(line.as_bytes()).await?;
         w.flush().await?;
+        // `flush()` only drains the user buffer to the kernel page
+        // cache; a process crash within the writeback window loses the
+        // event. The companion `events` SQLite table is fsynced via
+        // `synchronous=NORMAL`, so the JSONL audit log was the *less*
+        // durable of the two stores. `sync_data()` brings it to parity.
+        // Errors here propagate so callers can fall back to SQLite-only
+        // replay if disk is failing.
+        let inner = w.into_inner();
+        inner.sync_data().await?;
         Ok(())
+    }
+
+    /// Evict the per-session lock entry. Called when a session reaches a
+    /// terminal status so the lock map doesn't grow linearly with the
+    /// number of distinct SessionIds the process ever observed. Idempotent.
+    pub fn evict_session(&self, session: SessionId) {
+        self.locks.remove(&session);
     }
 }
 

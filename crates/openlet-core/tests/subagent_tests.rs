@@ -17,7 +17,8 @@ use openlet_core::runtime::subagent::{
     plan_subagent_spawn,
 };
 use openlet_core::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionMode, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionMode,
+    PermissionRequest, PermissionRule,
 };
 use openlet_core::types::session::{SessionId, SessionMeta, SessionStatus};
 use rust_decimal::Decimal;
@@ -54,7 +55,12 @@ impl PermissionManager for AllowAll {
     fn peek_session_id(&self, _: AskId) -> Option<SessionId> {
         None
     }
-    async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
+    async fn accept_ask(
+        &self,
+        _: AskId,
+        _: AlwaysScope,
+        _: PermissionAction,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }

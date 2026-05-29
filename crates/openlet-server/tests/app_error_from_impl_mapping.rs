@@ -33,13 +33,19 @@ async fn status_and_code(err: AppError) -> (u16, String) {
 #[tokio::test]
 async fn memory_error_session_not_found_maps_to_404_session_not_found() {
     let app: AppError = MemoryError::SessionNotFound.into();
-    assert_eq!(status_and_code(app).await, (404, "session_not_found".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (404, "session_not_found".into())
+    );
 }
 
 #[tokio::test]
 async fn memory_error_message_not_found_maps_to_404_message_not_found() {
     let app: AppError = MemoryError::MessageNotFound.into();
-    assert_eq!(status_and_code(app).await, (404, "message_not_found".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (404, "message_not_found".into())
+    );
 }
 
 #[tokio::test]
@@ -51,13 +57,19 @@ async fn memory_error_io_maps_to_500_memory_io() {
 #[tokio::test]
 async fn memory_error_unimplemented_maps_to_500_memory_unimplemented() {
     let app: AppError = MemoryError::Unimplemented.into();
-    assert_eq!(status_and_code(app).await, (500, "memory_unimplemented".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (500, "memory_unimplemented".into())
+    );
 }
 
 #[tokio::test]
 async fn artifact_error_not_found_maps_to_404_artifact_not_found() {
     let app: AppError = ArtifactError::NotFound("blob.bin".into()).into();
-    assert_eq!(status_and_code(app).await, (404, "artifact_not_found".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (404, "artifact_not_found".into())
+    );
 }
 
 #[tokio::test]
@@ -69,7 +81,10 @@ async fn artifact_error_io_maps_to_500_artifact_io() {
 #[tokio::test]
 async fn artifact_error_unimplemented_maps_to_500_artifact_unimplemented() {
     let app: AppError = ArtifactError::Unimplemented.into();
-    assert_eq!(status_and_code(app).await, (500, "artifact_unimplemented".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (500, "artifact_unimplemented".into())
+    );
 }
 
 #[tokio::test]
@@ -86,7 +101,10 @@ async fn event_error_cursor_too_far_behind_maps_to_409_cursor_too_far_behind() {
         window: 500,
     }
     .into();
-    assert_eq!(status_and_code(app).await, (409, "cursor_too_far_behind".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (409, "cursor_too_far_behind".into())
+    );
 }
 
 #[tokio::test]
@@ -98,7 +116,10 @@ async fn event_error_io_maps_to_500_event_io() {
 #[tokio::test]
 async fn event_error_unimplemented_maps_to_500_event_unimplemented() {
     let app: AppError = EventError::Unimplemented.into();
-    assert_eq!(status_and_code(app).await, (500, "event_unimplemented".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (500, "event_unimplemented".into())
+    );
 }
 
 #[tokio::test]
@@ -122,7 +143,10 @@ async fn permission_error_timeout_maps_to_409_ask_timeout() {
 #[tokio::test]
 async fn permission_error_unsupported_maps_to_400_unsupported_scope() {
     let app: AppError = PermissionError::Unsupported("range scope".into()).into();
-    assert_eq!(status_and_code(app).await, (400, "unsupported_scope".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (400, "unsupported_scope".into())
+    );
 }
 
 #[tokio::test]
@@ -134,7 +158,10 @@ async fn permission_error_io_maps_to_500_permission_io() {
 #[tokio::test]
 async fn permission_error_unimplemented_maps_to_500_permission_unimplemented() {
     let app: AppError = PermissionError::Unimplemented.into();
-    assert_eq!(status_and_code(app).await, (500, "permission_unimplemented".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (500, "permission_unimplemented".into())
+    );
 }
 
 #[tokio::test]
@@ -171,7 +198,10 @@ async fn provider_error_rate_limit_maps_to_429_provider_rate_limit() {
         retry_after_ms: 5_000,
     }
     .into();
-    assert_eq!(status_and_code(app).await, (429, "provider_rate_limit".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (429, "provider_rate_limit".into())
+    );
 }
 
 #[tokio::test]
@@ -199,13 +229,19 @@ async fn provider_error_context_window_exceeded_maps_to_413_context_window() {
 #[tokio::test]
 async fn provider_error_cancelled_maps_to_409_provider_cancelled() {
     let app: AppError = ProviderError::Cancelled.into();
-    assert_eq!(status_and_code(app).await, (409, "provider_cancelled".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (409, "provider_cancelled".into())
+    );
 }
 
 #[tokio::test]
 async fn provider_error_unimplemented_maps_to_500_provider_unimplemented() {
     let app: AppError = ProviderError::Unimplemented.into();
-    assert_eq!(status_and_code(app).await, (500, "provider_unimplemented".into()));
+    assert_eq!(
+        status_and_code(app).await,
+        (500, "provider_unimplemented".into())
+    );
 }
 
 // ToolError → all variants map to 400 with the FailureClass slug.

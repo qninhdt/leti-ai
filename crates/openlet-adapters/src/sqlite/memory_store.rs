@@ -308,23 +308,38 @@ impl MemoryStore for SqliteMemoryStore {
         let kind = part_kind(&part);
         let payload = encode_json(&part, "encode part")?;
 
-        let res = sqlx::query(
-            r#"UPDATE parts SET kind = ?, payload = ?
-               WHERE id = ? AND message_id = ?"#,
+        // INSERT ON CONFLICT collapses the previous UPDATE-then-fallback-INSERT
+        // pattern into a single statement. The old form raced: two concurrent
+        // upserts on the same fresh (msg, part_id) could both UPDATE-zero,
+        // both fall through to INSERT, and the second would PK-conflict.
+        // `seq` is required NOT NULL on first insert; for the upsert path
+        // we only assign it when the row doesn't already exist via the
+        // COALESCE on excluded.seq. New rows get the next per-message seq.
+        let next_seq: i64 = sqlx::query_scalar(
+            r#"SELECT COALESCE(MAX(seq), -1) + 1 FROM parts WHERE message_id = ?"#,
         )
-        .bind(kind)
-        .bind(&payload)
+        .bind(msg.to_string())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        sqlx::query(
+            r#"INSERT INTO parts (id, message_id, seq, kind, payload)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   kind = excluded.kind,
+                   payload = excluded.payload"#,
+        )
         .bind(part_id.to_string())
         .bind(msg.to_string())
+        .bind(next_seq)
+        .bind(kind)
+        .bind(&payload)
         .execute(&self.pool)
         .await
         .map_err(map_io)?;
 
-        if res.rows_affected() == 0 {
-            self.append_part(msg, part).await.map(|_| ())
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 
     async fn list_messages(&self, session: SessionId) -> Result<Vec<Message>, MemoryError> {

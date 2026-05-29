@@ -261,4 +261,59 @@ mod tests {
         let none2 = superseded_messages(&msgs, 99);
         assert!(none2.is_empty());
     }
+
+    #[test]
+    fn provider_actual_overrides_heuristic_regardless_of_message_size() {
+        // Tiny convo + huge provider_actual → fires.
+        let convo = vec![msg(LlmRole::User, "hi")];
+        let d = should_compact(&convo, &agent(), Some(10_000));
+        assert!(matches!(d, CompactDecision::Run { .. }));
+
+        // Huge convo + tiny provider_actual → skips. Provider value
+        // anchors the decision; heuristic is the fallback.
+        let big = msg(LlmRole::User, &"x".repeat(8000));
+        let d = should_compact(&[big], &agent(), Some(10));
+        assert_eq!(d, CompactDecision::Skip);
+    }
+
+    #[test]
+    fn keep_clamps_to_message_count_when_below_preserve_recent() {
+        // PRESERVE_RECENT = 4, but only 2 messages — Run.keep must
+        // clamp to msgs.len() rather than report 4 phantom slots.
+        let convo = vec![
+            msg(LlmRole::User, "first"),
+            msg(LlmRole::User, &"x".repeat(8000)),
+        ];
+        let d = should_compact(&convo, &agent(), Some(900));
+        if let CompactDecision::Run { keep } = d {
+            assert_eq!(keep, 2, "keep clamps to msgs.len() when < PRESERVE_RECENT");
+        } else {
+            panic!("expected Run, got {d:?}");
+        }
+    }
+
+    #[test]
+    fn build_compaction_projection_preserves_system_and_appends_request() {
+        let convo = vec![
+            msg(LlmRole::System, "you are an assistant"),
+            msg(LlmRole::User, "old1"),
+            msg(LlmRole::Assistant, "ans1"),
+            msg(LlmRole::User, "recent"),
+        ];
+        let proj = build_compaction_projection(&convo, 1);
+        // First message must be the system prompt.
+        assert!(matches!(proj[0].role, LlmRole::System));
+        // The COMPACTION_REQUEST must appear somewhere.
+        assert!(proj.iter().any(|m| m.content == COMPACTION_REQUEST));
+        // The most-recent message (kept) must appear after the request.
+        let req_idx = proj
+            .iter()
+            .position(|m| m.content == COMPACTION_REQUEST)
+            .unwrap();
+        let recent_idx = proj.iter().rposition(|m| m.content == "recent").unwrap();
+        assert!(
+            req_idx < recent_idx,
+            "kept tail must follow the compaction request"
+        );
+    }
 }

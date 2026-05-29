@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use crate::error::PermissionError;
 use crate::permission::Deferred;
 use crate::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionRequest,
+    PermissionRule,
 };
 use crate::types::session::SessionId;
 
@@ -45,10 +46,18 @@ pub trait PermissionManager: Send + Sync + 'static {
     fn peek_session_id(&self, ask_id: AskId) -> Option<SessionId>;
 
     /// Atomic ask acceptance: consumes the pending ask, persists the
-    /// rule scoped to `scope`, pushes it onto the in-memory ruleset, and
-    /// resolves the deferred with `Decision::Allow`. All-or-nothing — if
-    /// persistence fails, the ask is restored and the user sees an error.
-    /// The HTTP route NEVER constructs a rule from client input; the
-    /// rule pattern comes from the original `PermissionRequest`.
-    async fn accept_ask(&self, ask_id: AskId, scope: AlwaysScope) -> Result<(), PermissionError>;
+    /// rule scoped to `scope` with the supplied `action`, pushes it onto
+    /// the in-memory ruleset, and resolves the deferred with the matching
+    /// `Decision`. All-or-nothing — if persistence fails, the ask is
+    /// restored and the user sees an error. The HTTP route NEVER
+    /// constructs a rule from client input; the rule pattern comes from
+    /// the original `PermissionRequest`. `action` is supplied by the
+    /// route so `AlwaysDeny` actually persists a Deny (and resolves the
+    /// in-flight ask as Deny), not Allow.
+    async fn accept_ask(
+        &self,
+        ask_id: AskId,
+        scope: AlwaysScope,
+        action: PermissionAction,
+    ) -> Result<(), PermissionError>;
 }

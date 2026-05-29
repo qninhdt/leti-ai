@@ -28,7 +28,12 @@ use openlet_core::types::session::SessionId;
 use sqlx::Row;
 use tempfile::TempDir;
 
-async fn setup() -> (LocalFsArtifactStore, SqliteMemoryStore, TempDir, sqlx::SqlitePool) {
+async fn setup() -> (
+    LocalFsArtifactStore,
+    SqliteMemoryStore,
+    TempDir,
+    sqlx::SqlitePool,
+) {
     let pool = make_pool().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let store = LocalFsArtifactStore::new(tmp.path().to_path_buf(), pool.clone());
@@ -45,7 +50,10 @@ async fn put_and_get_round_trips_bytes() {
     let (store, mem, _tmp, _pool) = setup().await;
     let session = fresh_session(&mem).await;
     let payload = Bytes::from_static(b"hello artifact");
-    let r = store.put(session, "blob.bin", payload.clone()).await.unwrap();
+    let r = store
+        .put(session, "blob.bin", payload.clone())
+        .await
+        .unwrap();
     assert_eq!(r.size, payload.len() as u64);
     assert_eq!(r.key, "blob.bin");
 
@@ -59,9 +67,18 @@ async fn list_returns_artifacts_scoped_per_session_in_creation_order() {
     let session_a = fresh_session(&mem).await;
     let session_b = fresh_session(&mem).await;
 
-    store.put(session_a, "a1", Bytes::from_static(b"1")).await.unwrap();
-    store.put(session_a, "a2", Bytes::from_static(b"22")).await.unwrap();
-    store.put(session_b, "b1", Bytes::from_static(b"x")).await.unwrap();
+    store
+        .put(session_a, "a1", Bytes::from_static(b"1"))
+        .await
+        .unwrap();
+    store
+        .put(session_a, "a2", Bytes::from_static(b"22"))
+        .await
+        .unwrap();
+    store
+        .put(session_b, "b1", Bytes::from_static(b"x"))
+        .await
+        .unwrap();
 
     let listed_a = store.list(session_a).await.unwrap();
     let keys_a: Vec<_> = listed_a.iter().map(|r| r.key.as_str()).collect();
@@ -76,8 +93,14 @@ async fn list_returns_artifacts_scoped_per_session_in_creation_order() {
 async fn put_overwrites_existing_key_with_new_bytes() {
     let (store, mem, _tmp, pool) = setup().await;
     let session = fresh_session(&mem).await;
-    let r1 = store.put(session, "k", Bytes::from_static(b"old")).await.unwrap();
-    let r2 = store.put(session, "k", Bytes::from_static(b"newer-bytes")).await.unwrap();
+    let r1 = store
+        .put(session, "k", Bytes::from_static(b"old"))
+        .await
+        .unwrap();
+    let r2 = store
+        .put(session, "k", Bytes::from_static(b"newer-bytes"))
+        .await
+        .unwrap();
     assert_eq!(r1.key, r2.key);
     assert_eq!(r2.size, "newer-bytes".len() as u64);
 
@@ -85,15 +108,19 @@ async fn put_overwrites_existing_key_with_new_bytes() {
     assert_eq!(&got[..], b"newer-bytes");
 
     // Exactly one row in the artifacts table for (session, key).
-    let count: i64 = sqlx::query("SELECT COUNT(*) AS c FROM artifacts WHERE session_id = ? AND key = ?")
-        .bind(session.to_string())
-        .bind("k")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .try_get("c")
-        .unwrap();
-    assert_eq!(count, 1, "UPSERT must keep exactly one row per (session, key)");
+    let count: i64 =
+        sqlx::query("SELECT COUNT(*) AS c FROM artifacts WHERE session_id = ? AND key = ?")
+            .bind(session.to_string())
+            .bind("k")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .try_get("c")
+            .unwrap();
+    assert_eq!(
+        count, 1,
+        "UPSERT must keep exactly one row per (session, key)"
+    );
 }
 
 #[tokio::test]
@@ -114,22 +141,29 @@ async fn concurrent_put_same_key_results_in_single_row() {
         h.await.unwrap().expect("put");
     }
 
-    let count: i64 = sqlx::query("SELECT COUNT(*) AS c FROM artifacts WHERE session_id = ? AND key = ?")
-        .bind(session.to_string())
-        .bind("shared-key")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .try_get("c")
-        .unwrap();
-    assert_eq!(count, 1, "8 concurrent puts must collapse to 1 artifacts row");
+    let count: i64 =
+        sqlx::query("SELECT COUNT(*) AS c FROM artifacts WHERE session_id = ? AND key = ?")
+            .bind(session.to_string())
+            .bind("shared-key")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .try_get("c")
+            .unwrap();
+    assert_eq!(
+        count, 1,
+        "8 concurrent puts must collapse to 1 artifacts row"
+    );
 
     // The on-disk path is sha256(key)-derived → all 8 writes hit the
     // same file. After the dust settles, the file must be readable.
     let listed = store.list(session).await.unwrap();
     assert_eq!(listed.len(), 1);
     let bytes = store.get(&listed[0]).await.unwrap();
-    assert!(bytes.starts_with(b"payload-"), "final bytes must be one of the puts");
+    assert!(
+        bytes.starts_with(b"payload-"),
+        "final bytes must be one of the puts"
+    );
 }
 
 #[tokio::test]
@@ -137,9 +171,19 @@ async fn validate_key_rejects_empty_traversal_and_absolute_paths() {
     let (store, mem, _tmp, _pool) = setup().await;
     let session = fresh_session(&mem).await;
 
-    let bad_keys = ["", "..", "../etc/passwd", "/abs/path", "\\windows\\path", "ok/../escape"];
+    let bad_keys = [
+        "",
+        "..",
+        "../etc/passwd",
+        "/abs/path",
+        "\\windows\\path",
+        "ok/../escape",
+    ];
     for key in bad_keys {
-        let err = store.put(session, key, Bytes::from_static(b"x")).await.unwrap_err();
+        let err = store
+            .put(session, key, Bytes::from_static(b"x"))
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, ArtifactError::Io(_)),
             "key {key:?} must be rejected, got {err:?}"
@@ -172,8 +216,14 @@ async fn put_isolates_bytes_per_session_for_same_key() {
     let (store, mem, _tmp, _pool) = setup().await;
     let s1 = fresh_session(&mem).await;
     let s2 = fresh_session(&mem).await;
-    store.put(s1, "config.json", Bytes::from_static(b"alpha")).await.unwrap();
-    store.put(s2, "config.json", Bytes::from_static(b"beta")).await.unwrap();
+    store
+        .put(s1, "config.json", Bytes::from_static(b"alpha"))
+        .await
+        .unwrap();
+    store
+        .put(s2, "config.json", Bytes::from_static(b"beta"))
+        .await
+        .unwrap();
 
     let r1 = ArtifactRef {
         session_id: s1,

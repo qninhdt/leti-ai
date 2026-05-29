@@ -28,6 +28,20 @@ pub struct DeliveredEvent {
 /// two-tier publisher (in-memory broadcast + SQLite write for durable).
 #[async_trait]
 pub trait EventSink: Send + Sync + 'static {
+    /// Publish `ev` to durable storage (if `Persistence::Durable` and a
+    /// repo is wired) and broadcast to live subscribers.
+    ///
+    /// Ordering contract: for two `Persistence::Durable` calls A and B
+    /// where A returns `Ok` before B starts, every subscriber observes
+    /// A's `event_id < B`'s `event_id` AND receives them in the same
+    /// order on the broadcast channel. Implementations MUST serialize
+    /// the `(repo.append → tx.send)` pair per call so the broadcast
+    /// order matches the assigned-id order — otherwise SSE consumers
+    /// tracking `Last-Event-ID` on the live channel could skip events.
+    ///
+    /// `Persistence::Transient` events skip the repo and have no
+    /// `event_id`; ordering between transient and durable events is
+    /// not guaranteed.
     async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError>;
 
     /// Returns a fresh broadcast receiver. The caller filters as it reads.

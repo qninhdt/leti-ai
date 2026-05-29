@@ -55,7 +55,7 @@ pub(super) async fn run(
 
     let qid = QuestionId::new();
     let (tx, rx) = oneshot::channel::<Vec<usize>>();
-    ctx.questions.register(qid, tx);
+    ctx.questions.register(qid, ctx.session_id, tx);
 
     // Emit the request event so the SSE stream wakes the frontend.
     let options: Vec<AskOption> = input

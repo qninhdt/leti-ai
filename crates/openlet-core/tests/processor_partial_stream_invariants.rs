@@ -13,9 +13,7 @@ use openlet_core::runtime::processor::{Processor, ProcessorPart, ProcessorState}
 use openlet_core::types::event::Usage;
 use proptest::prelude::*;
 
-fn drive(
-    deltas: Vec<ChatDelta>,
-) -> Result<Vec<ProcessorPart>, ProviderError> {
+fn drive(deltas: Vec<ChatDelta>) -> Result<Vec<ProcessorPart>, ProviderError> {
     let mut state = ProcessorState::default();
     let mut all_parts = Vec::new();
     for d in deltas {
@@ -28,7 +26,10 @@ fn drive(
 
 fn arb_text_chunks() -> impl Strategy<Value = Vec<String>> {
     // 1..20 ASCII text fragments, length 0..32 each.
-    prop::collection::vec(prop::string::string_regex("[a-zA-Z0-9 ]{0,32}").unwrap(), 1..20)
+    prop::collection::vec(
+        prop::string::string_regex("[a-zA-Z0-9 ]{0,32}").unwrap(),
+        1..20,
+    )
 }
 
 proptest! {
@@ -113,7 +114,7 @@ proptest! {
         let parts = drive(deltas).expect("drive");
         let saw_empty_object = parts.iter().any(|p| matches!(p,
             ProcessorPart::ToolCall { args, name: n, .. }
-                if n == &name && args.as_object().map_or(false, |o| o.is_empty())
+                if n == &name && args.as_object().is_some_and(|o| o.is_empty())
         ));
         prop_assert!(saw_empty_object,
             "expected ToolCall with empty-object args for tool {}, got {:?}",

@@ -73,8 +73,9 @@ async fn question_answer_resolves_registered_id() {
 
     // Register a oneshot, hit the route, assert receiver wakes with payload.
     let qid = QuestionId::new();
+    let session = openlet_core::types::session::SessionId::new();
     let (tx, rx) = tokio::sync::oneshot::channel::<Vec<usize>>();
-    registry.register(qid, tx);
+    registry.register(qid, session, tx);
 
     let body = serde_json::to_vec(&QuestionAnswerDto {
         question_id: qid.as_uuid(),
@@ -84,10 +85,13 @@ async fn question_answer_resolves_registered_id() {
 
     let resp = app
         .oneshot(
-            Request::post(format!("/v1/sessions/{}/question/answer", Uuid::now_v7()))
-                .header("content-type", "application/json")
-                .body(Body::from(body))
-                .unwrap(),
+            Request::post(format!(
+                "/v1/sessions/{}/question/answer",
+                session.as_uuid()
+            ))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap(),
         )
         .await
         .expect("dispatch");

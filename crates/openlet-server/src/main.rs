@@ -271,7 +271,18 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // as `set_runtime` — idempotent, fires once at boot.
     core_api_impl.set_active_turns(state.active_turns.clone());
 
-    let app = RouterBuilder::default().build(state);
+    // The local binary mounts no upstream auth layer, but the
+    // `question/answer` route requires an `AuthPrincipal` extension
+    // (cloud integrators attach a real one). Inject a stub so the
+    // `ask_user` rendezvous works out-of-the-box locally — otherwise
+    // every `ask_user` call hangs until timeout. Loopback-only +
+    // no-auth is the documented MVP posture, so a constant principal
+    // is the correct local behaviour.
+    let app = RouterBuilder::default()
+        .build(state.clone())
+        .layer(axum::Extension(
+            openlet_server::routes::question::AuthPrincipal,
+        ));
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
@@ -306,6 +317,47 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving axum");
+
+    // Drain in-flight turn drivers before plugin shutdown. `axum::serve`
+    // returns once HTTP handlers stop, but `prompt_async` spawns the
+    // actual turn loop with `tokio::spawn` and returns 202 immediately —
+    // those tasks are still billing, writing parts, and emitting events.
+    // Tearing plugins down underneath them risks panics on disposed
+    // handles. Trip each turn's cancel token, then await its `exited`
+    // Notify (signalled by the driver's Drop guard) under a single 25s
+    // budget — leaving ~5s for plugin shutdown inside the k8s default
+    // terminationGracePeriodSeconds=30.
+    let in_flight: Vec<_> = state
+        .active_turns
+        .iter()
+        .map(|e| e.value().clone())
+        .collect();
+    if !in_flight.is_empty() {
+        info!(count = in_flight.len(), "draining in-flight turns");
+        let drain = async {
+            let waits = in_flight.into_iter().map(|h| async move {
+                // Enable the Notified future BEFORE tripping cancel so the
+                // driver's `notify_waiters()` (fired from its Drop guard
+                // once it observes the cancel) can't slip through the gap
+                // between subscribe and await — `notify_waiters` wakes
+                // only currently-registered waiters.
+                let n = h.exited.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                h.cancel.cancel();
+                n.await;
+            });
+            futures::future::join_all(waits).await;
+        };
+        if tokio::time::timeout(std::time::Duration::from_secs(25), drain)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "turn drain timed out (25s); some in-flight turns may not have finished cleanly"
+            );
+        }
+    }
 
     // Drive Plugin::shutdown after axum returns. Plugins holding
     // resources (sockets, billing-flush state, audit handles) get a

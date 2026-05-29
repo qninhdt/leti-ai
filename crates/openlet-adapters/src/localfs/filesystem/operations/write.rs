@@ -41,19 +41,12 @@ pub(crate) async fn write(
     }
 
     if opts.atomic {
-        if opts.create_new {
-            // Atomic + create_new: stage to tempfile + rename, but reject
-            // pre-existing target via OpenOptions::create_new on the
-            // tempfile so two concurrent calls can't both pass a stat.
-            // Closes VULN-F7 (create_new TOCTOU race).
-            if fs::metadata(&resolved).await.is_ok() {
-                return Err(FsError::InvalidInput(format!(
-                    "file already exists: {}",
-                    resolved.display()
-                )));
-            }
-        }
-        write_atomic(&resolved, &body).await?;
+        // Atomic + create_new: the previous metadata-stat-then-persist
+        // pattern was a TOCTOU window (`tempfile.persist` always
+        // clobbers via rename(2)). `persist_noclobber` uses linkat with
+        // RENAME_NOREPLACE on Linux, so the kernel atomically rejects
+        // pre-existing targets.
+        write_atomic(&resolved, &body, opts.create_new).await?;
     } else if opts.create_new {
         // Non-atomic + create_new: use OpenOptions::create_new(true) so
         // the kernel atomically rejects pre-existing targets — no TOCTOU
@@ -92,7 +85,7 @@ pub(crate) async fn write(
     })
 }
 
-async fn write_atomic(target: &Path, body: &[u8]) -> Result<(), FsError> {
+async fn write_atomic(target: &Path, body: &[u8], no_clobber: bool) -> Result<(), FsError> {
     let parent = target
         .parent()
         .ok_or_else(|| FsError::Io("write target has no parent dir".into()))?
@@ -104,8 +97,21 @@ async fn write_atomic(target: &Path, body: &[u8]) -> Result<(), FsError> {
     tokio::task::spawn_blocking(move || -> Result<(), FsError> {
         let tmp = NamedTempFile::new_in(&parent).map_err(|e| FsError::Io(e.to_string()))?;
         std::fs::write(tmp.path(), &body_clone).map_err(|e| FsError::Io(e.to_string()))?;
-        tmp.persist(&target_clone)
-            .map_err(|e| FsError::Io(e.error.to_string()))?;
+        if no_clobber {
+            tmp.persist_noclobber(&target_clone).map_err(|e| {
+                if e.error.kind() == std::io::ErrorKind::AlreadyExists {
+                    FsError::InvalidInput(format!(
+                        "file already exists: {}",
+                        target_clone.display()
+                    ))
+                } else {
+                    FsError::Io(e.error.to_string())
+                }
+            })?;
+        } else {
+            tmp.persist(&target_clone)
+                .map_err(|e| FsError::Io(e.error.to_string()))?;
+        }
         Ok(())
     })
     .await

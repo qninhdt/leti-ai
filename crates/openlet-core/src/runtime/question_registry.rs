@@ -76,6 +76,12 @@ pub enum ResolveError {
     /// behaviour consistent regardless of which side gave up first.
     #[error("question_receiver_dropped")]
     ReceiverDropped,
+    /// The path session id doesn't match the session that registered
+    /// this question. The HTTP route asserts this so an attacker who
+    /// guessed (or sniffed) a `question_id` for session B can't resolve
+    /// it through `/v1/sessions/A/question/answer`.
+    #[error("question_session_mismatch")]
+    SessionMismatch,
 }
 
 /// Cancellation reason. Forwarded into the failure branch of the
@@ -88,9 +94,14 @@ pub enum CancelReason {
     Operator,
 }
 
+struct PendingEntry {
+    session_id: SessionId,
+    sender: oneshot::Sender<Vec<usize>>,
+}
+
 #[derive(Default)]
 struct Inner {
-    pending: DashMap<QuestionId, oneshot::Sender<Vec<usize>>>,
+    pending: DashMap<QuestionId, PendingEntry>,
     /// Per-session count of in-flight questions. The `ask_user` tool
     /// caps this at 1 to prevent the model from queueing a stack of
     /// modal prompts the user can't reasonably answer in order.
@@ -111,27 +122,52 @@ impl QuestionRegistry {
         Self::default()
     }
 
-    /// Register a fresh sender keyed by `qid`. Replacing an existing key
-    /// is a programmer bug — UUIDv7 ids must be unique by construction —
-    /// but we tolerate it by closing the previous sender so its awaiter
-    /// observes the cancel branch instead of hanging forever.
-    pub fn register(&self, qid: QuestionId, sender: oneshot::Sender<Vec<usize>>) {
+    /// Register a fresh sender keyed by `qid`, scoped to `session_id`.
+    /// `resolve` later verifies the caller's path session matches —
+    /// without that check, a question_id leaked from session B could be
+    /// answered via `/v1/sessions/A/question/answer`. Replacing an
+    /// existing key is a programmer bug — UUIDv7 ids must be unique by
+    /// construction — but we tolerate it by closing the previous sender
+    /// so its awaiter observes the cancel branch instead of hanging
+    /// forever.
+    pub fn register(
+        &self,
+        qid: QuestionId,
+        session_id: SessionId,
+        sender: oneshot::Sender<Vec<usize>>,
+    ) {
         if let Some((_, prev)) = self.inner.pending.remove(&qid) {
-            drop(prev);
+            drop(prev.sender);
         }
-        self.inner.pending.insert(qid, sender);
+        self.inner
+            .pending
+            .insert(qid, PendingEntry { session_id, sender });
     }
 
-    /// Single-use resolve. The first call removes the entry and forwards
-    /// `selected` to the waiting tool. A second call returns
-    /// [`ResolveError::NotFound`] — replay-safe by construction.
-    pub fn resolve(&self, qid: QuestionId, selected: Vec<usize>) -> Result<(), ResolveError> {
-        let (_, sender) = self
+    /// Single-use resolve scoped by session. The first call removes the
+    /// entry and forwards `selected` to the waiting tool IFF
+    /// `expected_session` matches the registration. A mismatch returns
+    /// the entry to the map and reports
+    /// [`ResolveError::SessionMismatch`] without firing the receiver —
+    /// defends against cross-session guessing of `question_id`. A second
+    /// call returns [`ResolveError::NotFound`].
+    pub fn resolve(
+        &self,
+        qid: QuestionId,
+        expected_session: SessionId,
+        selected: Vec<usize>,
+    ) -> Result<(), ResolveError> {
+        let (_, entry) = self
             .inner
             .pending
             .remove(&qid)
             .ok_or(ResolveError::NotFound)?;
-        sender
+        if entry.session_id != expected_session {
+            self.inner.pending.insert(qid, entry);
+            return Err(ResolveError::SessionMismatch);
+        }
+        entry
+            .sender
             .send(selected)
             .map_err(|_| ResolveError::ReceiverDropped)
     }
@@ -141,8 +177,8 @@ impl QuestionRegistry {
     /// `question_cancelled` error). Idempotent — cancelling an already
     /// resolved/cancelled id is a no-op.
     pub fn cancel(&self, qid: QuestionId, _reason: CancelReason) {
-        if let Some((_, sender)) = self.inner.pending.remove(&qid) {
-            drop(sender);
+        if let Some((_, entry)) = self.inner.pending.remove(&qid) {
+            drop(entry.sender);
         }
     }
 
@@ -190,27 +226,56 @@ mod tests {
     async fn resolve_single_use() {
         let reg = QuestionRegistry::new();
         let qid = QuestionId::new();
+        let session = SessionId::new();
         let (tx, mut rx) = oneshot::channel::<Vec<usize>>();
-        reg.register(qid, tx);
+        reg.register(qid, session, tx);
 
         // First resolve delivers payload + drains the entry.
-        reg.resolve(qid, vec![0]).expect("first resolve succeeds");
+        reg.resolve(qid, session, vec![0])
+            .expect("first resolve succeeds");
         assert_eq!(rx.try_recv().expect("payload arrived"), vec![0]);
         assert_eq!(reg.pending_len(), 0);
 
         // Replay → NotFound, never re-fires the receiver.
         let err = reg
-            .resolve(qid, vec![1])
+            .resolve(qid, session, vec![1])
             .expect_err("second resolve must fail");
         assert!(matches!(err, ResolveError::NotFound));
+    }
+
+    #[tokio::test]
+    async fn resolve_rejects_session_mismatch() {
+        let reg = QuestionRegistry::new();
+        let qid = QuestionId::new();
+        let owner = SessionId::new();
+        let attacker = SessionId::new();
+        let (tx, mut rx) = oneshot::channel::<Vec<usize>>();
+        reg.register(qid, owner, tx);
+
+        // Attacker's path session doesn't match the registration; the
+        // entry must be returned to the map and the awaiter must NOT
+        // observe a value.
+        let err = reg
+            .resolve(qid, attacker, vec![1])
+            .expect_err("attacker path must reject");
+        assert!(matches!(err, ResolveError::SessionMismatch));
+        assert_eq!(reg.pending_len(), 1, "entry preserved on mismatch");
+        // Receiver still empty — sender wasn't fired.
+        assert!(rx.try_recv().is_err());
+
+        // Legitimate caller still resolves normally.
+        reg.resolve(qid, owner, vec![7])
+            .expect("legitimate resolve succeeds");
+        assert_eq!(rx.try_recv().expect("payload arrived"), vec![7]);
     }
 
     #[tokio::test]
     async fn cancel_drops_sender_and_unblocks_awaiter() {
         let reg = QuestionRegistry::new();
         let qid = QuestionId::new();
+        let session = SessionId::new();
         let (tx, rx) = oneshot::channel::<Vec<usize>>();
-        reg.register(qid, tx);
+        reg.register(qid, session, tx);
 
         reg.cancel(qid, CancelReason::SessionEnding);
         // Receiver should observe the closed channel rather than hanging.
@@ -225,12 +290,13 @@ mod tests {
     async fn resolve_after_receiver_drop_reports_error() {
         let reg = QuestionRegistry::new();
         let qid = QuestionId::new();
+        let session = SessionId::new();
         let (tx, rx) = oneshot::channel::<Vec<usize>>();
-        reg.register(qid, tx);
+        reg.register(qid, session, tx);
         drop(rx);
 
         let err = reg
-            .resolve(qid, vec![0])
+            .resolve(qid, session, vec![0])
             .expect_err("receiver dropped, resolve must fail");
         assert!(matches!(err, ResolveError::ReceiverDropped));
     }

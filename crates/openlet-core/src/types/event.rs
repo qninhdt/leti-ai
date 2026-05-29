@@ -142,12 +142,20 @@ pub enum AgentEvent {
     /// `subagent.output` — TRANSIENT. Streaming text fragment from a
     /// running subagent's assistant turn. Bounded by the per-task 10MB
     /// output cap (see `runtime::subagent::task_registry::MAX_OUTPUT_BYTES`).
-    SubagentOutput { task_id: Uuid, delta: String },
+    /// `parent_session_id` lets per-session SSE subscribers see child
+    /// progress without a global subscription.
+    SubagentOutput {
+        task_id: Uuid,
+        parent_session_id: SessionId,
+        delta: String,
+    },
     /// `subagent.finished` — durable. Carries final output snapshot +
     /// cost so a parent's `task_status` poll observes a consistent
-    /// terminal state.
+    /// terminal state. `parent_session_id` mirrors `SubagentStarted` so
+    /// per-session SSE filtering routes the event to the parent.
     SubagentFinished {
         task_id: Uuid,
+        parent_session_id: SessionId,
         output: String,
         cost_usd: Option<String>,
     },

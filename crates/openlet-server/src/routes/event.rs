@@ -55,10 +55,28 @@ pub async fn stream(
     headers: HeaderMap,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let session_filter = query.session.map(SessionId::from);
-    let last_event_id = headers
-        .get("Last-Event-ID")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<i64>().ok());
+    // Distinguish "header absent" (None — fresh subscribe) from "header
+    // present but unparseable" (400). Silently treating malformed as
+    // absent meant the client would believe it had resumed but actually
+    // missed every event since its last id.
+    let last_event_id = match headers.get("Last-Event-ID") {
+        None => None,
+        Some(v) => {
+            let s = v.to_str().map_err(|_| {
+                AppError::bad_request(
+                    "invalid_last_event_id",
+                    "Last-Event-ID header is not valid UTF-8",
+                )
+            })?;
+            let id = s.parse::<i64>().map_err(|_| {
+                AppError::bad_request(
+                    "invalid_last_event_id",
+                    "Last-Event-ID header must be a non-negative integer",
+                )
+            })?;
+            Some(id)
+        }
+    };
 
     // Subscribe BEFORE the replay query so any event durably written
     // during the replay is buffered on the broadcast receiver and not
@@ -86,27 +104,53 @@ pub async fn stream(
         .max()
         .unwrap_or(i64::MIN);
 
-    // Slow consumer drops are swallowed — clients reconnect with
-    // Last-Event-ID rather than tearing the stream down.
-    let live = BroadcastStream::new(receiver)
-        .filter_map(|res| async move { res.ok() })
-        .filter(move |d| {
-            let drop_dup = matches!(d.event_id, Some(id) if id <= replay_high_water);
-            async move { !drop_dup }
-        });
+    // Live frames are wrapped so we can emit a synthetic `lagged`
+    // signal when the broadcast channel reports `Lagged(n)`. Without
+    // it, slow consumers silently miss events: the heartbeat keeps the
+    // EventSource open, but no replay ever fires. The lagged frame
+    // gives the client a deterministic cue to reconnect with
+    // `Last-Event-ID` and replay the durable tail.
+    enum LiveItem {
+        Event(DeliveredEvent),
+        Lagged(u64),
+    }
 
-    let combined = stream::iter(replay).chain(live).filter_map(move |d| {
-        let allow = match (session_filter, event_session_id(&d.event)) {
-            (Some(want), Some(got)) => want == got,
-            (Some(_), None) => false,
-            (None, _) => true,
-        };
-        async move {
-            if !allow {
-                return None;
+    let live = BroadcastStream::new(receiver).filter_map(move |res| async move {
+        match res {
+            Ok(d) => {
+                if matches!(d.event_id, Some(id) if id <= replay_high_water) {
+                    None
+                } else {
+                    Some(LiveItem::Event(d))
+                }
             }
-            Some(encode_frame(d))
+            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {
+                Some(LiveItem::Lagged(n))
+            }
         }
+    });
+
+    let replay_stream = stream::iter(replay).map(LiveItem::Event);
+    let combined = replay_stream.chain(live).filter_map(move |item| {
+        let frame = match item {
+            LiveItem::Lagged(n) => {
+                // Emit regardless of session filter — the client needs
+                // to know its cursor advanced past unseen events even
+                // for a session-scoped subscription.
+                Some(Ok(Event::default()
+                    .event("lagged")
+                    .data(format!("{{\"missed\":{n}}}"))))
+            }
+            LiveItem::Event(d) => {
+                let allow = match (session_filter, event_session_id(&d.event)) {
+                    (Some(want), Some(got)) => want == got,
+                    (Some(_), None) => false,
+                    (None, _) => true,
+                };
+                if allow { Some(encode_frame(d)) } else { None }
+            }
+        };
+        async move { frame }
     });
 
     Ok(Sse::new(combined).keep_alive(
@@ -172,8 +216,13 @@ fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
         }
         AgentEvent::SubagentStarted {
             parent_session_id, ..
+        }
+        | AgentEvent::SubagentOutput {
+            parent_session_id, ..
+        }
+        | AgentEvent::SubagentFinished {
+            parent_session_id, ..
         } => Some(*parent_session_id),
-        AgentEvent::SubagentOutput { .. } | AgentEvent::SubagentFinished { .. } => None,
         AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
         AgentEvent::Heartbeat => None,
     }

@@ -112,7 +112,10 @@ async fn rate_limit_without_retry_after_uses_fallback() {
     let err = expect_err(&provider, "gpt-5").await;
     match err {
         ProviderError::RateLimit { retry_after_ms } => {
-            assert_eq!(retry_after_ms, 1_000, "missing Retry-After → 1000ms fallback");
+            assert_eq!(
+                retry_after_ms, 1_000,
+                "missing Retry-After → 1000ms fallback"
+            );
         }
         other => panic!("expected RateLimit, got {other:?}"),
     }
@@ -201,7 +204,10 @@ async fn reserved_header_from_plugin_does_not_override_built_in_authorization() 
     // Mount a 200 with empty stream; we just need the request to land.
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::header("authorization", "Bearer sk-test"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer sk-test",
+        ))
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "text/event-stream")
@@ -220,9 +226,6 @@ async fn reserved_header_from_plugin_does_not_override_built_in_authorization() 
     // mismatched mock would surface a Network error — locking the
     // assertion negatively guards against the hijack.
     let ok = res.is_ok();
-    assert!(
-        ok,
-        "built-in Authorization must win over plugin attempt"
-    );
+    assert!(ok, "built-in Authorization must win over plugin attempt");
     let _ = FinishReason::EndTurn; // silence unused import
 }

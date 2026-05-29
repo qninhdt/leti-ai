@@ -225,7 +225,7 @@ async fn slow_subscriber_lags_rather_than_blocking_publisher() {
     // the buffered events must come through.
     let next = slow.recv().await;
     assert!(
-        matches!(next, Ok(_)),
+        next.is_ok(),
         "after Lagged, recv must yield buffered events, got {next:?}"
     );
 }

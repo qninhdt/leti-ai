@@ -223,4 +223,46 @@ mod tests {
         let sb = ToolCallSig::new("t", &b);
         assert_eq!(sa, sb);
     }
+
+    #[test]
+    fn canonical_json_preserves_array_order() {
+        // Object key order is canonicalized; array order is NOT.
+        // Lock that contract — different array orders MUST produce
+        // different hashes, otherwise reordered tool-call lists would
+        // falsely trigger the doom guard.
+        let a: serde_json::Value = serde_json::from_str(r#"{"a":[1,2]}"#).unwrap();
+        let b: serde_json::Value = serde_json::from_str(r#"{"a":[2,1]}"#).unwrap();
+        let sa = ToolCallSig::new("t", &a);
+        let sb = ToolCallSig::new("t", &b);
+        assert_ne!(sa, sb, "array order must affect hash");
+    }
+
+    #[test]
+    fn threshold_zero_always_returns_ok() {
+        // Sanity: threshold of 0 is the "no guarding" mode; the guard
+        // must early-exit and never abort.
+        let h = vec![
+            turn(&[("bash", r#"{"cmd":"ls"}"#)]),
+            turn(&[("bash", r#"{"cmd":"ls"}"#)]),
+            turn(&[("bash", r#"{"cmd":"ls"}"#)]),
+        ];
+        assert_eq!(check(&h, 0), DoomVerdict::Ok);
+    }
+
+    #[test]
+    fn ok_when_strict_superset_grows() {
+        // turn 3 has MORE tool calls than turn 2: cur is NOT a subset
+        // of prev → Ok. Lock the direction of the subset check
+        // (cur ⊆ prev), not (prev ⊆ cur).
+        let h = vec![
+            turn(&[("bash", r#"{"cmd":"a"}"#)]),
+            turn(&[("bash", r#"{"cmd":"a"}"#), ("bash", r#"{"cmd":"b"}"#)]),
+            turn(&[
+                ("bash", r#"{"cmd":"a"}"#),
+                ("bash", r#"{"cmd":"b"}"#),
+                ("bash", r#"{"cmd":"c"}"#),
+            ]),
+        ];
+        assert_eq!(check(&h, DEFAULT_THRESHOLD), DoomVerdict::Ok);
+    }
 }

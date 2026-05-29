@@ -51,4 +51,40 @@ mod tests {
         assert!(!strict_prefix("o15", "o1"));
         assert!(!strict_prefix("o1xxx", "o1"));
     }
+
+    #[test]
+    fn empty_prefix_matches_anything_via_starts_with_invariant() {
+        // After trim_end_matches, "" is still "". `model.starts_with("")`
+        // is always true; the rest-is-empty/-/-/ check passes for any
+        // model whose first char is one of those (or the model is "").
+        // Lock current behaviour so a future caller doesn't accidentally
+        // create a wildcard prefix.
+        assert!(strict_prefix("", ""));
+        // Non-empty model starting with an arbitrary letter: rest is
+        // the whole model, which starts with neither '-' nor '/' nor
+        // is empty, so the strict check rejects.
+        assert!(!strict_prefix("foo", ""));
+    }
+
+    #[test]
+    fn property_strict_match_implies_starts_with() {
+        // For every (model, prefix) pair the test exercises, a true
+        // strict_prefix result MUST also satisfy starts_with.
+        let cases = [
+            ("claude-sonnet-4-5", "claude-"),
+            ("anthropic/claude-3-5", "anthropic/"),
+            ("o1-preview", "o1"),
+            ("kimi", "kimi"),
+            ("kimi-k2", "kimi-"),
+        ];
+        for (m, p) in cases {
+            if strict_prefix(m, p) {
+                let trimmed = p.trim_end_matches(['-', '/']);
+                assert!(
+                    m.starts_with(trimmed),
+                    "strict_prefix({m:?}, {p:?}) = true but model does not start_with(trimmed)"
+                );
+            }
+        }
+    }
 }

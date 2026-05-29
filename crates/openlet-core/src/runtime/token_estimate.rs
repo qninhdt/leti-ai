@@ -80,4 +80,33 @@ mod tests {
         assert_eq!(anchored_estimate(Some(42), &convo), 42);
         assert_eq!(anchored_estimate(None, &convo), 100);
     }
+
+    #[test]
+    fn empty_conversation_estimates_zero() {
+        assert_eq!(estimate_conversation_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn tiny_message_does_not_silently_round_to_zero() {
+        // 4 chars → 1 token. The .max(1) floor protects against
+        // empty messages dropping to zero, and short messages still
+        // get a positive count via the natural division.
+        let m = user("abcd");
+        assert!(estimate_message_tokens(&m) >= 1);
+        // 1 char → still ≥ 1 because of the floor.
+        let m = user("x");
+        assert!(estimate_message_tokens(&m) >= 1);
+    }
+
+    #[test]
+    fn estimate_is_monotonic_in_message_length() {
+        let short = user(&"x".repeat(40));
+        let medium = user(&"x".repeat(400));
+        let long = user(&"x".repeat(4000));
+        let s = estimate_message_tokens(&short);
+        let m = estimate_message_tokens(&medium);
+        let l = estimate_message_tokens(&long);
+        assert!(s <= m, "short ≤ medium: got {s} vs {m}");
+        assert!(m <= l, "medium ≤ long: got {m} vs {l}");
+    }
 }

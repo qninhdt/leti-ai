@@ -159,9 +159,13 @@ mod tests {
             other => panic!("expected Pending, got {other:?}"),
         };
         // accept_ask takes scope only — no pattern.
-        m.accept_ask(ask_id, AlwaysScope::Session { id: session_id })
-            .await
-            .unwrap();
+        m.accept_ask(
+            ask_id,
+            AlwaysScope::Session { id: session_id },
+            PermissionAction::Allow,
+        )
+        .await
+        .unwrap();
         // The persisted rule applies to "edit:notes.md".
         let scoped_ctx2 = PermissionCtx {
             session_id,
@@ -197,6 +201,7 @@ mod tests {
                 AlwaysScope::Workspace {
                     path: "/foo".into(),
                 },
+                PermissionAction::Allow,
             )
             .await;
         assert!(matches!(res, Err(PermissionError::Unsupported(_))));
@@ -205,7 +210,9 @@ mod tests {
     #[tokio::test]
     async fn accept_ask_unknown_returns_expired() {
         let m = ConfigPermissionMgr::new();
-        let res = m.accept_ask(AskId::new(), AlwaysScope::Global).await;
+        let res = m
+            .accept_ask(AskId::new(), AlwaysScope::Global, PermissionAction::Allow)
+            .await;
         assert!(matches!(res, Err(PermissionError::AskExpired)));
     }
 }

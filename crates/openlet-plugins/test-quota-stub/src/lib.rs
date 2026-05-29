@@ -118,7 +118,13 @@ impl Plugin for QuotaStubPlugin {
                 };
 
                 let exhausted = {
-                    let mut map = balances.lock().expect("balances mutex poisoned");
+                    // Recover the guard on poison rather than cascading a
+                    // panic. The balance map holds no cross-field
+                    // invariant — a prior hook panicking mid-update at
+                    // worst leaves one user's balance stale, which the
+                    // next tick corrects. Poison-panicking here would
+                    // instead brick EVERY subsequent hook of this plugin.
+                    let mut map = balances.lock().unwrap_or_else(|e| e.into_inner());
                     // Skip silently for users not in the budget map —
                     // unmetered. An implicit-zero default would cancel
                     // every unknown user on the first cost tick, which
@@ -163,7 +169,7 @@ impl Plugin for QuotaStubPlugin {
                     return HookResult::Continue(before);
                 };
                 let exhausted = {
-                    let map = balances.lock().expect("balances mutex poisoned");
+                    let map = balances.lock().unwrap_or_else(|e| e.into_inner());
                     map.get(&user_id)
                         .copied()
                         .map(|b| b <= Decimal::ZERO)

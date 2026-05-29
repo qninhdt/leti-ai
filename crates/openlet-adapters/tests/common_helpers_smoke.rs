@@ -33,11 +33,7 @@ fn workspace_fixture_empty_creates_root() {
 #[tokio::test]
 async fn wiremock_chat_stream_returns_canned_sse_body() {
     let server = wiremock::MockServer::start().await;
-    mount_openai_chat_stream(
-        &server,
-        &[r#"{"choices":[{"delta":{"content":"hi"}}]}"#],
-    )
-    .await;
+    mount_openai_chat_stream(&server, &[r#"{"choices":[{"delta":{"content":"hi"}}]}"#]).await;
 
     let resp = reqwest::Client::new()
         .post(format!("{}/v1/chat/completions", server.uri()))

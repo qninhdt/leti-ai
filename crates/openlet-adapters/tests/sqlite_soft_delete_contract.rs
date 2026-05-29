@@ -66,7 +66,10 @@ async fn delete_session_marks_row_deleted_but_preserves_history() {
     // get_session uses `WHERE id = ?` (no deleted_at filter). Lock that
     // contract.
     let meta = store.get_session(sid).await.unwrap();
-    assert!(meta.is_some(), "get_session must still return soft-deleted row");
+    assert!(
+        meta.is_some(),
+        "get_session must still return soft-deleted row"
+    );
     let meta = meta.unwrap();
     assert!(meta.deleted_at.is_some(), "deleted_at must be populated");
     assert_eq!(meta.status, SessionStatus::Cancelled);
@@ -104,8 +107,10 @@ async fn list_sessions_with_include_deleted_returns_soft_deleted() {
     let deleted = store.create_session(agent, None).await.unwrap();
     store.delete_session(deleted).await.unwrap();
 
-    let mut filter = SessionFilter::default();
-    filter.include_deleted = true;
+    let filter = SessionFilter {
+        include_deleted: true,
+        ..Default::default()
+    };
     let all = store.list_sessions(filter).await.unwrap();
     let ids: Vec<_> = all.iter().map(|s| s.id).collect();
     assert!(ids.contains(&live), "live session must be listed");

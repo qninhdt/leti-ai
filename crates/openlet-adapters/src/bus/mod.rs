@@ -12,7 +12,7 @@ use openlet_core::adapters::event_sink::{DeliveredEvent, EventSink, Persistence}
 use openlet_core::error::EventError;
 use openlet_core::types::event::{AgentEvent, EventFilter};
 use openlet_core::types::session::SessionId;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::sqlite::event_repo::SqliteEventRepo;
 
@@ -25,13 +25,23 @@ const BROADCAST_CAPACITY: usize = 1024;
 pub struct BroadcastBus {
     tx: broadcast::Sender<DeliveredEvent>,
     repo: Option<SqliteEventRepo>,
+    /// Serializes the (repo.append → tx.send) pair for durable publishes
+    /// so subscribers observe `event_id` monotonically. Without this,
+    /// task A could write event_id=1 to SQLite, get preempted before
+    /// `tx.send`, task B writes event_id=2 + sends, then A sends 1 —
+    /// any LEID-tracking subscriber would skip 1.
+    durable_publish: Mutex<()>,
 }
 
 impl BroadcastBus {
     #[must_use]
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(BROADCAST_CAPACITY);
-        Self { tx, repo: None }
+        Self {
+            tx,
+            repo: None,
+            durable_publish: Mutex::new(()),
+        }
     }
 
     /// Construct a bus that writes durable events to `repo` before
@@ -42,6 +52,7 @@ impl BroadcastBus {
         Self {
             tx,
             repo: Some(repo),
+            durable_publish: Mutex::new(()),
         }
     }
 
@@ -71,18 +82,26 @@ impl EventSink for BroadcastBus {
     ///   - `Transient` → broadcast only
     /// Broadcast `Err` is suppressed: a turn may run with no subscribers.
     async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError> {
-        let event_id = if matches!(persistence, Persistence::Durable) {
+        if matches!(persistence, Persistence::Durable) {
             if let Some(repo) = &self.repo {
+                // Hold the mutex across append + send so concurrent
+                // durable publishes broadcast in the SAME order they
+                // received event_ids. Releases before any await on the
+                // subscriber side; broadcast.send is sync so this
+                // critical section is bounded by the SQLite write.
+                let _g = self.durable_publish.lock().await;
                 let session_id = session_id_of(&ev);
-                Some(repo.append(session_id, &ev).await?)
-            } else {
-                None
+                let event_id = repo.append(session_id, &ev).await?;
+                let _ = self.tx.send(DeliveredEvent {
+                    event_id: Some(event_id),
+                    event: ev,
+                });
+                return Ok(());
             }
-        } else {
-            None
-        };
+        }
+        // Transient (or durable-without-repo): broadcast only.
         let _ = self.tx.send(DeliveredEvent {
-            event_id,
+            event_id: None,
             event: ev,
         });
         Ok(())
@@ -146,11 +165,13 @@ fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::Sessio
         }
         AgentEvent::SubagentStarted {
             parent_session_id, ..
+        }
+        | AgentEvent::SubagentOutput {
+            parent_session_id, ..
+        }
+        | AgentEvent::SubagentFinished {
+            parent_session_id, ..
         } => Some(*parent_session_id),
-        // SubagentOutput / SubagentFinished are addressed by task_id, not
-        // session_id — the SSE replay row is keyed off the parent via
-        // SubagentStarted, so leaving session_id NULL here is safe.
-        AgentEvent::SubagentOutput { .. } | AgentEvent::SubagentFinished { .. } => None,
         AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
         AgentEvent::Heartbeat => None,
     }

@@ -15,7 +15,8 @@ use openlet_core::adapters::permission_manager::PermissionManager;
 use openlet_core::error::PermissionError;
 use openlet_core::permission::Deferred;
 use openlet_core::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionRequest,
+    PermissionRule,
 };
 use openlet_core::types::session::SessionId;
 
@@ -53,6 +54,7 @@ impl PermissionManager for AllowAll {
         &self,
         _ask_id: AskId,
         _scope: AlwaysScope,
+        _action: PermissionAction,
     ) -> Result<(), PermissionError> {
         Ok(())
     }
@@ -94,6 +96,7 @@ impl PermissionManager for DenyAll {
         &self,
         _ask_id: AskId,
         _scope: AlwaysScope,
+        _action: PermissionAction,
     ) -> Result<(), PermissionError> {
         Ok(())
     }
@@ -159,6 +162,7 @@ impl PermissionManager for ScriptedPermission {
         &self,
         _ask_id: AskId,
         _scope: AlwaysScope,
+        _action: PermissionAction,
     ) -> Result<(), PermissionError> {
         Ok(())
     }

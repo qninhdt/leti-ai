@@ -66,7 +66,7 @@ pub enum EventDto {
     PermissionResolved {
         session_id: Uuid,
         ask_id: Uuid,
-        decision: String,
+        decision: PermissionDecisionDto,
     },
     Error {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,10 +114,12 @@ pub enum EventDto {
     },
     SubagentOutput {
         task_id: Uuid,
+        parent_session_id: Uuid,
         delta: String,
     },
     SubagentFinished {
         task_id: Uuid,
+        parent_session_id: Uuid,
         output: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd: Option<String>,
@@ -144,8 +146,8 @@ pub enum AttachmentKindDto {
 impl From<AttachmentKind> for AttachmentKindDto {
     fn from(k: AttachmentKind) -> Self {
         match k {
-            AttachmentKind::Image => Self::Image,
-            AttachmentKind::Document => Self::Document,
+            AttachmentKind::Image => AttachmentKindDto::Image,
+            AttachmentKind::Document => AttachmentKindDto::Document,
         }
     }
 }
@@ -180,9 +182,9 @@ pub enum NotificationLevelDto {
 impl From<NotificationLevel> for NotificationLevelDto {
     fn from(l: NotificationLevel) -> Self {
         match l {
-            NotificationLevel::Info => Self::Info,
-            NotificationLevel::Warn => Self::Warn,
-            NotificationLevel::Error => Self::Error,
+            NotificationLevel::Info => NotificationLevelDto::Info,
+            NotificationLevel::Warn => NotificationLevelDto::Warn,
+            NotificationLevel::Error => NotificationLevelDto::Error,
         }
     }
 }
@@ -198,9 +200,9 @@ pub enum DeltaKindDto {
 impl From<DeltaKind> for DeltaKindDto {
     fn from(k: DeltaKind) -> Self {
         match k {
-            DeltaKind::Text => Self::Text,
-            DeltaKind::Reasoning => Self::Reasoning,
-            DeltaKind::ToolArgs => Self::ToolArgs,
+            DeltaKind::Text => DeltaKindDto::Text,
+            DeltaKind::Reasoning => DeltaKindDto::Reasoning,
+            DeltaKind::ToolArgs => DeltaKindDto::ToolArgs,
         }
     }
 }
@@ -216,13 +218,50 @@ pub struct UsageDto {
     pub reasoning_tokens: u64,
 }
 
+/// Resolved-permission outcome on the wire. Mirrors `Decision`'s
+/// `tag = "outcome"` serde shape so allow / deny / pending remain
+/// distinguishable, AND `Deny.feedback` reaches the SSE consumer
+/// (previously collapsed to a bare `"deny"` label).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum PermissionDecisionDto {
+    Allow,
+    Deny {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        feedback: Option<String>,
+    },
+    Pending {
+        ask_id: Uuid,
+    },
+}
+
+impl PermissionDecisionDto {
+    #[must_use]
+    pub fn from_decision(d: &openlet_core::types::permission::Decision) -> Self {
+        use openlet_core::types::permission::Decision;
+        match d {
+            Decision::Allow => Self::Allow,
+            Decision::Deny { feedback } => Self::Deny {
+                feedback: feedback.clone(),
+            },
+            Decision::Pending { ask_id } => Self::Pending { ask_id: ask_id.0 },
+        }
+    }
+}
+
 impl From<Usage> for UsageDto {
     fn from(u: Usage) -> Self {
         Self {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             cached_input_tokens: u.cached_input_tokens,
-            cache_write_tokens: u.cache_write_tokens,
+            // Anthropic populates `cache_creation_input_tokens`;
+            // DashScope uses `cache_write_tokens`. Cost calc already
+            // sums both server-side; surface them combined on the wire
+            // so consumers see the same number that was billed.
+            cache_write_tokens: u
+                .cache_write_tokens
+                .saturating_add(u.cache_creation_input_tokens),
             reasoning_tokens: u.reasoning_tokens,
         }
     }
@@ -310,7 +349,7 @@ impl From<AgentEvent> for EventDto {
             } => Self::PermissionResolved {
                 session_id: session_id.as_uuid(),
                 ask_id: ask_id.0,
-                decision: decision.label().to_string(),
+                decision: PermissionDecisionDto::from_decision(&decision),
             },
             AgentEvent::Error {
                 session_id,
@@ -386,15 +425,23 @@ impl From<AgentEvent> for EventDto {
                 parent_session_id: parent_session_id.as_uuid(),
                 subagent_type,
             },
-            AgentEvent::SubagentOutput { task_id, delta } => {
-                Self::SubagentOutput { task_id, delta }
-            }
+            AgentEvent::SubagentOutput {
+                task_id,
+                parent_session_id,
+                delta,
+            } => Self::SubagentOutput {
+                task_id,
+                parent_session_id: parent_session_id.as_uuid(),
+                delta,
+            },
             AgentEvent::SubagentFinished {
                 task_id,
+                parent_session_id,
                 output,
                 cost_usd,
             } => Self::SubagentFinished {
                 task_id,
+                parent_session_id: parent_session_id.as_uuid(),
                 output,
                 cost_usd,
             },
@@ -414,11 +461,4 @@ impl From<AgentEvent> for EventDto {
             AgentEvent::Heartbeat => Self::Heartbeat,
         }
     }
-}
-
-/// Stable wire label for a `Decision` — delegates to `Decision::label()`
-/// in `openlet_core::types::permission`.
-#[allow(dead_code)]
-fn decision_label(d: &openlet_core::types::permission::Decision) -> String {
-    d.label().to_string()
 }

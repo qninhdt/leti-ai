@@ -44,7 +44,7 @@ pub struct AuthPrincipal;
 )]
 pub async fn answer(
     State(state): State<AppState>,
-    Path(_session_id): Path<Uuid>,
+    Path(session_id): Path<Uuid>,
     principal: Option<Extension<AuthPrincipal>>,
     Json(body): Json<QuestionAnswerDto>,
 ) -> Result<StatusCode, AppError> {
@@ -57,9 +57,10 @@ pub async fn answer(
     }
 
     let qid = QuestionId::from(body.question_id);
+    let session = openlet_core::types::session::SessionId::from(session_id);
     state
         .questions
-        .resolve(qid, body.selected)
+        .resolve(qid, session, body.selected)
         .map_err(map_resolve_err)?;
     Ok(StatusCode::OK)
 }
@@ -67,6 +68,10 @@ pub async fn answer(
 fn map_resolve_err(e: ResolveError) -> AppError {
     match e {
         ResolveError::NotFound | ResolveError::ReceiverDropped => AppError::not_found(
+            "question_not_found",
+            "question not found or already resolved",
+        ),
+        ResolveError::SessionMismatch => AppError::not_found(
             "question_not_found",
             "question not found or already resolved",
         ),

@@ -51,7 +51,6 @@ fn arb_usage() -> impl Strategy<Value = Usage> {
                 cached_input_tokens: cached,
                 cache_write_tokens: write,
                 cache_creation_input_tokens: cache_create,
-                ..Default::default()
             },
         )
 }

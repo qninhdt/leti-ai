@@ -114,8 +114,11 @@ async fn each_on_hook_method_rejects_undeclared_capability() {
         (HookKind::OnEvent, |c| {
             c.on_event(Priority::default(), |x| async { HookResult::Continue(x) })
         }),
+        (HookKind::Notification, |c| {
+            c.on_notification(Priority::default(), |x| async { HookResult::Continue(x) })
+        }),
     ];
-    assert_eq!(cases.len(), 14, "all 14 hook kinds must be covered");
+    assert_eq!(cases.len(), 15, "all 15 hook kinds must be covered");
 
     for (kind, register) in cases {
         let mut ctx = ctx_with(vec![]);

@@ -26,7 +26,7 @@ use openlet_core::types::event::{AgentEvent, EventFilter};
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionMode, PermissionRequest,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionMode, PermissionRequest,
 };
 use openlet_core::types::session::{
     SessionCapabilities, SessionFilter, SessionId, SessionMeta, SessionStatus,
@@ -209,7 +209,12 @@ impl PermissionManager for AllowAll {
     fn peek_session_id(&self, _: AskId) -> Option<SessionId> {
         None
     }
-    async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> {
+    async fn accept_ask(
+        &self,
+        _: AskId,
+        _: AlwaysScope,
+        _: PermissionAction,
+    ) -> Result<(), PermissionError> {
         Ok(())
     }
 }

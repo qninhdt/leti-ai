@@ -34,12 +34,12 @@ pub fn compute_cost(usage: &Usage, pricing: &ModelPricing) -> Decimal {
     let input_non_cache = usage.input_tokens.saturating_sub(usage.cached_input_tokens);
 
     let mut total = Decimal::new(0, 0);
-    total += Decimal::new(input_non_cache as i64, 0) / mtok * pricing.input_per_mtok;
-    total += Decimal::new(usage.output_tokens as i64, 0) / mtok * pricing.output_per_mtok;
-    total += Decimal::new(usage.reasoning_tokens as i64, 0) / mtok * pricing.output_per_mtok;
+    total += Decimal::from(input_non_cache) / mtok * pricing.input_per_mtok;
+    total += Decimal::from(usage.output_tokens) / mtok * pricing.output_per_mtok;
+    total += Decimal::from(usage.reasoning_tokens) / mtok * pricing.output_per_mtok;
 
     if let Some(cr) = pricing.cached_input_per_mtok {
-        total += Decimal::new(usage.cached_input_tokens as i64, 0) / mtok * cr;
+        total += Decimal::from(usage.cached_input_tokens) / mtok * cr;
     }
     if let Some(cw) = pricing.cache_write_per_mtok {
         // Sum both cache-write counters — providers populate one or
@@ -50,7 +50,7 @@ pub fn compute_cost(usage: &Usage, pricing: &ModelPricing) -> Decimal {
         let writes = usage
             .cache_write_tokens
             .saturating_add(usage.cache_creation_input_tokens);
-        total += Decimal::new(writes as i64, 0) / mtok * cw;
+        total += Decimal::from(writes) / mtok * cw;
     }
     total
 }
@@ -161,5 +161,77 @@ mod tests {
         };
         let cost = compute_cost(&u, &p);
         assert_eq!(format_usd(cost), "3.7500");
+    }
+
+    #[test]
+    fn cached_greater_than_input_clamps_to_zero_via_saturating_sub() {
+        // Provider quirk: some adapters return `cached_input_tokens >
+        // input_tokens` for short prompts. `saturating_sub` clamps the
+        // non-cache portion to 0; cost stays bounded at the cache
+        // rate, never goes negative.
+        let u = Usage {
+            input_tokens: 100,
+            cached_input_tokens: 200, // larger than input
+            output_tokens: 0,
+            ..Default::default()
+        };
+        let p = ModelPricing {
+            input_per_mtok: Decimal::from_str("3.00").unwrap(),
+            output_per_mtok: Decimal::from_str("15.00").unwrap(),
+            cached_input_per_mtok: Some(Decimal::from_str("0.30").unwrap()),
+            cache_write_per_mtok: None,
+        };
+        let cost = compute_cost(&u, &p);
+        // input_non_cache clamps to 0 via saturating_sub. cached_input
+        // priced at 200 * 0.30 / 1e6 = 0.00006. The 4-decimal format
+        // truncates very small fractional values; lock that the
+        // result is finite, non-negative, and < 0.001 — the precise
+        // rounded string depends on rust_decimal's tie-break mode.
+        assert!(cost >= Decimal::new(0, 0), "cost cannot go negative");
+        assert!(
+            cost < Decimal::from_str("0.001").unwrap(),
+            "cost should remain bounded by the cache rate ({cost})"
+        );
+    }
+
+    #[test]
+    fn format_usd_rounds_to_four_decimals() {
+        // 0.00001 (Decimal::new(1, 5)) — 4-decimal format truncates
+        // toward "0.0000". Lock the format contract; if a future
+        // refactor switches to 5-decimal, this test must be updated
+        // intentionally rather than silently.
+        let amt = Decimal::new(1, 5);
+        assert_eq!(format_usd(amt), "0.0000");
+
+        let amt = Decimal::new(15, 5); // 0.00015 → "0.0002" (banker's rounding)
+        // rust_decimal default rounds half-to-even; 0.00015 has the
+        // last kept digit even (0), so round-half-to-even keeps it
+        // 0.0001. Either 0.0001 or 0.0002 is acceptable depending on
+        // mode — assert it falls in {0.0001, 0.0002} so the contract
+        // is robust against minor rust_decimal version drift.
+        let s = format_usd(amt);
+        assert!(
+            s == "0.0001" || s == "0.0002",
+            "rounded value {s} not in expected pair"
+        );
+    }
+
+    #[test]
+    fn huge_input_tokens_does_not_panic_or_wrap_to_negative() {
+        // u64 → Decimal is now infallible (Decimal::from(u64)). Values
+        // above i64::MAX (the previous as-cast ceiling) must NOT wrap
+        // to a negative cost. Lock that contract here.
+        let huge = u64::MAX;
+        let u = Usage {
+            input_tokens: huge,
+            output_tokens: 0,
+            ..Default::default()
+        };
+        let p = pricing("0.000001", "0.0");
+        let cost = compute_cost(&u, &p);
+        assert!(
+            cost >= Decimal::new(0, 0),
+            "u64-max input tokens must not produce negative cost ({cost})"
+        );
     }
 }

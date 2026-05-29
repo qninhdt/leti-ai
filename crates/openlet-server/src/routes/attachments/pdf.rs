@@ -18,48 +18,31 @@ pub(super) async fn process_and_persist_pdf(
 ) -> Result<(AttachmentKind, String, String, Part), AppError> {
     let original_len = bytes.len();
     let processed = process_pdf(bytes).await;
+
+    // Resolve to extractor output OR map the error to 422/500. We must
+    // NOT fabricate an `artifact_id` and `Part::Document` referencing a
+    // PDF the artifact store never received — every error variant of
+    // `process_pdf` consumes the input bytes, so attempting to persist
+    // an empty body would leave consumers with a 404 on the next
+    // `artifact.get`.
+    let r = processed.map_err(map_pdf_error)?;
+
     let artifact_id = format!("pdf-{}", Uuid::new_v4());
     let key = format!("attachments/{artifact_id}.pdf");
 
-    // Persist the original bytes regardless of extraction outcome.
-    // F3 spec: scanned/image-only PDFs still get stored, the part
-    // just lacks `extracted_text`.
-    let original_bytes_for_store = match &processed {
-        Ok(r) => r.original_bytes.clone(),
-        Err(_) => Vec::new(), // body already consumed; see below.
-    };
-    // When the extractor errored we lost the original bytes (process_pdf
-    // owns the input). Re-route: store an empty placeholder and surface
-    // the error. Callers can re-upload if they want to capture bytes.
-    if !original_bytes_for_store.is_empty() {
-        state
-            .artifacts
-            .put(sid, &key, Bytes::from(original_bytes_for_store))
-            .await
-            .map_err(|e| AppError::internal("artifact_put_failed", e.to_string()))?;
-    }
+    state
+        .artifacts
+        .put(sid, &key, Bytes::from(r.original_bytes.clone()))
+        .await
+        .map_err(|e| AppError::internal("artifact_put_failed", e.to_string()))?;
 
-    let (extracted_text, summary) = match processed {
-        Ok(r) => {
-            let text = r
-                .extracted_text
-                .as_ref()
-                .map(|t| substitute_artifact_id(t, &artifact_id));
-            let len = text.as_ref().map(String::len).unwrap_or(0);
-            let mark = if r.truncated { " (truncated)" } else { "" };
-            (
-                text,
-                format!("application/pdf, {original_len} bytes original, {len} chars text{mark}"),
-            )
-        }
-        Err(PdfProcessError::TextTooShort { len, .. }) => (
-            None,
-            format!(
-                "application/pdf, {original_len} bytes original, text unextractable ({len} chars)"
-            ),
-        ),
-        Err(e) => return Err(map_pdf_error(e)),
-    };
+    let extracted_text = r
+        .extracted_text
+        .as_ref()
+        .map(|t| substitute_artifact_id(t, &artifact_id));
+    let len = extracted_text.as_ref().map(String::len).unwrap_or(0);
+    let mark = if r.truncated { " (truncated)" } else { "" };
+    let summary = format!("application/pdf, {original_len} bytes original, {len} chars text{mark}");
 
     let part = Part::Document {
         id: PartId::new(),

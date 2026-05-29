@@ -240,7 +240,16 @@ async fn run_one(
             let deferred = permission
                 .take_deferred(ask_id)
                 .ok_or_else(|| ToolError::PermissionDenied("ask expired".into()))?;
-            match deferred.await {
+            // Race the deferred against ctx.cancel so a session cancel
+            // (TUI abort, plugin termination, server shutdown) doesn't
+            // leave the tool call parked forever.
+            let resolved = tokio::select! {
+                d = deferred => d,
+                () = ctx.cancel.cancelled() => {
+                    return Err(ToolError::PermissionDenied("cancelled".into()));
+                }
+            };
+            match resolved {
                 Decision::Allow => {}
                 Decision::Deny { feedback } => {
                     return Err(ToolError::PermissionDenied(

@@ -5,7 +5,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::types::event::AgentEvent;
-use openlet_core::types::permission::{AlwaysScope, AskId};
+use openlet_core::types::permission::{AlwaysScope, AskId, PermissionAction};
 use openlet_protocol::{PermissionReplyDto, PermissionReplyKind};
 use uuid::Uuid;
 
@@ -39,14 +39,22 @@ pub async fn reply(
 
     // For `always_*` decisions, use `accept_ask` — atomic take + persist
     // + push + resolve, with the rule pattern derived from the ORIGINAL
-    // ask (never from client input). Closes the privilege-escalation
-    // primitive where a client could persist a broader pattern than was
-    // shown in the prompt.
+    // ask (never from client input). The action threads through so an
+    // `always_deny` reply persists a Deny rule and resolves the in-flight
+    // ask as Deny — the prior code unconditionally hardcoded Allow,
+    // which silently inverted user intent.
     if body.is_persistent() {
         let scope = AlwaysScope::Global;
+        let action = match body.decision {
+            PermissionReplyKind::AlwaysAllow => PermissionAction::Allow,
+            PermissionReplyKind::AlwaysDeny => PermissionAction::Deny,
+            // Unreachable — is_persistent is true only for the two
+            // Always* variants. Kept exhaustive for future enum growth.
+            PermissionReplyKind::Allow | PermissionReplyKind::Deny => PermissionAction::Allow,
+        };
         state
             .permission
-            .accept_ask(ask, scope)
+            .accept_ask(ask, scope, action)
             .await
             .map_err(map_perm_err)?;
     } else {

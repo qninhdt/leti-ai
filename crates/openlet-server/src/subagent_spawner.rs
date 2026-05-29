@@ -149,7 +149,16 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             id: openlet_core::types::part::PartId::new(),
             text: objective.to_string(),
         };
-        let _ = state.memory.append_part(user_msg_id, part).await;
+        // The seed user message must carry the objective. Silently
+        // dropping it on memory failure leaves the LLM staring at an
+        // empty user turn and producing garbage. Surface as
+        // `SpawnError::Internal` so the caller fails fast and the
+        // operator sees the storage error instead of a confused agent.
+        state
+            .memory
+            .append_part(user_msg_id, part)
+            .await
+            .map_err(|e| SpawnError::Internal(format!("seed user part: {e}")))?;
 
         let _ = state
             .events
@@ -340,6 +349,7 @@ async fn drive_subagent(
         .publish(
             AgentEvent::SubagentFinished {
                 task_id: task_id.0,
+                parent_session_id,
                 output: snap,
                 cost_usd: cost_str,
             },

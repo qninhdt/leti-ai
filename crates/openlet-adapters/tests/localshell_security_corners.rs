@@ -29,7 +29,8 @@ use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, EventFilter};
 use openlet_core::types::message::MessageId;
 use openlet_core::types::permission::{
-    AlwaysScope, AskId, Decision, PermissionCtx, PermissionMode, PermissionRequest, PermissionRule,
+    AlwaysScope, AskId, Decision, PermissionAction, PermissionCtx, PermissionMode,
+    PermissionRequest, PermissionRule,
 };
 use openlet_core::types::session::SessionId;
 use tempfile::TempDir;
@@ -41,15 +42,40 @@ struct AllowAll;
 
 #[async_trait]
 impl PermissionManager for AllowAll {
-    async fn check(&self, _: PermissionCtx, _: PermissionRequest) -> Result<Decision, PermissionError> {
+    async fn check(
+        &self,
+        _: PermissionCtx,
+        _: PermissionRequest,
+    ) -> Result<Decision, PermissionError> {
         Ok(Decision::Allow)
     }
-    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> { Ok(()) }
-    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> { Ok(()) }
-    async fn record_always(&self, _: AlwaysScope, _: PermissionRule) -> Result<(), PermissionError> { Ok(()) }
-    fn take_deferred(&self, _: AskId) -> Option<openlet_core::permission::Deferred<Decision>> { None }
-    fn peek_session_id(&self, _: AskId) -> Option<SessionId> { None }
-    async fn accept_ask(&self, _: AskId, _: AlwaysScope) -> Result<(), PermissionError> { Ok(()) }
+    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    async fn record_always(
+        &self,
+        _: AlwaysScope,
+        _: PermissionRule,
+    ) -> Result<(), PermissionError> {
+        Ok(())
+    }
+    fn take_deferred(&self, _: AskId) -> Option<openlet_core::permission::Deferred<Decision>> {
+        None
+    }
+    fn peek_session_id(&self, _: AskId) -> Option<SessionId> {
+        None
+    }
+    async fn accept_ask(
+        &self,
+        _: AskId,
+        _: AlwaysScope,
+        _: PermissionAction,
+    ) -> Result<(), PermissionError> {
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -57,8 +83,13 @@ struct NoopBus;
 
 #[async_trait]
 impl EventSink for NoopBus {
-    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> { Ok(()) }
-    fn subscribe(&self, _: EventFilter) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+    async fn publish(&self, _: AgentEvent, _: Persistence) -> Result<(), EventError> {
+        Ok(())
+    }
+    fn subscribe(
+        &self,
+        _: EventFilter,
+    ) -> broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
         let (_, rx) = broadcast::channel(1);
         rx
     }
@@ -69,13 +100,25 @@ struct DiscardArtifacts;
 
 #[async_trait]
 impl ArtifactStore for DiscardArtifacts {
-    async fn put(&self, session: SessionId, key: &str, _: Bytes) -> Result<ArtifactRef, ArtifactError> {
-        Ok(ArtifactRef { session_id: session, key: key.to_string(), size: 0, mime: None })
+    async fn put(
+        &self,
+        session: SessionId,
+        key: &str,
+        _: Bytes,
+    ) -> Result<ArtifactRef, ArtifactError> {
+        Ok(ArtifactRef {
+            session_id: session,
+            key: key.to_string(),
+            size: 0,
+            mime: None,
+        })
     }
     async fn get(&self, _: &ArtifactRef) -> Result<Bytes, ArtifactError> {
         Err(ArtifactError::NotFound("test".into()))
     }
-    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> { Ok(vec![]) }
+    async fn list(&self, _: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> {
+        Ok(vec![])
+    }
 }
 
 fn noop_memory() -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
@@ -85,22 +128,95 @@ fn noop_memory() -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
 
     #[async_trait]
     impl MemoryStore for NoopMemory {
-        async fn create_session(&self, _: AgentId, _: Option<SessionId>) -> Result<SessionId, MemoryError> {
+        async fn create_session(
+            &self,
+            _: AgentId,
+            _: Option<SessionId>,
+        ) -> Result<SessionId, MemoryError> {
             Err(MemoryError::Unimplemented)
         }
-        async fn get_session(&self, _: SessionId) -> Result<Option<openlet_core::types::session::SessionMeta>, MemoryError> { Ok(None) }
-        async fn list_sessions(&self, _: openlet_core::types::session::SessionFilter) -> Result<Vec<openlet_core::types::session::SessionMeta>, MemoryError> { Ok(vec![]) }
-        async fn update_status(&self, _: SessionId, _: openlet_core::types::session::SessionStatus, _: &str) -> Result<(), MemoryError> { Ok(()) }
-        async fn update_permission_mode(&self, _: SessionId, _: PermissionMode) -> Result<(), MemoryError> { Ok(()) }
-        async fn switch_agent(&self, _: SessionId, _: &str) -> Result<(), MemoryError> { Ok(()) }
-        async fn update_session_extensions(&self, _: SessionId, _: serde_json::Value) -> Result<(), MemoryError> { Ok(()) }
-        async fn delete_session(&self, _: SessionId) -> Result<(), MemoryError> { Ok(()) }
-        async fn append_message(&self, _: SessionId, m: openlet_core::types::message::Message) -> Result<openlet_core::types::message::MessageId, MemoryError> { Ok(m.id) }
-        async fn append_part(&self, _: openlet_core::types::message::MessageId, p: openlet_core::types::part::Part) -> Result<openlet_core::types::part::PartId, MemoryError> { Ok(p.id()) }
-        async fn upsert_part(&self, _: openlet_core::types::message::MessageId, _: openlet_core::types::part::PartId, _: openlet_core::types::part::Part) -> Result<(), MemoryError> { Ok(()) }
-        async fn list_messages(&self, _: SessionId) -> Result<Vec<openlet_core::types::message::Message>, MemoryError> { Ok(vec![]) }
-        async fn list_parts(&self, _: SessionId, _: openlet_core::types::message::MessageId) -> Result<Vec<openlet_core::types::part::Part>, MemoryError> { Ok(vec![]) }
-        async fn record_read(&self, _: SessionId, _: std::path::PathBuf) -> Result<(), MemoryError> { Ok(()) }
+        async fn get_session(
+            &self,
+            _: SessionId,
+        ) -> Result<Option<openlet_core::types::session::SessionMeta>, MemoryError> {
+            Ok(None)
+        }
+        async fn list_sessions(
+            &self,
+            _: openlet_core::types::session::SessionFilter,
+        ) -> Result<Vec<openlet_core::types::session::SessionMeta>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn update_status(
+            &self,
+            _: SessionId,
+            _: openlet_core::types::session::SessionStatus,
+            _: &str,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn update_permission_mode(
+            &self,
+            _: SessionId,
+            _: PermissionMode,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn switch_agent(&self, _: SessionId, _: &str) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn update_session_extensions(
+            &self,
+            _: SessionId,
+            _: serde_json::Value,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn delete_session(&self, _: SessionId) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn append_message(
+            &self,
+            _: SessionId,
+            m: openlet_core::types::message::Message,
+        ) -> Result<openlet_core::types::message::MessageId, MemoryError> {
+            Ok(m.id)
+        }
+        async fn append_part(
+            &self,
+            _: openlet_core::types::message::MessageId,
+            p: openlet_core::types::part::Part,
+        ) -> Result<openlet_core::types::part::PartId, MemoryError> {
+            Ok(p.id())
+        }
+        async fn upsert_part(
+            &self,
+            _: openlet_core::types::message::MessageId,
+            _: openlet_core::types::part::PartId,
+            _: openlet_core::types::part::Part,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
+        async fn list_messages(
+            &self,
+            _: SessionId,
+        ) -> Result<Vec<openlet_core::types::message::Message>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn list_parts(
+            &self,
+            _: SessionId,
+            _: openlet_core::types::message::MessageId,
+        ) -> Result<Vec<openlet_core::types::part::Part>, MemoryError> {
+            Ok(vec![])
+        }
+        async fn record_read(
+            &self,
+            _: SessionId,
+            _: std::path::PathBuf,
+        ) -> Result<(), MemoryError> {
+            Ok(())
+        }
     }
 
     Arc::new(NoopMemory)
@@ -179,8 +295,7 @@ async fn stdin_closed_at_spawn_command_does_not_hang() {
     assert!(!out.timed_out, "cat must not time out");
     assert!(
         elapsed.as_secs() < 2,
-        "cat returned in {:?} — stdin appears NOT closed at spawn",
-        elapsed
+        "cat returned in {elapsed:?} — stdin appears NOT closed at spawn"
     );
 }
 
@@ -198,7 +313,10 @@ async fn bash_runs_non_login_so_bashrc_is_not_sourced() {
     // `bash -c "..."`, $0 defaults to "bash".
     let tmp = TempDir::new().unwrap();
     let exec = LocalShellExecutor::new(tmp.path().to_path_buf());
-    let out = exec.run(&ctx(tmp.path()), "echo \"$0\"", 5_000).await.unwrap();
+    let out = exec
+        .run(&ctx(tmp.path()), "echo \"$0\"", 5_000)
+        .await
+        .unwrap();
     let dollar_zero = out.stdout.trim();
     assert!(
         !dollar_zero.starts_with('-'),
@@ -216,7 +334,10 @@ async fn path_falls_back_when_parent_has_no_path() {
     // when the executor runs from a stripped environment.
     let tmp = TempDir::new().unwrap();
     let exec = LocalShellExecutor::new(tmp.path().to_path_buf());
-    let out = exec.run(&ctx(tmp.path()), "echo PATH=\"$PATH\"", 5_000).await.unwrap();
+    let out = exec
+        .run(&ctx(tmp.path()), "echo PATH=\"$PATH\"", 5_000)
+        .await
+        .unwrap();
     assert!(
         out.stdout.contains("PATH=") && !out.stdout.trim().ends_with("PATH="),
         "child PATH must be non-empty, got: {:?}",

@@ -17,11 +17,7 @@ use openlet_core::types::session::SessionId;
 use proptest::prelude::*;
 
 fn arb_role() -> impl Strategy<Value = Role> {
-    prop_oneof![
-        Just(Role::User),
-        Just(Role::Assistant),
-        Just(Role::Tool),
-    ]
+    prop_oneof![Just(Role::User), Just(Role::Assistant), Just(Role::Tool),]
 }
 
 /// Build (msgs, parts_by_msg) where every Tool message's tool_result
@@ -52,7 +48,7 @@ fn arb_paired_tool_calls()
                         // Each assistant emits 0-2 tool calls.
                         let n_calls = next_call % 3;
                         for k in 0..n_calls {
-                            let call_id = format!("call-{}-{}", next_call, k);
+                            let call_id = format!("call-{next_call}-{k}");
                             call_ids.push(call_id.clone());
                             let name_idx = (next_call + k) % tool_names.len();
                             msg_parts.push(Part::ToolCall {
@@ -81,7 +77,7 @@ fn arb_paired_tool_calls()
                             // tests an edge of pairing).
                             msg_parts.push(Part::ToolResult {
                                 id: PartId::new(),
-                                call_id: format!("orphan-{}", next_call),
+                                call_id: format!("orphan-{next_call}"),
                                 ok: true,
                                 text: Some("ok".to_string()),
                                 error: None,
@@ -92,7 +88,7 @@ fn arb_paired_tool_calls()
                     Role::User => {
                         msg_parts.push(Part::Text {
                             id: PartId::new(),
-                            text: format!("user msg {}", next_call),
+                            text: format!("user msg {next_call}"),
                         });
                         next_call += 1;
                     }

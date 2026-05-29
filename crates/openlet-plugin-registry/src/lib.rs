@@ -157,9 +157,19 @@ pub async fn install_all(
         match install_result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(e),
-            Err(_) => {
+            Err(payload) => {
+                // Surface the panic message so operators see WHY install
+                // panicked, not just THAT it did. Boxed `Any` is either
+                // `&'static str` or `String` for `panic!`-emitted payloads.
+                let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
+                    (*s).to_string()
+                } else if let Some(s) = payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "<non-string panic payload>".to_string()
+                };
                 return Err(PluginError::Runtime(format!(
-                    "plugin '{}' install panicked",
+                    "plugin '{}' install panicked: {msg}",
                     manifest.id
                 )));
             }
@@ -179,7 +189,23 @@ pub async fn install_all(
         }
 
         agents.extend(regs.agents);
-        tools.extend(regs.tools);
+        // Reject duplicate tool ids before extending; first-registration
+        // wins. Without this, a plugin shadowing a built-in (or two
+        // plugins racing for the same name) silently shipped both
+        // entries and `ToolRegistry` lookup would pick by insertion
+        // order — a non-obvious mis-routing.
+        for tool in regs.tools {
+            if tools
+                .iter()
+                .any(|existing: &ToolHandle| existing.name() == tool.name())
+            {
+                return Err(PluginError::Runtime(format!(
+                    "tool id collision: '{}' already registered by an earlier plugin",
+                    tool.name()
+                )));
+            }
+            tools.push(tool);
+        }
 
         chains.before_turn.extend(regs.chains.before_turn);
         chains.after_turn.extend(regs.chains.after_turn);
@@ -199,6 +225,7 @@ pub async fn install_all(
             .on_session_status
             .extend(regs.chains.on_session_status);
         chains.on_event.extend(regs.chains.on_event);
+        chains.notification.extend(regs.chains.notification);
 
         manifests.push(manifest.clone());
     }

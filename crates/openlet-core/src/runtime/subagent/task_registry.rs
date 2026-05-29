@@ -66,16 +66,22 @@ impl TaskRegistry {
             .session_descendants
             .entry(root)
             .or_insert_with(|| AtomicUsize::new(0));
-        // Unconditional fetch_add so two racing admits CAS deterministically.
-        let prev = entry.fetch_add(1, Ordering::AcqRel);
-        if prev >= self.max_per_session {
-            entry.fetch_sub(1, Ordering::AcqRel);
-            return Err(SpawnError::SubagentQuotaExceeded {
-                in_flight: prev,
-                max: self.max_per_session,
-            });
+        // CAS loop avoids the false-deny window of fetch_add + rollback:
+        // two concurrent admits at cur=max would both observe prev>=max
+        // and reject, even though after both rollbacks one slot is free.
+        let mut cur = entry.load(Ordering::Acquire);
+        loop {
+            if cur >= self.max_per_session {
+                return Err(SpawnError::SubagentQuotaExceeded {
+                    in_flight: cur,
+                    max: self.max_per_session,
+                });
+            }
+            match entry.compare_exchange_weak(cur, cur + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Ok(TaskId::new()),
+                Err(actual) => cur = actual,
+            }
         }
-        Ok(TaskId::new())
     }
 
     /// Roll back a quota admit when spawning fails before the handle is
@@ -160,7 +166,13 @@ impl TaskRegistry {
     pub async fn await_completion(&self, id: TaskId) -> Option<TaskSnapshot> {
         let handle = self.tasks.get(&id)?.clone();
         loop {
+            // `Notified` futures are NOT subscribed until polled or
+            // explicitly enabled. Without this, a `set_status(terminal)
+            // + notify_waiters` racing between the `notified()` call
+            // and the await would lose the wakeup and hang forever.
             let notified = handle.finished.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
                 let s = handle.status.read().await;
                 if s.is_terminal() {

@@ -193,7 +193,7 @@ async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> Provider
         .and_then(|s| s.parse::<u64>().ok())
         .map(|s| s.saturating_mul(1_000))
         .unwrap_or(1_000);
-    let body = resp.text().await.unwrap_or_default();
+    let body = read_capped_body(resp).await;
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
             ProviderError::Auth(truncate(&body, 256))
@@ -206,10 +206,42 @@ async fn map_http_error(status: StatusCode, resp: reqwest::Response) -> Provider
     }
 }
 
+/// Cap on bytes read from a 4xx/5xx error body before mapping. Prevents
+/// a hostile or buggy upstream from OOMing the client by returning a
+/// multi-MB error JSON. 64 KiB is generous for human-readable error
+/// payloads; the truncate step then trims to 256 chars for display.
+const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
+
+async fn read_capped_body(resp: reqwest::Response) -> String {
+    use futures::StreamExt as _;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else { break };
+        let remaining = MAX_ERROR_BODY_BYTES.saturating_sub(buf.len());
+        if remaining == 0 {
+            break;
+        }
+        let take = chunk.len().min(remaining);
+        buf.extend_from_slice(&chunk[..take]);
+        if buf.len() >= MAX_ERROR_BODY_BYTES {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// Truncate `s` to at most `max` BYTES on a UTF-8 char boundary, then
+/// append `…`. Slicing at an arbitrary byte index would panic when the
+/// boundary lands inside a multi-byte codepoint (Japanese / Chinese /
+/// emoji error JSON).
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max])
+        return s.to_string();
     }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
