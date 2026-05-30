@@ -14,7 +14,7 @@ pub(super) async fn process_and_persist_image(
     state: &AppState,
     sid: SessionId,
     bytes: Vec<u8>,
-) -> Result<(AttachmentKind, String, String, Part), AppError> {
+) -> Result<(AttachmentKind, String, String, String, Part), AppError> {
     let result = process_image(bytes).await.map_err(map_image_error)?;
     let artifact_id = format!("img-{}", Uuid::new_v4());
     let key = format!("attachments/{artifact_id}.jpg");
@@ -37,7 +37,13 @@ pub(super) async fn process_and_persist_image(
         width: result.width,
         height: result.height,
     };
-    Ok((AttachmentKind::Image, "image/jpeg".into(), summary, part))
+    Ok((
+        AttachmentKind::Image,
+        "image/jpeg".into(),
+        artifact_id,
+        summary,
+        part,
+    ))
 }
 
 pub(super) fn map_image_error(e: ImageProcessError) -> AppError {

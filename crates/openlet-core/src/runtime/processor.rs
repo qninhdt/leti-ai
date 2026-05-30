@@ -150,6 +150,17 @@ impl Processor {
                 );
             }
             ChatDelta::ToolCallArgsDelta { index, args_chunk } => {
+                // Same bound as ToolCallStart: an args delta for a brand-new
+                // index would otherwise insert via `or_default()` and bypass
+                // the cap, letting an adversarial stream grow the map without
+                // bound (ISSUE-A11). Existing indices are always allowed.
+                if state.pending_tool_calls.len() >= MAX_PENDING_TOOL_CALLS
+                    && !state.pending_tool_calls.contains_key(&index)
+                {
+                    return Err(ProviderError::Decode(format!(
+                        "too many pending tool calls (cap {MAX_PENDING_TOOL_CALLS})"
+                    )));
+                }
                 let entry = state.pending_tool_calls.entry(index).or_default();
                 entry.args_buf.push_str(&args_chunk);
                 events.push(ProcessorEvent::PartDelta {

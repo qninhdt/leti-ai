@@ -16,6 +16,7 @@ export interface ChatViewProps {
   agent: AgentDto | null;
   messages: MessageView[];
   pluginErrors: PluginErrorView[];
+  clientError: string | null;
   planMode: boolean;
   promptValue: string;
   setPromptValue: (v: string) => void;
@@ -29,6 +30,7 @@ export function ChatView(props: ChatViewProps): React.ReactElement {
   return (
     <Box flexDirection="column">
       <MessageList messages={props.messages} planMode={props.planMode} />
+      {props.clientError && <ClientErrorBanner message={props.clientError} />}
       {props.pluginErrors.length > 0 && (
         <PluginErrorBanner err={props.pluginErrors[props.pluginErrors.length - 1]!} />
       )}
@@ -58,6 +60,15 @@ function PluginErrorBanner({ err }: { err: PluginErrorView }): React.ReactElemen
       <Text color={theme.permission.danger} bold>plugin.error</Text>
       <Text color={theme.text.muted}> {err.pluginId} </Text>
       <Text color={theme.text.primary}>{err.message}</Text>
+    </Box>
+  );
+}
+
+function ClientErrorBanner({ message }: { message: string }): React.ReactElement {
+  return (
+    <Box borderStyle="single" borderColor={theme.permission.danger} paddingX={1}>
+      <Text color={theme.permission.danger} bold>error</Text>
+      <Text color={theme.text.primary}> {message}</Text>
     </Box>
   );
 }

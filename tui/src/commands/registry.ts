@@ -81,17 +81,41 @@ export const commands: Command[] = [
   },
 ];
 
+const commandByToken = buildCommandLookup(commands);
+
 export function findCommand(query: string): Command | undefined {
-  const q = query.toLowerCase().replace(/^\//, "");
-  return commands.find((c) => c.name === q || c.aliases?.includes(q));
+  return commandByToken.get(normalizeCommandQuery(query));
 }
 
 export function complete(query: string): Suggestion[] {
-  const q = query.toLowerCase().replace(/^\//, "");
+  const q = normalizeCommandQuery(query);
   if (!q) return commands.map(asSuggestion);
   return commands
     .filter((c) => c.name.startsWith(q) || c.aliases?.some((a) => a.startsWith(q)))
     .map(asSuggestion);
+}
+
+function normalizeCommandQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/^\//, "");
+}
+
+function buildCommandLookup(source: Command[]): Map<string, Command> {
+  const lookup = new Map<string, Command>();
+
+  for (const command of source) {
+    for (const token of [command.name, ...(command.aliases ?? [])]) {
+      const normalized = normalizeCommandQuery(token);
+      const existing = lookup.get(normalized);
+
+      if (existing) {
+        throw new Error(`Duplicate slash command token "${normalized}" for /${existing.name} and /${command.name}`);
+      }
+
+      lookup.set(normalized, command);
+    }
+  }
+
+  return lookup;
 }
 
 function asSuggestion(c: Command): Suggestion {

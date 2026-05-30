@@ -227,7 +227,7 @@ impl PluginContext {
     }
 }
 
-/// Per-hook registration — generated for all 14 hook kinds via the
+/// Per-hook registration — generated for all 15 hook kinds via the
 /// macro below. Each method signature is identical except for the
 /// closure context type and the chain it pushes into.
 macro_rules! impl_on_hook {

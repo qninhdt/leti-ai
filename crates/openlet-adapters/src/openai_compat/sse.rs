@@ -74,19 +74,35 @@ impl SseParser {
     }
 
     fn next_frame(&mut self) -> Option<String> {
-        let separator = self
+        // Split at the EARLIEST separator of either kind. Preferring
+        // `\n\n` globally would merge two frames when a `\r\n\r\n`
+        // separator appears earlier in the buffer (mixed line endings).
+        // For consistent streams only one kind is ever present, so this
+        // is identical to picking that kind. A `\r\n\r\n` never contains
+        // a bare `\n\n`, so the two never overlap at the same index.
+        let lf = self
             .buffer
             .windows(2)
             .position(|w| w == b"\n\n")
-            .map(|pos| (pos, 2))
-            .or_else(|| {
-                self.buffer
-                    .windows(4)
-                    .position(|w| w == b"\r\n\r\n")
-                    .map(|pos| (pos, 4))
-            })?;
+            .map(|pos| (pos, 2));
+        let crlf = self
+            .buffer
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|pos| (pos, 4));
+        let (pos, sep_len) = match (lf, crlf) {
+            (Some(lf), Some(crlf)) => {
+                if lf.0 <= crlf.0 {
+                    lf
+                } else {
+                    crlf
+                }
+            }
+            (Some(lf), None) => lf,
+            (None, Some(crlf)) => crlf,
+            (None, None) => return None,
+        };
 
-        let (pos, sep_len) = separator;
         let drained: Vec<u8> = self.buffer.drain(..pos + sep_len).collect();
         let body_len = drained.len().saturating_sub(sep_len);
         Some(String::from_utf8_lossy(&drained[..body_len]).into_owned())
@@ -191,6 +207,18 @@ mod tests {
         let mut p = SseParser::new();
         let frames = p.push(frame.as_bytes()).unwrap();
         assert_eq!(frames[0].data, "ok");
+    }
+
+    #[test]
+    fn mixed_separators_split_at_earliest() {
+        // A CRLF-terminated frame followed by an LF-terminated frame must
+        // yield two frames, not one merged frame. Splitting always at the
+        // earliest separator of either kind handles this.
+        let mut p = SseParser::new();
+        let frames = p.push(b"data: a\r\n\r\ndata: b\n\n").unwrap();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].data, "a");
+        assert_eq!(frames[1].data, "b");
     }
 
     #[test]

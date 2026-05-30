@@ -15,7 +15,7 @@ pub(super) async fn process_and_persist_pdf(
     state: &AppState,
     sid: SessionId,
     bytes: Vec<u8>,
-) -> Result<(AttachmentKind, String, String, Part), AppError> {
+) -> Result<(AttachmentKind, String, String, String, Part), AppError> {
     let original_len = bytes.len();
     let processed = process_pdf(bytes).await;
 
@@ -53,6 +53,7 @@ pub(super) async fn process_and_persist_pdf(
     Ok((
         AttachmentKind::Document,
         "application/pdf".into(),
+        artifact_id,
         summary,
         part,
     ))

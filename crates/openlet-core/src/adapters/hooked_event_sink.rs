@@ -62,4 +62,13 @@ impl EventSink for HookedEventSink {
     ) -> Result<Vec<DeliveredEvent>, EventError> {
         self.inner.replay_since(session_id, after_id).await
     }
+
+    async fn replay_since_global(&self, after_id: i64) -> Result<Vec<DeliveredEvent>, EventError> {
+        // Must forward to the inner sink. The default trait impl returns
+        // an empty Vec, so without this override a global (sessionless)
+        // SSE resume through the hooked decorator would silently replay
+        // nothing — dropping every durable event the client missed.
+        // Mirrors the per-session `replay_since` forwarding above.
+        self.inner.replay_since_global(after_id).await
+    }
 }

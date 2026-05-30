@@ -19,11 +19,16 @@ use std::sync::Arc;
 use openlet_core::adapters::model_provider::ToolSpec;
 use openlet_core::error::CoreError;
 use openlet_core::projection::{LlmMessage, ProjectionCaps, project_for_llm};
+use openlet_core::runtime::TurnInput;
 use openlet_core::types::message::MessageId;
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
 
 use crate::app_state::AppState;
+
+/// Per-turn step ceiling shared by every turn driver (top-level prompt
+/// loop + nested subagent loop). Caps runaway tool-call cycles.
+pub(crate) const MAX_TURN_STEPS: usize = 50;
 
 /// List a session's messages + parts and project them into LLM-shape.
 ///
@@ -68,4 +73,26 @@ pub(crate) fn memory_arc(
     state: &AppState,
 ) -> Arc<dyn openlet_core::adapters::memory_store::MemoryStore> {
     state.memory.clone()
+}
+
+/// Assemble the `TurnInput` both drivers feed into `run_loop`. Every
+/// per-turn override (`system_prompt`, `model`, `max_tokens`,
+/// `temperature`) defaults to `None` — the runtime resolves the model
+/// from `RuntimeConfig` — so callers only supply the session, projected
+/// messages, and tool specs.
+#[must_use]
+pub(crate) fn build_turn_input(
+    session_id: SessionId,
+    messages: Vec<LlmMessage>,
+    tools: Vec<ToolSpec>,
+) -> TurnInput {
+    TurnInput {
+        session_id,
+        messages,
+        system_prompt: None,
+        model: None,
+        max_tokens: None,
+        temperature: None,
+        tools,
+    }
 }

@@ -120,3 +120,63 @@ async fn migration_idempotent() {
         .await
         .expect("re-run migrations no-op");
 }
+
+#[tokio::test]
+async fn create_session_with_meta_persists_verbatim_and_accepts_children() {
+    // Regression: subagent spawning persists a pre-built child SessionMeta
+    // (with a caller-allocated id + non-zero depth) and then seeds messages
+    // keyed on that id. The old code called create_session, which minted a
+    // FRESH id and reset depth to 0 — the seed append then hit a foreign-key
+    // violation against a row that didn't exist. create_session_with_meta
+    // must persist the row verbatim so the id/depth survive and child writes
+    // succeed.
+    use openlet_core::types::permission::PermissionMode;
+    use openlet_core::types::session::{SessionId, SessionMeta};
+
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+
+    let agent = AgentId::new();
+    let parent = store.create_session(agent, None).await.unwrap();
+    let child_id = SessionId::new();
+    let now = Utc::now();
+    let child = SessionMeta {
+        id: child_id,
+        agent_id: agent,
+        status: SessionStatus::Running,
+        permission_mode: PermissionMode::default(),
+        parent_session_id: Some(parent),
+        created_at: now,
+        updated_at: now,
+        deleted_at: None,
+        version: "0.1.0".into(),
+        extensions: serde_json::Value::Null,
+        capabilities: Default::default(),
+        current_agent_slug: Some("indexer".into()),
+        previous_agent_slug: None,
+        depth: 2,
+    };
+
+    let returned = store.create_session_with_meta(child.clone()).await.unwrap();
+    assert_eq!(returned, child_id, "returned id must equal the supplied id");
+
+    let got = store.get_session(child_id).await.unwrap().expect("present");
+    assert_eq!(got.id, child_id);
+    assert_eq!(got.parent_session_id, Some(parent));
+    assert_eq!(got.depth, 2, "depth must be preserved for the grandchild guard");
+    assert_eq!(got.status, SessionStatus::Running);
+    assert_eq!(got.current_agent_slug.as_deref(), Some("indexer"));
+
+    // The FK-critical path: a message append against the child id must
+    // succeed (it would fail if the row were never inserted).
+    let msg = Message {
+        id: MessageId::new(),
+        session_id: child_id,
+        role: Role::User,
+        created_at: Utc::now(),
+    };
+    store
+        .append_message(child_id, msg)
+        .await
+        .expect("append against persisted child session must succeed");
+}

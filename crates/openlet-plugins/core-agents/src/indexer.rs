@@ -3,28 +3,25 @@
 
 use std::sync::Arc;
 
-use openlet_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
+use openlet_core::agent::AgentDefinition;
+
+use crate::builder::{AgentBlueprint, build};
 
 const INDEXER_CACHEABLE: &str = "You are the Openlet workspace indexer.\n\
 For MVP this agent only logs and returns 'not yet implemented'.\n\
 Real indexing of code symbols, embeddings, and references lands post-MVP.\n";
 
+const TOOL_ALLOWLIST: &[&str] = &["read", "list", "glob"];
+
 #[must_use]
 pub fn indexer_agent() -> AgentDefinition {
-    AgentDefinition {
-        slug: AgentSlug::new("indexer").expect("static slug"),
-        title: "Workspace Indexer (stub)".into(),
-        description: "Reference custom agent — read-only, returns a stub response.".into(),
-        prompt_segments: Some(PromptSegments {
-            cacheable: INDEXER_CACHEABLE.to_owned(),
-            dynamic: Arc::new(|_| String::new()),
-        }),
-        tool_allowlist: vec!["read".into(), "list".into(), "glob".into()],
-        model_id: "anthropic/claude-3.5-haiku".into(),
-        default_temperature: 0.0,
-        context_window: 200_000,
-        compaction_threshold: 0.8,
-        compaction_summary_cap_tokens: 2_000,
-        hidden: false,
-    }
+    build(AgentBlueprint {
+        slug: "indexer",
+        title: "Workspace Indexer (stub)",
+        description: "Reference custom agent — read-only, returns a stub response.",
+        cacheable: INDEXER_CACHEABLE.to_owned(),
+        dynamic: Arc::new(|_| String::new()),
+        tool_allowlist: TOOL_ALLOWLIST,
+        model_id: "anthropic/claude-3.5-haiku",
+    })
 }

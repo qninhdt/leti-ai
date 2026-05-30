@@ -7,7 +7,7 @@
 //! stays bounded. Phase-08 may upgrade to `tiktoken-rs` if accuracy proves
 //! insufficient — the trait shape is stable.
 
-use crate::projection::{LlmMessage, LlmRole};
+use crate::projection::LlmMessage;
 
 /// Rough chars-per-token used by the heuristic. 4 is the OpenAI tokenizer
 /// rule of thumb across English + code; claw-code uses the same constant.
@@ -24,9 +24,6 @@ pub fn estimate_message_tokens(msg: &LlmMessage) -> usize {
     }
     for c in &msg.tool_calls {
         chars += c.name.len() + c.args_json.len();
-    }
-    if matches!(msg.role, LlmRole::Tool) {
-        // tool results: id is small; content already counted above
     }
     (chars / CHARS_PER_TOKEN).max(1)
 }

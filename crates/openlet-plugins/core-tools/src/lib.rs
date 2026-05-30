@@ -1,5 +1,6 @@
-//! `core-tools` plugin — registers the eight built-in tools (read,
-//! list, glob, grep, write, edit, bash, todo) through the public
+//! `core-tools` plugin — registers the built-in tools (read, list,
+//! glob, grep, write, edit, bash, todo, ask_user, enter_plan_mode,
+//! exit_plan_mode, subagent_task, task_status) through the public
 //! `register_tool` extension point. Closes the amendment §5 dogfood
 //! test: if MVP can't ship its own tools through the plugin API, the
 //! API is wrong.

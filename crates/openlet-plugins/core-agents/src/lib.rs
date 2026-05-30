@@ -3,6 +3,7 @@
 //! plugin surface so external Cloud agents can extend or replace them
 //! without forking core.
 
+mod builder;
 mod general;
 mod indexer;
 mod plan;

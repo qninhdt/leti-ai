@@ -1,7 +1,8 @@
 import React from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 
 import { theme } from "../theme/index.js";
+import { useListNavigation } from "../hooks/use-list-navigation.js";
 
 import type { AgentDto } from "../api/types.js";
 
@@ -12,17 +13,11 @@ export interface AgentPickerProps {
 }
 
 export function AgentPicker(props: AgentPickerProps): React.ReactElement {
-  const [index, setIndex] = React.useState(0);
-
-  useInput((_input, key) => {
-    if (key.escape) return props.onCancel();
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1));
-    if (key.downArrow) setIndex((i) => Math.min(props.agents.length - 1, i + 1));
-    if (key.return) {
-      const choice = props.agents[index];
-      if (choice) props.onSelect(choice.id);
-    }
-  });
+  const { index } = useListNavigation(
+    props.agents,
+    (agent) => props.onSelect(agent.id),
+    props.onCancel,
+  );
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.border.active} paddingX={1}>

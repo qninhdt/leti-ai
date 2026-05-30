@@ -64,9 +64,7 @@ function renderToken(tok: Token, idx: number): React.ReactElement {
           borderStyle="round"
           borderColor={theme.code.border}
         >
-          {(t.lang ? [t.lang] : []).map((lang, j) => (
-            <Text key={`lang-${j}`} color={theme.code.border}>{lang}</Text>
-          ))}
+          {t.lang && <Text color={theme.code.border}>{t.lang}</Text>}
           <Text color={theme.text.primary}>{t.text}</Text>
         </Box>
       );

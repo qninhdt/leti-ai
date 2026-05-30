@@ -102,8 +102,9 @@ pub struct FinalizedRegistry {
 ///
 /// `configs` maps `manifest.id -> per-plugin config block`. Plugins
 /// without an entry receive `serde_json::Value::Null`. The first
-/// plugin to register a provider wins; subsequent registrations log a
-/// warning (provider conflict surfaces as `PluginError::Runtime` here).
+/// plugin to register a provider wins; subsequent registrations are
+/// ignored with a logged warning (no error — provider conflicts are
+/// non-fatal at boot).
 pub async fn install_all(
     plugins: Vec<Arc<dyn Plugin>>,
     configs: &std::collections::HashMap<String, serde_json::Value>,

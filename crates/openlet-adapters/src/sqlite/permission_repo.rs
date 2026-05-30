@@ -51,6 +51,11 @@ pub struct SqlitePermissionRepo {
     pool: SqlitePool,
 }
 
+/// Map a `sqlx::Error` to `PermissionError::Io` carrying its textual form.
+fn map_io(e: sqlx::Error) -> PermissionError {
+    PermissionError::Io(e.to_string())
+}
+
 impl SqlitePermissionRepo {
     #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
@@ -77,7 +82,7 @@ impl SqlitePermissionRepo {
         .bind(now)
         .execute(&self.pool)
         .await
-        .map_err(|e| PermissionError::Io(e.to_string()))?;
+        .map_err(map_io)?;
         Ok(())
     }
 
@@ -92,7 +97,7 @@ impl SqlitePermissionRepo {
         .bind(session_id.to_string())
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| PermissionError::Io(e.to_string()))?;
+        .map_err(map_io)?;
 
         rows.into_iter()
             .map(|(ask, perm, dec)| {

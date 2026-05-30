@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
 use dashmap::DashMap;
 use futures::StreamExt;
 use rust_decimal::Decimal;
@@ -27,7 +26,7 @@ use crate::runtime::processor::{Processor, ProcessorState};
 use crate::runtime::prompt::compose_system_prompt;
 use crate::runtime::turn_stream::StreamingPartTracker;
 use crate::types::event::{AgentEvent, Usage};
-use crate::types::message::{Message, MessageId, Role};
+use crate::types::message::{MessageId, Role};
 use crate::types::session::SessionId;
 
 const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -329,24 +328,13 @@ impl ConversationRuntime {
         &self,
         session_id: SessionId,
     ) -> Result<MessageId, CoreError> {
-        let msg = Message {
-            id: MessageId::new(),
+        crate::runtime::persist::append_message_with_event(
+            &self.memory,
+            &self.events,
             session_id,
-            role: Role::Assistant,
-            created_at: Utc::now(),
-        };
-        let id = self.memory.append_message(session_id, msg).await?;
-        self.events
-            .publish(
-                AgentEvent::MessageCreated {
-                    session_id,
-                    message_id: id,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await?;
-        Ok(id)
+            Role::Assistant,
+        )
+        .await
     }
 
     async fn publish_error(&self, session_id: SessionId, err: &CoreError) {

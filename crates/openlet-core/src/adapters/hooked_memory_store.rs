@@ -69,6 +69,13 @@ impl MemoryStore for HookedMemoryStore {
         self.inner.create_session(agent_id, parent).await
     }
 
+    async fn create_session_with_meta(
+        &self,
+        meta: SessionMeta,
+    ) -> Result<SessionId, MemoryError> {
+        self.inner.create_session_with_meta(meta).await
+    }
+
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {
         self.inner.get_session(session).await
     }

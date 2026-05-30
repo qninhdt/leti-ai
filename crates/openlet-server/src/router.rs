@@ -7,9 +7,7 @@
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
@@ -78,7 +76,7 @@ impl RouterBuilder {
         self
     }
 
-    /// `POST /v1/session/:id/message`.
+    /// `POST /v1/session/:id/prompt_async`.
     #[must_use]
     pub fn with_message_routes(mut self) -> Self {
         self.inner = self.inner.routes(routes!(message::prompt_async));
@@ -132,17 +130,14 @@ impl RouterBuilder {
     }
 
     /// `POST /v1/sessions/:id/attachments` — multipart upload. Body is
-    /// capped at 25MB via a route-specific `RequestBodyLimitLayer` that
-    /// disables the global 2MB cap (closes F3.1).
+    /// capped at 25MB via [`attachments::body_limit_layer`], a
+    /// route-specific `RequestBodyLimitLayer` that disables the global
+    /// 2MB cap (closes F3.1).
     #[must_use]
     pub fn with_attachment_routes(mut self) -> Self {
         let layered = OpenApiRouter::with_openapi(ApiDoc::openapi())
             .routes(routes!(attachments::upload))
-            .layer(
-                ServiceBuilder::new()
-                    .layer(DefaultBodyLimit::disable())
-                    .layer(RequestBodyLimitLayer::new(attachments::MAX_UPLOAD_BYTES)),
-            );
+            .layer(attachments::body_limit_layer());
         self.inner = self.inner.merge(layered);
         self
     }

@@ -1,6 +1,6 @@
 //! Capability-gating tests for [`PluginContext`].
 //!
-//! Slice 3a's macro generates 14 `on_*` registration methods. Each
+//! Slice 3a's macro generates 15 `on_*` registration methods. Each
 //! must reject if the manifest doesn't declare the matching
 //! `Capability::Hook(_)`. Same for `register_tool` / `register_provider`
 //! gated on `Capability::Tool` / `Capability::Provider`. These tests lock

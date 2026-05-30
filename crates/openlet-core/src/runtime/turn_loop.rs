@@ -94,6 +94,28 @@ pub struct LoopOutcome {
     pub final_assistant_message_id: MessageId,
 }
 
+/// Build a `Halted` loop outcome from the current step counter and the
+/// last real assistant message id. Falls back to a fresh id when no
+/// model turn has run yet (e.g. a `before_turn` hook halts turn 0).
+fn halted_outcome(steps: usize, last_assistant_id: Option<MessageId>) -> LoopOutcome {
+    LoopOutcome {
+        steps,
+        finish_reason: FinishReason::Halted,
+        final_assistant_message_id: last_assistant_id.unwrap_or_default(),
+    }
+}
+
+/// Signal returned by `run_compaction` telling `run_loop` how to proceed
+/// after a compaction step. Hard failures propagate as `Err` instead.
+enum CompactionFlow {
+    /// Restart the loop iteration (compaction ran, or the `Before` hook
+    /// halted it without compacting). Does not burn a model step.
+    Continue,
+    /// An `After`-phase plugin set `autocontinue = false`; pause the loop
+    /// by returning a `Halted` outcome.
+    Halt,
+}
+
 impl ConversationRuntime {
     /// Drive `run_turn` repeatedly until the model emits `end_turn` (or
     /// we hit `max_steps`). Each tool-use turn dispatches the requested
@@ -106,10 +128,7 @@ impl ConversationRuntime {
         mut input: TurnInput,
         cancel: CancellationToken,
     ) -> Result<LoopOutcome, CoreError> {
-        use crate::runtime::compaction::{
-            CompactDecision, append_compaction_part, append_synthetic_request, should_compact,
-            superseded_messages,
-        };
+        use crate::runtime::compaction::{CompactDecision, should_compact};
         let session_id = input.session_id;
         let mut last_assistant_id: Option<MessageId> = None;
         let mut last_actual_tokens: Option<usize> = None;
@@ -128,170 +147,27 @@ impl ConversationRuntime {
             // compaction-induced turn to avoid recursion.
             if let Some(agent) = loop_ctx.agent.as_ref() {
                 if !compacted_this_loop {
-                    let decision = should_compact(&input.messages, agent, last_actual_tokens);
-                    if let CompactDecision::Run { keep } = decision {
+                    if let CompactDecision::Run { keep } =
+                        should_compact(&input.messages, agent, last_actual_tokens)
+                    {
                         compacted_this_loop = true;
-                        let pre_msg_count = input.messages.len();
-                        // OnCompaction Before — Stop halts compaction; the
-                        // outer loop continues with the un-compacted projection.
-                        // `autocontinue` is set to its default for completeness;
-                        // the toggle is only honored on the After-phase dispatch.
-                        let before_ctx = OnCompactionCtx {
-                            session_id: Some(session_id),
-                            phase: CompactionPhase::Before,
-                            message_count: pre_msg_count,
-                            autocontinue: true,
-                        };
-                        let before_outcome =
-                            dispatch(&loop_ctx.hook_chains.on_compaction, before_ctx).await;
-                        publish_fault_if_any(&loop_ctx.events, Some(session_id), &before_outcome)
-                            .await;
-                        if matches!(
-                            before_outcome,
-                            DispatchOutcome::Stopped(_) | DispatchOutcome::Denied { .. }
-                        ) {
-                            continue;
-                        }
-                        // Determine which existing messages will be superseded.
-                        let messages = memory.list_messages(session_id).await?;
-                        let mut superseded = superseded_messages(&messages, keep);
-                        let original_tokens =
-                            crate::runtime::token_estimate::estimate_conversation_tokens(
-                                &input.messages,
-                            ) as u32;
-                        // Append synthetic user message asking for summary.
-                        // The synthetic id is added to `superseded` so the
-                        // projection substitutes the summary in its place
-                        // — otherwise the next turn would see the literal
-                        // "Summarize the conversation history above" prompt
-                        // it never issued.
-                        let synth_id =
-                            append_synthetic_request(memory, &loop_ctx.events, session_id).await?;
-                        // Build a one-shot compaction projection and run a
-                        // turn. The result text becomes Part::Compaction.
-                        let mut compact_input = input.clone();
-                        compact_input.messages =
-                            crate::runtime::compaction::build_compaction_projection(
-                                &input.messages,
+                        match self
+                            .run_compaction(
+                                memory,
+                                &loop_ctx,
+                                agent,
                                 keep,
-                            );
-                        compact_input.tools = Vec::new();
-                        // If the compaction turn fails or is cancelled, the
-                        // synthetic "Summarize the conversation above" message
-                        // remains in storage as a real user turn. Roll it back
-                        // by superseding it in a no-op compaction part rather
-                        // than leaving it visible to subsequent projections.
-                        let outcome = match self.run_turn(compact_input, cancel.clone()).await {
-                            Ok(o) => o,
-                            Err(e) => {
-                                let _ = append_compaction_part(
-                                    memory,
-                                    &loop_ctx.events,
-                                    session_id,
-                                    String::new(),
-                                    vec![synth_id],
-                                    0,
-                                )
-                                .await;
-                                return Err(e);
-                            }
-                        };
-                        // Drain the freshly produced assistant text into a Compaction part.
-                        let summary = collect_assistant_text(
-                            memory,
-                            session_id,
-                            outcome.assistant_message_id,
-                        )
-                        .await?;
-                        // Refuse to persist an empty summary — that would
-                        // supersede older messages with a blank string and
-                        // silently lose history. Roll back the synthetic
-                        // request and the empty assistant turn, then bubble
-                        // the failure up so the caller can retry.
-                        if summary.trim().is_empty() {
-                            let _ = append_compaction_part(
-                                memory,
-                                &loop_ctx.events,
-                                session_id,
-                                String::new(),
-                                vec![synth_id, outcome.assistant_message_id],
-                                0,
+                                &mut input,
+                                &mut last_actual_tokens,
+                                cancel.clone(),
                             )
-                            .await;
-                            return Err(CoreError::ContextOverflowAfterCompaction);
-                        }
-                        superseded.push(synth_id);
-                        // The compaction-turn's assistant message holds the
-                        // verbatim summary as Part::Text; substitute it via
-                        // the Compaction part on subsequent projections so
-                        // the model doesn't see the summary twice.
-                        superseded.push(outcome.assistant_message_id);
-                        if !superseded.is_empty() {
-                            let _comp_id = append_compaction_part(
-                                memory,
-                                &loop_ctx.events,
-                                session_id,
-                                summary,
-                                superseded,
-                                original_tokens,
-                            )
-                            .await?;
-                        }
-                        // Re-project so the next turn sees the summary in
-                        // place of the compacted messages.
-                        input.messages = project_session_messages(memory, session_id).await?;
-                        // Reset provider-actual anchor — last value referred
-                        // to the pre-compaction prompt and is now stale.
-                        last_actual_tokens = None;
-                        // OnCompaction After — observation; plugins emit
-                        // metrics or post-process the new projection. Stop
-                        // does not unwind the compaction (already durable).
-                        // A plugin may also set `autocontinue = false` via
-                        // Replace to pause the loop instead of driving the
-                        // synthetic resume turn — see handling below.
-                        let after_ctx = OnCompactionCtx {
-                            session_id: Some(session_id),
-                            phase: CompactionPhase::After,
-                            message_count: input.messages.len(),
-                            autocontinue: true,
-                        };
-                        let after_outcome =
-                            dispatch(&loop_ctx.hook_chains.on_compaction, after_ctx).await;
-                        publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome)
-                            .await;
-                        // Honor the autocontinue toggle: when a plugin
-                        // returns Replace with autocontinue=false from the
-                        // After phase, skip the synthetic resume turn,
-                        // signal the pause via SessionStatus::Idle, and
-                        // exit the loop. SessionStatus::Idle is used as a
-                        // proxy until a dedicated Paused variant lands.
-                        if let DispatchOutcome::Completed(ref ctx) = after_outcome {
-                            if !ctx.autocontinue {
-                                let _ = loop_ctx
-                                    .events
-                                    .publish(
-                                        AgentEvent::SessionStatus {
-                                            session_id,
-                                            status: crate::types::session::SessionStatus::Idle,
-                                            at: Utc::now(),
-                                        },
-                                        Persistence::Durable,
-                                    )
-                                    .await;
-                                return Ok(LoopOutcome {
-                                    steps: model_steps,
-                                    finish_reason: FinishReason::Halted,
-                                    final_assistant_message_id: last_assistant_id
-                                        .unwrap_or_default(),
-                                });
+                            .await?
+                        {
+                            CompactionFlow::Continue => continue,
+                            CompactionFlow::Halt => {
+                                return Ok(halted_outcome(model_steps, last_assistant_id));
                             }
                         }
-                        // Post-compaction overflow check (amendment §P).
-                        let post = should_compact(&input.messages, agent, None);
-                        if matches!(post, CompactDecision::Run { .. }) {
-                            return Err(CoreError::ContextOverflowAfterCompaction);
-                        }
-                        continue;
                     }
                 }
             }
@@ -307,11 +183,7 @@ impl ConversationRuntime {
                 match dispatch(&loop_ctx.hook_chains.before_turn, before_ctx).await {
                     DispatchOutcome::Completed(_) => {}
                     DispatchOutcome::Stopped(_) => {
-                        return Ok(LoopOutcome {
-                            steps: model_steps,
-                            finish_reason: FinishReason::Halted,
-                            final_assistant_message_id: last_assistant_id.unwrap_or_default(),
-                        });
+                        return Ok(halted_outcome(model_steps, last_assistant_id));
                     }
                     DispatchOutcome::Denied {
                         reason,
@@ -327,11 +199,7 @@ impl ConversationRuntime {
                             plugin_fault.as_ref(),
                         )
                         .await;
-                        return Ok(LoopOutcome {
-                            steps: model_steps,
-                            finish_reason: FinishReason::Halted,
-                            final_assistant_message_id: last_assistant_id.unwrap_or_default(),
-                        });
+                        return Ok(halted_outcome(model_steps, last_assistant_id));
                     }
                 }
             }
@@ -484,16 +352,177 @@ impl ConversationRuntime {
             }
 
             // Append a tool-role message holding all results.
-            let tool_msg_id =
-                append_tool_message(memory, &loop_ctx.events, session_id, &results).await?;
+            append_tool_message(memory, &loop_ctx.events, session_id, &results).await?;
             // Project all messages so far into the next LLM input.
             input.messages = project_session_messages(memory, session_id).await?;
-            let _ = tool_msg_id;
         }
         Ok(LoopOutcome {
             steps: loop_ctx.max_steps,
             finish_reason: FinishReason::MaxSteps,
             final_assistant_message_id: last_assistant_id.unwrap_or_default(),
         })
+    }
+
+    /// Run one compaction step: dispatch the `OnCompaction` Before/After
+    /// hooks, drive a one-shot summarization turn, persist the summary as
+    /// `Part::Compaction`, and re-project. Extracted from `run_loop` to
+    /// keep the loop body focused on control flow.
+    ///
+    /// Returns [`CompactionFlow`] telling the loop whether to `continue`
+    /// or halt; hard failures (turn error, empty/overflowing summary)
+    /// propagate as `Err`.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_compaction(
+        &self,
+        memory: &Arc<dyn MemoryStore>,
+        loop_ctx: &LoopContext,
+        agent: &crate::agent::AgentDefinition,
+        keep: usize,
+        input: &mut TurnInput,
+        last_actual_tokens: &mut Option<usize>,
+        cancel: CancellationToken,
+    ) -> Result<CompactionFlow, CoreError> {
+        use crate::runtime::compaction::{
+            CompactDecision, append_compaction_part, append_synthetic_request,
+            build_compaction_projection, should_compact, superseded_messages,
+        };
+        use crate::runtime::token_estimate::estimate_conversation_tokens;
+
+        let session_id = input.session_id;
+        let pre_msg_count = input.messages.len();
+        // OnCompaction Before — Stop halts compaction; the outer loop
+        // continues with the un-compacted projection. `autocontinue` is
+        // set to its default for completeness; the toggle is only honored
+        // on the After-phase dispatch.
+        let before_ctx = OnCompactionCtx {
+            session_id: Some(session_id),
+            phase: CompactionPhase::Before,
+            message_count: pre_msg_count,
+            autocontinue: true,
+        };
+        let before_outcome = dispatch(&loop_ctx.hook_chains.on_compaction, before_ctx).await;
+        publish_fault_if_any(&loop_ctx.events, Some(session_id), &before_outcome).await;
+        if matches!(
+            before_outcome,
+            DispatchOutcome::Stopped(_) | DispatchOutcome::Denied { .. }
+        ) {
+            return Ok(CompactionFlow::Continue);
+        }
+        // Determine which existing messages will be superseded.
+        let messages = memory.list_messages(session_id).await?;
+        let mut superseded = superseded_messages(&messages, keep);
+        let original_tokens = estimate_conversation_tokens(&input.messages) as u32;
+        // Append synthetic user message asking for summary. The synthetic
+        // id is added to `superseded` so the projection substitutes the
+        // summary in its place — otherwise the next turn would see the
+        // literal "Summarize the conversation history above" prompt it
+        // never issued.
+        let synth_id = append_synthetic_request(memory, &loop_ctx.events, session_id).await?;
+        // Build a one-shot compaction projection and run a turn. The
+        // result text becomes Part::Compaction.
+        let mut compact_input = input.clone();
+        compact_input.messages = build_compaction_projection(&input.messages, keep);
+        compact_input.tools = Vec::new();
+        // If the compaction turn fails or is cancelled, the synthetic
+        // "Summarize the conversation above" message remains in storage as
+        // a real user turn. Roll it back by superseding it in a no-op
+        // compaction part rather than leaving it visible to subsequent
+        // projections.
+        let outcome = match self.run_turn(compact_input, cancel).await {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = append_compaction_part(
+                    memory,
+                    &loop_ctx.events,
+                    session_id,
+                    String::new(),
+                    vec![synth_id],
+                    0,
+                )
+                .await;
+                return Err(e);
+            }
+        };
+        // Drain the freshly produced assistant text into a Compaction part.
+        let summary =
+            collect_assistant_text(memory, session_id, outcome.assistant_message_id).await?;
+        // Refuse to persist an empty summary — that would supersede older
+        // messages with a blank string and silently lose history. Roll
+        // back the synthetic request and the empty assistant turn, then
+        // bubble the failure up so the caller can retry.
+        if summary.trim().is_empty() {
+            let _ = append_compaction_part(
+                memory,
+                &loop_ctx.events,
+                session_id,
+                String::new(),
+                vec![synth_id, outcome.assistant_message_id],
+                0,
+            )
+            .await;
+            return Err(CoreError::ContextOverflowAfterCompaction);
+        }
+        superseded.push(synth_id);
+        // The compaction-turn's assistant message holds the verbatim
+        // summary as Part::Text; substitute it via the Compaction part on
+        // subsequent projections so the model doesn't see the summary twice.
+        superseded.push(outcome.assistant_message_id);
+        let _comp_id = append_compaction_part(
+            memory,
+            &loop_ctx.events,
+            session_id,
+            summary,
+            superseded,
+            original_tokens,
+        )
+        .await?;
+        // Re-project so the next turn sees the summary in place of the
+        // compacted messages.
+        input.messages = project_session_messages(memory, session_id).await?;
+        // Reset provider-actual anchor — last value referred to the
+        // pre-compaction prompt and is now stale.
+        *last_actual_tokens = None;
+        // OnCompaction After — observation; plugins emit metrics or
+        // post-process the new projection. Stop does not unwind the
+        // compaction (already durable). A plugin may also set
+        // `autocontinue = false` via Replace to pause the loop instead of
+        // driving the synthetic resume turn — see handling below.
+        let after_ctx = OnCompactionCtx {
+            session_id: Some(session_id),
+            phase: CompactionPhase::After,
+            message_count: input.messages.len(),
+            autocontinue: true,
+        };
+        let after_outcome = dispatch(&loop_ctx.hook_chains.on_compaction, after_ctx).await;
+        publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome).await;
+        // Honor the autocontinue toggle: when a plugin returns Replace
+        // with autocontinue=false from the After phase, skip the synthetic
+        // resume turn, signal the pause via SessionStatus::Idle, and exit
+        // the loop. SessionStatus::Idle is used as a proxy until a
+        // dedicated Paused variant lands.
+        if let DispatchOutcome::Completed(ref ctx) = after_outcome {
+            if !ctx.autocontinue {
+                let _ = loop_ctx
+                    .events
+                    .publish(
+                        AgentEvent::SessionStatus {
+                            session_id,
+                            status: crate::types::session::SessionStatus::Idle,
+                            at: Utc::now(),
+                        },
+                        Persistence::Durable,
+                    )
+                    .await;
+                return Ok(CompactionFlow::Halt);
+            }
+        }
+        // Post-compaction overflow check (amendment §P).
+        if matches!(
+            should_compact(&input.messages, agent, None),
+            CompactDecision::Run { .. }
+        ) {
+            return Err(CoreError::ContextOverflowAfterCompaction);
+        }
+        Ok(CompactionFlow::Continue)
     }
 }

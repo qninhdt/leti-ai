@@ -7,16 +7,14 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
-
-use crate::adapters::event_sink::{EventSink, Persistence};
+use crate::adapters::event_sink::EventSink;
 use crate::adapters::memory_store::MemoryStore;
 use crate::error::CoreError;
 use crate::projection::LlmMessage;
 use crate::runtime::doom_guard::{ToolCallSig, TurnSummary as DoomTurnSummary};
+use crate::runtime::persist::{append_message_with_event, append_part_with_event};
 use crate::tools::{ToolDispatchResult, ToolInvocation};
-use crate::types::event::AgentEvent;
-use crate::types::message::{Message, MessageId, Role};
+use crate::types::message::{MessageId, Role};
 use crate::types::part::{Part, PartId};
 use crate::types::session::SessionId;
 
@@ -76,54 +74,26 @@ pub(super) async fn append_tool_message(
     session_id: SessionId,
     results: &[ToolDispatchResult],
 ) -> Result<MessageId, CoreError> {
-    let msg = Message {
-        id: MessageId::new(),
-        session_id,
-        role: Role::Tool,
-        created_at: Utc::now(),
-    };
-    let mid = memory.append_message(session_id, msg).await?;
-    events
-        .publish(
-            AgentEvent::MessageCreated {
-                session_id,
-                message_id: mid,
-                at: Utc::now(),
-            },
-            Persistence::Durable,
-        )
-        .await?;
+    let mid = append_message_with_event(memory, events, session_id, Role::Tool).await?;
 
     for r in results {
-        let part_id = PartId::new();
         let part = match &r.outcome {
             Ok(value) => Part::ToolResult {
-                id: part_id,
+                id: PartId::new(),
                 call_id: r.call_id.clone(),
                 ok: true,
                 text: Some(value.to_string()),
                 error: None,
             },
             Err(err) => Part::ToolResult {
-                id: part_id,
+                id: PartId::new(),
                 call_id: r.call_id.clone(),
                 ok: false,
                 text: None,
                 error: Some(err.to_string()),
             },
         };
-        memory.append_part(mid, part).await?;
-        events
-            .publish(
-                AgentEvent::PartCreated {
-                    session_id,
-                    message_id: mid,
-                    part_id,
-                    at: Utc::now(),
-                },
-                Persistence::Durable,
-            )
-            .await?;
+        append_part_with_event(memory, events, session_id, mid, part).await?;
     }
     Ok(mid)
 }
@@ -155,8 +125,8 @@ pub(super) async fn project_session_messages(
 /// Build a `TurnSummary` for the doom-guard from the assistant message just
 /// produced + the freshly-dispatched tool results. `had_text_output` reflects
 /// any non-empty `Part::Text` body; `had_successful_writes` is any tool result
-/// with `ok=true` from a tool the registry marks `parallel_safe=false` (write
-/// tools serialize). Tool-call signatures use `ToolCallSig::new` over the
+/// with `ok=true` from a tool NOT in the read-only set (see
+/// [`is_read_only_tool`]). Tool-call signatures use `ToolCallSig::new` over the
 /// invocation's parsed args.
 pub(super) async fn build_doom_summary(
     memory: &Arc<dyn MemoryStore>,

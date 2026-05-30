@@ -85,34 +85,26 @@ impl Tool for TaskStatusTool {
     }
 
     async fn run(&self, _ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
-        let uuid = match Uuid::parse_str(&input.task_id) {
-            Ok(u) => u,
-            Err(_) => {
-                return Ok(TaskStatusOutput {
-                    task_id: input.task_id,
-                    status: "not_found".to_string(),
-                    output_so_far: String::new(),
-                    cost_usd: None,
-                    finished: true,
-                    error: None,
-                });
-            }
+        let not_found = |task_id: String| TaskStatusOutput {
+            task_id,
+            status: "not_found".to_string(),
+            output_so_far: String::new(),
+            cost_usd: None,
+            finished: true,
+            error: None,
+        };
+
+        let Ok(uuid) = Uuid::parse_str(&input.task_id) else {
+            return Ok(not_found(input.task_id));
         };
         let id = TaskId(uuid);
         let Some(snap) = self.registry.poll_async(id).await else {
-            return Ok(TaskStatusOutput {
-                task_id: input.task_id,
-                status: "not_found".to_string(),
-                output_so_far: String::new(),
-                cost_usd: None,
-                finished: true,
-                error: None,
-            });
+            return Ok(not_found(input.task_id));
         };
         let cost = if snap.cost_usd.is_zero() {
             None
         } else {
-            Some(format!("{:.4}", snap.cost_usd))
+            Some(crate::runtime::cost::format_usd(snap.cost_usd))
         };
         let error = match &snap.status {
             crate::runtime::subagent::TaskStatus::Failed(msg) => Some(msg.clone()),

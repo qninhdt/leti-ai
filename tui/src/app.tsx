@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, useApp } from "ink";
 
 import { ChatView } from "./views/chat-view.js";
 import { AgentPicker } from "./views/agent-picker.js";
@@ -7,13 +7,14 @@ import { SessionPicker } from "./views/session-picker.js";
 import { PermissionModal } from "./views/permission-modal.js";
 import { HelpView } from "./views/help-view.js";
 import { PluginsView } from "./views/plugins-view.js";
-import { commands, complete, findCommand } from "./commands/registry.js";
+import { complete, findCommand } from "./commands/registry.js";
 import { connectSse } from "./api/sse.js";
 import { useStore } from "./store/index.js";
-import { theme } from "./theme/index.js";
 import { PromptHistory } from "./hooks/use-prompt-history.js";
+import { randomId } from "./utils/id.js";
 
 import type { OpenletClient } from "./api/client.js";
+import type { CreateMessageDto } from "./api/types.js";
 
 export interface AppProps {
   client: OpenletClient;
@@ -41,6 +42,22 @@ export function App(props: AppProps): React.ReactElement {
   }, [props.baseUrl, props.client, props.token, store.activeSessionId]);
 
   const submit = async (text: string) => {
+    // Guard: empty/whitespace-only buffer never reaches the server. An
+    // empty Enter would otherwise POST an empty-text prompt and burn a
+    // turn. Slash-commands are still allowed to be bare (e.g. "/help").
+    if (!text.trim()) return;
+    try {
+      store.setClientError(null);
+      await runSubmit(text);
+    } catch (err) {
+      // submit() is invoked from PromptEditor's synchronous useInput
+      // handler, so a rejected promise here would be unhandled (and can
+      // crash the process). Surface it as a banner instead.
+      store.setClientError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const runSubmit = async (text: string) => {
     if (text.startsWith("/")) {
       const [name] = text.slice(1).split(/\s+/);
       const cmd = findCommand(name ?? "");
@@ -68,16 +85,12 @@ export function App(props: AppProps): React.ReactElement {
             // entry path purely in-conversation so the operator's
             // intent is auditable in the message log.
             if (!store.activeSessionId) return;
-            await props.client.promptAsync(store.activeSessionId, {
-              parts: [
-                {
-                  id: cryptoRandomId(),
-                  message_id: "",
-                  kind: "text",
-                  text: "Please enter plan mode now using the enter_plan_mode tool, then gather context and produce a plan via exit_plan_mode.",
-                },
-              ],
-            });
+            await props.client.promptAsync(
+              store.activeSessionId,
+              textPrompt(
+                "Please enter plan mode now using the enter_plan_mode tool, then gather context and produce a plan via exit_plan_mode.",
+              ),
+            );
           },
           exit,
         });
@@ -87,18 +100,22 @@ export function App(props: AppProps): React.ReactElement {
     if (!store.activeSessionId) return;
     props.history.push(text);
     setHistoryIdx(null);
-    await props.client.promptAsync(store.activeSessionId, { text });
+    await props.client.promptAsync(store.activeSessionId, textPrompt(text));
   };
 
+  // Bind to a const so TS keeps the discriminated-union narrowing inside
+  // the JSX closures below (a `store.view.askId` access would re-widen).
+  const view = store.view;
   return (
     <Box flexDirection="column">
-      {store.view.kind === "chat" && (
+      {view.kind === "chat" && (
         <ChatView
           conn={store.conn.status}
           session={store.activeSessionId ? store.sessions[store.activeSessionId] ?? null : null}
           agent={store.agents.find((a) => a.id === activeAgentId(store)) ?? null}
           messages={store.activeSessionId ? store.messages[store.activeSessionId] ?? [] : []}
           pluginErrors={store.pluginErrors}
+          clientError={store.clientError}
           planMode={store.activeSessionId ? !!store.planMode[store.activeSessionId] : false}
           promptValue={prompt}
           setPromptValue={setPrompt}
@@ -111,7 +128,7 @@ export function App(props: AppProps): React.ReactElement {
           }}
         />
       )}
-      {store.view.kind === "agent_picker" && (
+      {view.kind === "agent_picker" && (
         <AgentPicker
           agents={store.agents}
           onSelect={async (id) => {
@@ -123,7 +140,7 @@ export function App(props: AppProps): React.ReactElement {
           onCancel={() => store.setView({ kind: "chat" })}
         />
       )}
-      {store.view.kind === "session_picker" && (
+      {view.kind === "session_picker" && (
         <SessionPicker
           sessions={Object.values(store.sessions)}
           onSelect={(id) => {
@@ -133,11 +150,11 @@ export function App(props: AppProps): React.ReactElement {
           onCancel={() => store.setView({ kind: "chat" })}
         />
       )}
-      {store.view.kind === "permission" && (
+      {view.kind === "permission" && (
         <PermissionModal
-          request={store.pendingPermissions[store.view.askId]!}
+          request={store.pendingPermissions[view.askId]!}
           onResolve={async (reply) => {
-            await props.client.replyPermission(store.view.kind === "permission" ? store.view.askId : "", {
+            await props.client.replyPermission(view.askId, {
               reply: reply.decision,
               pattern: reply.pattern ?? null,
               feedback: reply.feedback ?? null,
@@ -146,11 +163,8 @@ export function App(props: AppProps): React.ReactElement {
           }}
         />
       )}
-      {store.view.kind === "help" && <HelpView />}
-      {store.view.kind === "plugins" && <PluginsView plugins={store.plugins} />}
-      {commands.length === 0 && (
-        <Text color={theme.text.muted}>(no commands registered)</Text>
-      )}
+      {view.kind === "help" && <HelpView />}
+      {view.kind === "plugins" && <PluginsView plugins={store.plugins} />}
     </Box>
   );
 }
@@ -190,12 +204,17 @@ function navigateHistory(
   setPrompt(list[next]!);
 }
 
-// crypto.randomUUID is Node 19+; fall back to a simple unique-enough
-// ID for older runtimes. The id is consumed by the server's part
-// validation and never leaves the request, so collision risk on
-// fallback is acceptable.
-function cryptoRandomId(): string {
-  const g = globalThis as { crypto?: { randomUUID?: () => string } };
-  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
-  return `tui-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+// Build a single text-part user message. The part id is client-generated
+// (see utils/id.ts) and consumed by the server's part validation.
+function textPrompt(text: string): CreateMessageDto {
+  return {
+    parts: [
+      {
+        id: randomId(),
+        message_id: "",
+        kind: "text",
+        text,
+      },
+    ],
+  };
 }

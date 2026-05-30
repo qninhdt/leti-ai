@@ -83,7 +83,7 @@ export interface CreateSessionDto {
 }
 
 export interface CreateMessageDto {
-  text: string;
+  parts: PartDto[];
 }
 
 export interface SetModeDto {
@@ -149,6 +149,8 @@ export type EventName =
   | "step.finished"
   | "permission.asked"
   | "permission.resolved"
+  | "plan_mode.entered"
+  | "plan_mode.exited"
   | "error"
   | "heartbeat"
   | "plugin.error";

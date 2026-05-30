@@ -5,7 +5,7 @@ import { complete, findCommand, commands } from "../src/commands/registry.js";
 describe("commands/registry", () => {
   it("exposes the eight required commands", () => {
     const names = commands.map((c) => c.name).sort();
-    expect(names).toEqual(["agents", "cancel", "danger", "help", "new", "plugins", "quit", "sessions"]);
+    expect(names).toEqual(["agents", "cancel", "danger", "help", "new", "plan", "plugins", "quit", "sessions"]);
   });
 
   it("findCommand resolves aliases", () => {

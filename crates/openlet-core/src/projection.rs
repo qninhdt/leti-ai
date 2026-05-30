@@ -171,14 +171,15 @@ fn collect_attachment_fallback_text(parts: &[Part], caps: ProjectionCaps) -> Str
                 if !buf.is_empty() {
                     buf.push('\n');
                 }
-                if caps.supports_document_input {
-                    buf.push_str(&format!("[document artifact {artifact_id} ({mime})]"));
-                } else if let Some(text) = extracted_text {
-                    buf.push_str(&format!(
-                        "[document artifact {artifact_id} ({mime})]\n{text}"
-                    ));
-                } else {
-                    buf.push_str(&format!("[document artifact {artifact_id} ({mime})]"));
+                buf.push_str(&format!("[document artifact {artifact_id} ({mime})]"));
+                // Inline the extracted text only when the provider can't
+                // ingest the document natively — otherwise the wire layer
+                // attaches the original bytes and the text would be noise.
+                if !caps.supports_document_input {
+                    if let Some(text) = extracted_text {
+                        buf.push('\n');
+                        buf.push_str(text);
+                    }
                 }
             }
             _ => {}

@@ -56,6 +56,11 @@ export interface State {
   plugins: PluginInfoDto[];
   pluginErrors: PluginErrorView[];
   pendingPermissions: Record<string, PermissionRequestDto>;
+  /// Last client-side error (failed prompt/command/session call). Surfaced
+  /// as a banner so an async failure in the non-async input handler is
+  /// visible to the user instead of becoming an unhandled rejection that
+  /// could crash the process. Cleared on the next successful submit.
+  clientError: string | null;
   /// Per-session plan-mode flag. Latched by `plan_mode_entered`,
   /// cleared by `plan_mode_exited`. The TUI reads this to render the
   /// banner and hint to the user that writes are blocked until exit.
@@ -68,6 +73,7 @@ export interface State {
   setPlugins: (plugins: PluginInfoDto[]) => void;
   setSessions: (sessions: SessionDto[]) => void;
   setActiveSession: (id: string | null) => void;
+  setClientError: (message: string | null) => void;
 }
 
 function emptyMessage(sessionId: string, messageId: string): MessageView {
@@ -106,6 +112,69 @@ function upsertPart(parts: PartView[], partId: string): { parts: PartView[]; ind
   return { parts: parts.concat(part), index: parts.length };
 }
 
+// Immutably replace the message at `index` within a session's list and
+// return the new top-level `messages` map. Every reducer branch that
+// mutates a single message routes through here.
+function withMessage(
+  messages: Record<string, MessageView[]>,
+  sessionId: string,
+  list: MessageView[],
+  index: number,
+  message: MessageView,
+): Record<string, MessageView[]> {
+  const next = list.slice();
+  next[index] = message;
+  return { ...messages, [sessionId]: next };
+}
+
+// Ensure the message + part exist, then apply `update` to that part.
+// Used by part_created (identity update) and part_delta (buffer append).
+function upsertPartInMessage(
+  messages: Record<string, MessageView[]>,
+  sessionId: string,
+  messageId: string,
+  partId: string,
+  update: (part: PartView) => PartView,
+): Record<string, MessageView[]> {
+  const list = messages[sessionId] ?? [];
+  const { list: withMsg, index: msgIdx } = getOrCreateMessage(list, sessionId, messageId);
+  const msg = withMsg[msgIdx]!;
+  const { parts, index: partIdx } = upsertPart(msg.parts, partId);
+  const nextParts = parts.slice();
+  nextParts[partIdx] = update(parts[partIdx]!);
+  return withMessage(messages, sessionId, withMsg, msgIdx, { ...msg, parts: nextParts });
+}
+
+// Apply `update` to an existing message looked up by id. Returns null
+// (no-op) when the message — or, via the updater, a referenced part —
+// cannot be found. Used by part_updated and step_finished.
+function updateMessageById(
+  messages: Record<string, MessageView[]>,
+  sessionId: string,
+  messageId: string,
+  update: (msg: MessageView) => MessageView | null,
+): Record<string, MessageView[]> | null {
+  const list = messages[sessionId] ?? [];
+  const idx = list.findIndex((m) => m.id === messageId);
+  if (idx < 0) return null;
+  const updated = update(list[idx]!);
+  return updated === null ? null : withMessage(messages, sessionId, list, idx, updated);
+}
+
+// Immutably replace a part within a message, looked up by id. Returns
+// null when the part is absent so callers can treat it as a no-op.
+function updatePartById(
+  msg: MessageView,
+  partId: string,
+  update: (part: PartView) => PartView,
+): MessageView | null {
+  const idx = msg.parts.findIndex((p) => p.id === partId);
+  if (idx < 0) return null;
+  const parts = msg.parts.slice();
+  parts[idx] = update(parts[idx]!);
+  return { ...msg, parts };
+}
+
 export const useStore = create<State>((set) => ({
   conn: { status: "idle", attempt: 0, lastEventId: null },
   sessions: {},
@@ -115,6 +184,7 @@ export const useStore = create<State>((set) => ({
   plugins: [],
   pluginErrors: [],
   pendingPermissions: {},
+  clientError: null,
   planMode: {},
   view: { kind: "chat" },
 
@@ -135,6 +205,7 @@ export const useStore = create<State>((set) => ({
       sessions: Object.fromEntries(sessions.map((s) => [s.id, s])),
     })),
   setActiveSession: (id) => set({ activeSessionId: id }),
+  setClientError: (message) => set({ clientError: message }),
 
   applyEvent: (ev) =>
     set((s) => {
@@ -162,71 +233,55 @@ export const useStore = create<State>((set) => ({
         }
 
         case "part_created": {
-          const list = s.messages[ev.session_id] ?? [];
-          const found = getOrCreateMessage(list, ev.session_id, ev.message_id);
-          const msg = found.list[found.index]!;
-          const upserted = upsertPart(msg.parts, ev.part_id);
-          const nextMsg: MessageView = { ...msg, parts: upserted.parts };
-          const nextList = found.list.slice();
-          nextList[found.index] = nextMsg;
-          return { messages: { ...s.messages, [ev.session_id]: nextList } };
+          // Create-only: an existing part is left untouched (identity update).
+          const messages = upsertPartInMessage(
+            s.messages,
+            ev.session_id,
+            ev.message_id,
+            ev.part_id,
+            (part) => part,
+          );
+          return { messages };
         }
 
         case "part_delta": {
-          const list = s.messages[ev.session_id] ?? [];
-          const found = getOrCreateMessage(list, ev.session_id, ev.message_id);
-          const msg = found.list[found.index]!;
-          const upserted = upsertPart(msg.parts, ev.part_id);
-          const part = upserted.parts[upserted.index]!;
-          const next: PartView = { ...part };
-          if (ev.delta_kind === "text") next.buffer = part.buffer + ev.delta;
-          else if (ev.delta_kind === "reasoning") next.reasoning_buffer = part.reasoning_buffer + ev.delta;
-          const nextParts = upserted.parts.slice();
-          nextParts[upserted.index] = next;
-          const nextMsg: MessageView = { ...msg, parts: nextParts };
-          const nextList = found.list.slice();
-          nextList[found.index] = nextMsg;
-          return { messages: { ...s.messages, [ev.session_id]: nextList } };
+          const messages = upsertPartInMessage(
+            s.messages,
+            ev.session_id,
+            ev.message_id,
+            ev.part_id,
+            (part) => {
+              if (ev.delta_kind === "text") return { ...part, buffer: part.buffer + ev.delta };
+              if (ev.delta_kind === "reasoning")
+                return { ...part, reasoning_buffer: part.reasoning_buffer + ev.delta };
+              return part;
+            },
+          );
+          return { messages };
         }
 
         case "part_updated": {
-          const list = s.messages[ev.session_id] ?? [];
-          const idx = list.findIndex((m) => m.id === ev.message_id);
-          if (idx < 0) return {};
-          const msg = list[idx]!;
-          const partIdx = msg.parts.findIndex((p) => p.id === ev.part_id);
-          if (partIdx < 0) return {};
-          const part = msg.parts[partIdx]!;
-          const next: PartView = {
-            ...part,
-            text: (part.text ?? "") + part.buffer,
-            buffer: "",
-            reasoning_buffer: "",
-            status: "complete",
-          };
-          const nextParts = msg.parts.slice();
-          nextParts[partIdx] = next;
-          const nextMsg: MessageView = { ...msg, parts: nextParts };
-          const nextList = list.slice();
-          nextList[idx] = nextMsg;
-          return { messages: { ...s.messages, [ev.session_id]: nextList } };
+          const messages = updateMessageById(s.messages, ev.session_id, ev.message_id, (msg) =>
+            updatePartById(msg, ev.part_id, (part) => ({
+              ...part,
+              text: (part.text ?? "") + part.buffer,
+              buffer: "",
+              reasoning_buffer: "",
+              status: "complete",
+            })),
+          );
+          return messages ? { messages } : {};
         }
 
         case "step_finished": {
-          const list = s.messages[ev.session_id] ?? [];
-          const idx = list.findIndex((m) => m.id === ev.message_id);
-          if (idx < 0) return {};
-          const msg = list[idx]!;
           const totalUsage = ev.usage
             ? ev.usage.input_tokens + ev.usage.output_tokens + ev.usage.reasoning_tokens
             : undefined;
-          const nextMsg: MessageView = {
+          const messages = updateMessageById(s.messages, ev.session_id, ev.message_id, (msg) => ({
             ...msg,
             step_finish: { reason: ev.reason, usage_total: totalUsage, cost: ev.cost_decimal_str },
-          };
-          const nextList = list.slice();
-          nextList[idx] = nextMsg;
-          return { messages: { ...s.messages, [ev.session_id]: nextList } };
+          }));
+          return messages ? { messages } : {};
         }
 
         case "permission_asked": {

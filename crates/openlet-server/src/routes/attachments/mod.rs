@@ -99,7 +99,7 @@ pub async fn upload(
     // the magic bytes.
     let detected = sniff_content_type(&file_bytes)?;
 
-    let (kind, mime, summary, part) = match detected {
+    let (kind, mime, artifact_id, summary, part) = match detected {
         DetectedKind::Image => process_and_persist_image(&state, sid, file_bytes).await?,
         DetectedKind::Pdf => process_and_persist_pdf(&state, sid, file_bytes).await?,
     };
@@ -129,7 +129,7 @@ pub async fn upload(
                 session_id: sid,
                 message_id,
                 part_id,
-                artifact_id: part_artifact_id(&kind, &summary),
+                artifact_id: artifact_id.clone(),
                 attachment_kind: kind,
                 mime: mime.clone(),
                 summary: summary.clone(),
@@ -141,7 +141,7 @@ pub async fn upload(
     Ok((
         StatusCode::CREATED,
         Json(AttachmentAck {
-            artifact_id: part_artifact_id(&kind, &summary),
+            artifact_id,
             kind: match kind {
                 AttachmentKind::Image => "image".into(),
                 AttachmentKind::Document => "document".into(),
@@ -224,11 +224,4 @@ async fn ensure_user_message(state: &AppState, sid: SessionId) -> Result<Message
         )
         .await?;
     Ok(mid)
-}
-
-/// Pull the artifact id back out of the summary (we stash it as the
-/// first segment after the kind prefix). Done this way to avoid
-/// threading the artifact id through every helper return tuple.
-fn part_artifact_id(_kind: &AttachmentKind, summary: &str) -> String {
-    summary.split_whitespace().next().unwrap_or("").to_string()
 }

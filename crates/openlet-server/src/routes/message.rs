@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::projection::ProjectionCaps;
-use openlet_core::runtime::{LoopContext, TurnInput};
+use openlet_core::runtime::LoopContext;
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
@@ -25,6 +25,7 @@ use uuid::Uuid;
 use crate::app_state::{AppState, TurnHandle};
 use crate::error::AppError;
 use crate::events::publish_status;
+use crate::mention::rewrite_mention_into_subagent_task;
 
 /// Drop-guard that releases the `active_turns` slot if any `?` propagates
 /// before we commit it to the spawned task. Once `committed = true`, the
@@ -265,7 +266,7 @@ async fn drive_loop(
         registry: state.tool_registry.clone(),
         read_history,
         mode: session_meta.permission_mode,
-        max_steps: 50,
+        max_steps: crate::turn_driver::MAX_TURN_STEPS,
         agent: agent_def,
         hook_chains: state.hook_chains.clone(),
         questions: state.questions.clone(),
@@ -274,15 +275,7 @@ async fn drive_loop(
         agent_registry: state.agent_registry.clone(),
     };
 
-    let input = TurnInput {
-        session_id,
-        messages: llm_messages,
-        system_prompt: None,
-        model: None,
-        max_tokens: None,
-        temperature: None,
-        tools,
-    };
+    let input = crate::turn_driver::build_turn_input(session_id, llm_messages, tools);
 
     let memory = crate::turn_driver::memory_arc(&state);
     state
@@ -302,8 +295,3 @@ fn status_reason(
         Err(_) => "loop error",
     }
 }
-
-/// Rewrite a leading `@subagent_name objective…` text part into a
-/// matching synthetic `subagent_task` tool call. Lives in
-/// [`crate::mention`].
-use crate::mention::rewrite_mention_into_subagent_task;

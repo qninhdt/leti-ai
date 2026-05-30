@@ -109,26 +109,25 @@ async fn handle_connection(
 ) -> io::Result<()> {
     let req = read_request(&mut stream).await?;
 
-    let body_json: serde_json::Value =
-        serde_json::from_str(&req.body).unwrap_or(serde_json::Value::Null);
-    let scenario = body_json
-        .get("messages")
-        .and_then(detect_scenario)
+    // Empty / non-JSON bodies parse to nothing → SimpleText fallback.
+    let scenario = serde_json::from_str::<serde_json::Value>(&req.body)
+        .ok()
+        .and_then(|body_json| body_json.get("messages").and_then(detect_scenario))
         .unwrap_or(Scenario::SimpleText);
 
+    // `req` is consumed here — move its fields rather than cloning.
     captured
         .lock()
         .expect("captured mutex")
         .push(CapturedRequest {
-            method: req.method.clone(),
-            path: req.path.clone(),
-            headers: req.headers.clone(),
+            method: req.method,
+            path: req.path,
+            headers: req.headers,
             scenario: Some(scenario),
-            body: req.body.clone(),
+            body: req.body,
         });
 
-    let response = scenario.render();
-    write_response(&mut stream, response).await?;
+    write_response(&mut stream, scenario.render()).await?;
     let _ = stream.shutdown().await;
     Ok(())
 }
@@ -197,6 +196,16 @@ async fn read_request(stream: &mut TcpStream) -> io::Result<ParsedRequest> {
             break;
         }
         body.extend_from_slice(&tmp[..n]);
+    }
+    // Error on a short read rather than silently parsing a partial body.
+    // The old code fell through to `truncate` (a no-op when short) and
+    // parsed whatever arrived, masking a truncated/aborted request as a
+    // successful-but-wrong scenario match.
+    if body.len() < content_length {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "request body shorter than content-length",
+        ));
     }
     body.truncate(content_length);
     let body = String::from_utf8(body)

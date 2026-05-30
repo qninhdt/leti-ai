@@ -105,9 +105,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
 
     // Workspace + shell built BEFORE install_plugins so `core-tools`
     // can take ownership of the shell at registration time.
-    let workspace_root = std::env::var("OPENLET_WORKSPACE")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| config.data_dir.join("workspace"));
+    let workspace_root = resolve_workspace_root(&config);
     tokio::fs::create_dir_all(&workspace_root)
         .await
         .with_context(|| format!("create workspace dir {}", workspace_root.display()))?;
@@ -209,23 +207,10 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // Tool registry rebuilt from plugin-drained handles. `core-tools`
     // is the first plugin contributor (the eight built-ins); downstream
     // integrators add their own tools through the same surface.
-    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
-    for tool in installed.tools {
-        tool_builder = tool_builder.register_erased(tool);
-    }
-    let tool_registry = tool_builder.build();
+    let tool_registry = build_tool_registry(installed.tools);
 
-    let default_agent_id = AgentId::new();
-    let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
-    let mut agents = HashMap::new();
-    agents.insert(
-        default_agent_id,
-        AgentResources {
-            spec: agent_spec,
-            fs: fs_adapter.clone(),
-            shell: shell.clone(),
-        },
-    );
+    let (default_agent_id, agents) =
+        single_default_agent(workspace_root.clone(), fs_adapter.clone(), shell.clone());
 
     // Build the agent registry from plugin-drained AgentDefinitions.
     let mut agent_registry = openlet_core::agent::AgentRegistry::new();
@@ -418,6 +403,50 @@ async fn install_plugins(
         .context("draining plugin registrations")
 }
 
+/// Resolve the agent workspace root: `OPENLET_WORKSPACE` if set,
+/// otherwise `<data_dir>/workspace`. Pure — the caller creates the
+/// directory with whatever error handling its boot path needs.
+fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
+    std::env::var("OPENLET_WORKSPACE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config.data_dir.join("workspace"))
+}
+
+/// Build the tool registry from plugin-drained handles. Shared by the
+/// `serve` and `doctor` boot paths so both materialize tools the same
+/// way.
+fn build_tool_registry(
+    tools: Vec<openlet_core::tools::ToolHandle>,
+) -> Arc<openlet_core::tools::ToolRegistry> {
+    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
+    for tool in tools {
+        tool_builder = tool_builder.register_erased(tool);
+    }
+    tool_builder.build()
+}
+
+/// Wire the single default agent (one workspace → one fs + shell) that
+/// MVP boot registers. Returns the generated id alongside the
+/// one-entry `agents` map both boot paths hand to `AppStateBuilder`.
+fn single_default_agent(
+    workspace_root: std::path::PathBuf,
+    fs: Arc<dyn openlet_core::adapters::Filesystem>,
+    shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
+) -> (AgentId, HashMap<AgentId, AgentResources>) {
+    let default_agent_id = AgentId::new();
+    let agent_spec = AgentSpec::new(default_agent_id, workspace_root, "default");
+    let mut agents = HashMap::new();
+    agents.insert(
+        default_agent_id,
+        AgentResources {
+            spec: agent_spec,
+            fs,
+            shell,
+        },
+    );
+    (default_agent_id, agents)
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         signal::ctrl_c().await.expect("install Ctrl+C handler");
@@ -516,9 +545,7 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
     let events: Arc<dyn openlet_core::adapters::EventSink> =
         Arc::new(BroadcastBus::with_repo(event_repo));
 
-    let workspace_root = std::env::var("OPENLET_WORKSPACE")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| config.data_dir.join("workspace"));
+    let workspace_root = resolve_workspace_root(config);
     tokio::fs::create_dir_all(&workspace_root).await.ok();
 
     let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
@@ -546,23 +573,10 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
     let provider = installed.provider.unwrap_or(provider);
     let hook_chains = Arc::new(installed.chains);
 
-    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
-    for tool in installed.tools {
-        tool_builder = tool_builder.register_erased(tool);
-    }
-    let tool_registry = tool_builder.build();
+    let tool_registry = build_tool_registry(installed.tools);
 
-    let default_agent_id = AgentId::new();
-    let agent_spec = AgentSpec::new(default_agent_id, workspace_root.clone(), "default");
-    let mut agents = HashMap::new();
-    agents.insert(
-        default_agent_id,
-        AgentResources {
-            spec: agent_spec,
-            fs: fs_adapter,
-            shell,
-        },
-    );
+    let (default_agent_id, agents) =
+        single_default_agent(workspace_root.clone(), fs_adapter, shell);
 
     let mut plugin_registry = openlet_plugin_registry::PluginRegistry::new();
     for plugin in installed.plugins {

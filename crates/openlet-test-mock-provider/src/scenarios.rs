@@ -79,7 +79,12 @@ impl Scenario {
 pub fn detect_scenario(messages: &serde_json::Value) -> Option<Scenario> {
     let arr = messages.as_array()?;
     for msg in arr.iter().rev() {
-        let content = msg.get("content")?;
+        // Skip messages without a `content` field (e.g. assistant turns
+        // carrying only `tool_calls`) rather than aborting the whole
+        // scan — earlier messages may still hold the token.
+        let Some(content) = msg.get("content") else {
+            continue;
+        };
         if let Some(text) = content.as_str() {
             if let Some(s) = scan_token(text) {
                 return Some(s);
@@ -249,5 +254,17 @@ mod tests {
     fn no_token_returns_none() {
         let msgs = serde_json::json!([{"role": "user", "content": "hi"}]);
         assert!(detect_scenario(&msgs).is_none());
+    }
+
+    #[test]
+    fn skips_messages_without_content_key() {
+        // An assistant turn carrying only `tool_calls` (no `content`)
+        // must not abort the reverse scan — the token in the earlier
+        // user message still wins.
+        let msgs = serde_json::json!([
+            {"role": "user", "content": "PARITY_SCENARIO:reasoning"},
+            {"role": "assistant", "tool_calls": [{"id": "x"}]},
+        ]);
+        assert_eq!(detect_scenario(&msgs), Some(Scenario::Reasoning));
     }
 }

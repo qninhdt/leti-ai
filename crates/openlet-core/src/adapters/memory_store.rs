@@ -22,6 +22,27 @@ pub trait MemoryStore: Send + Sync + 'static {
         parent: Option<SessionId>,
     ) -> Result<SessionId, MemoryError>;
 
+    /// Persist a fully-formed [`SessionMeta`] verbatim, preserving the
+    /// caller-supplied `id`, `depth`, `permission_mode`, and parent link.
+    ///
+    /// Subagent spawning needs this: `plan_subagent_spawn` builds a child
+    /// `SessionMeta` with the correct `depth` (for the depth-limit guard)
+    /// and a pre-allocated id that later messages/parts are keyed on. The
+    /// plain `create_session` mints a *fresh* id and hardcodes `depth = 0`,
+    /// which would (a) orphan the seeded child messages under FK enforcement
+    /// and (b) defeat depth enforcement on grandchildren.
+    ///
+    /// Default impl delegates to [`Self::create_session`] for stores that
+    /// don't model `depth`/verbatim ids (e.g. test doubles); production
+    /// stores override to insert the row as-is and return `meta.id`.
+    async fn create_session_with_meta(
+        &self,
+        meta: SessionMeta,
+    ) -> Result<SessionId, MemoryError> {
+        self.create_session(meta.agent_id, meta.parent_session_id)
+            .await
+    }
+
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError>;
 
     async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError>;

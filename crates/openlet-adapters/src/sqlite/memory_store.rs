@@ -74,6 +74,47 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(id)
     }
 
+    async fn create_session_with_meta(
+        &self,
+        meta: SessionMeta,
+    ) -> Result<SessionId, MemoryError> {
+        // Persist the caller-supplied row verbatim — id, depth,
+        // permission_mode, status, and parent link are all preserved.
+        // Subagent spawning relies on this so the child id seeded
+        // messages reference actually exists, and so `depth` survives for
+        // the grandchild depth-limit guard.
+        let id = meta.id;
+        let extensions = encode_json(&meta.extensions, "extensions json")?;
+        let capabilities = encode_json(&meta.capabilities, "capabilities json")?;
+
+        sqlx::query(
+            r#"INSERT INTO sessions
+                (id, agent_id, parent_session_id, status, permission_mode,
+                 version, created_at, updated_at, deleted_at, extensions,
+                 capabilities, current_agent_slug, previous_agent_slug, depth)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(id.to_string())
+        .bind(meta.agent_id.to_string())
+        .bind(meta.parent_session_id.map(|p| p.to_string()))
+        .bind(status_str(meta.status))
+        .bind(mode_str(meta.permission_mode))
+        .bind(&meta.version)
+        .bind(meta.created_at.timestamp_millis())
+        .bind(meta.updated_at.timestamp_millis())
+        .bind(meta.deleted_at.map(|d| d.timestamp_millis()))
+        .bind(extensions)
+        .bind(capabilities)
+        .bind(meta.current_agent_slug.as_deref())
+        .bind(meta.previous_agent_slug.as_deref())
+        .bind(i64::from(meta.depth))
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        Ok(id)
+    }
+
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
@@ -308,31 +349,32 @@ impl MemoryStore for SqliteMemoryStore {
         let kind = part_kind(&part);
         let payload = encode_json(&part, "encode part")?;
 
-        // INSERT ON CONFLICT collapses the previous UPDATE-then-fallback-INSERT
-        // pattern into a single statement. The old form raced: two concurrent
-        // upserts on the same fresh (msg, part_id) could both UPDATE-zero,
-        // both fall through to INSERT, and the second would PK-conflict.
-        // `seq` is required NOT NULL on first insert; for the upsert path
-        // we only assign it when the row doesn't already exist via the
-        // COALESCE on excluded.seq. New rows get the next per-message seq.
-        let next_seq: i64 = sqlx::query_scalar(
-            r#"SELECT COALESCE(MAX(seq), -1) + 1 FROM parts WHERE message_id = ?"#,
-        )
-        .bind(msg.to_string())
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_io)?;
-
+        // Single atomic INSERT with the seq as an in-statement subquery —
+        // same pattern as append_message/append_part (B/I2). The previous
+        // form computed next_seq in a SEPARATE `SELECT ... fetch_one` and
+        // then INSERTed, which raced: two concurrent upserts of DISTINCT
+        // fresh part_ids on the same message could both read the same
+        // next_seq and the second would violate UNIQUE(message_id, seq)
+        // (the ON CONFLICT targets `id`, not `seq`, so it wouldn't catch
+        // the seq collision). Folding the MAX(seq) into the INSERT makes
+        // SQLite serialize the read+write under the writer lock. The
+        // subquery is only materialized for a NEW row; on ON CONFLICT(id)
+        // the computed seq is discarded and only kind/payload are updated,
+        // so an existing part keeps its original seq.
         sqlx::query(
             r#"INSERT INTO parts (id, message_id, seq, kind, payload)
-               VALUES (?, ?, ?, ?, ?)
+               VALUES (
+                 ?, ?,
+                 (SELECT COALESCE(MAX(seq), -1) + 1 FROM parts WHERE message_id = ?),
+                 ?, ?
+               )
                ON CONFLICT(id) DO UPDATE SET
                    kind = excluded.kind,
                    payload = excluded.payload"#,
         )
         .bind(part_id.to_string())
         .bind(msg.to_string())
-        .bind(next_seq)
+        .bind(msg.to_string())
         .bind(kind)
         .bind(&payload)
         .execute(&self.pool)

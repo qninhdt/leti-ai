@@ -47,7 +47,7 @@ impl SqliteEventRepo {
         .bind(now)
         .fetch_one(&self.pool)
         .await
-        .map_err(|e| EventError::Io(e.to_string()))?;
+        .map_err(map_io)?;
 
         Ok(id)
     }
@@ -60,7 +60,7 @@ impl SqliteEventRepo {
         let max_id: Option<i64> = sqlx::query_scalar(r#"SELECT MAX(id) FROM events"#)
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| EventError::Io(e.to_string()))?;
+            .map_err(map_io)?;
         let Some(max_id) = max_id else { return Ok(()) };
         if after_id < max_id.saturating_sub(REPLAY_WINDOW) {
             return Err(EventError::CursorTooFarBehind {
@@ -89,15 +89,9 @@ impl SqliteEventRepo {
         .bind(REPLAY_PAGE_LIMIT)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| EventError::Io(e.to_string()))?;
+        .map_err(map_io)?;
 
-        rows.into_iter()
-            .map(|(id, p)| {
-                serde_json::from_str::<AgentEvent>(&p)
-                    .map(|ev| (id, ev))
-                    .map_err(|e| EventError::Io(format!("decode event: {e}")))
-            })
-            .collect()
+        decode_rows(rows)
     }
 
     /// Global replay (no session filter). Used by the global SSE channel
@@ -118,16 +112,28 @@ impl SqliteEventRepo {
         .bind(REPLAY_PAGE_LIMIT)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| EventError::Io(e.to_string()))?;
+        .map_err(map_io)?;
 
-        rows.into_iter()
-            .map(|(id, p)| {
-                serde_json::from_str::<AgentEvent>(&p)
-                    .map(|ev| (id, ev))
-                    .map_err(|e| EventError::Io(format!("decode event: {e}")))
-            })
-            .collect()
+        decode_rows(rows)
     }
+}
+
+/// Map a `sqlx::Error` to `EventError::Io` carrying its textual form.
+fn map_io(e: sqlx::Error) -> EventError {
+    EventError::Io(e.to_string())
+}
+
+/// Decode `(id, payload)` rows into `(id, AgentEvent)`, surfacing a
+/// contextual `EventError::Io` on the first malformed payload. Shared by
+/// the per-session and global replay paths.
+fn decode_rows(rows: Vec<(i64, String)>) -> Result<Vec<(i64, AgentEvent)>, EventError> {
+    rows.into_iter()
+        .map(|(id, p)| {
+            serde_json::from_str::<AgentEvent>(&p)
+                .map(|ev| (id, ev))
+                .map_err(|e| EventError::Io(format!("decode event: {e}")))
+        })
+        .collect()
 }
 
 fn event_kind(ev: &AgentEvent) -> &'static str {

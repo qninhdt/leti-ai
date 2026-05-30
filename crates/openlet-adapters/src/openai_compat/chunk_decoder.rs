@@ -78,9 +78,14 @@ pub struct PromptTokenDetails {
 }
 
 impl UsageWire {
-    fn into_usage(self) -> Usage {
+    /// Borrowing conversion to the domain `Usage`. Used on the trailing
+    /// usage-only chunk (consuming, via [`into_usage`]) and on the
+    /// finish-with-inline-usage path (by-ref, since `env.usage` must stay
+    /// available for later choices in the same envelope).
+    fn to_usage(&self) -> Usage {
         let cached = self
             .prompt_tokens_details
+            .as_ref()
             .map(|d| d.cached_tokens)
             .unwrap_or(0);
         Usage {
@@ -89,6 +94,10 @@ impl UsageWire {
             cached_input_tokens: cached,
             ..Default::default()
         }
+    }
+
+    fn into_usage(self) -> Usage {
+        self.to_usage()
     }
 }
 
@@ -136,16 +145,7 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
             // Usage may arrive on the same chunk as finish (some gateways) or
             // on the dedicated trailing usage chunk. We attach it if present
             // here; otherwise the trailing usage chunk emits its own Finish.
-            let usage = env.usage.as_ref().map(|u| Usage {
-                input_tokens: u.prompt_tokens,
-                output_tokens: u.completion_tokens,
-                cached_input_tokens: u
-                    .prompt_tokens_details
-                    .as_ref()
-                    .map(|d| d.cached_tokens)
-                    .unwrap_or(0),
-                ..Default::default()
-            });
+            let usage = env.usage.as_ref().map(UsageWire::to_usage);
             out.push(ChatDelta::Finish {
                 reason: mapped,
                 usage,

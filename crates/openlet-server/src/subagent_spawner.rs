@@ -20,8 +20,8 @@ use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::error::CoreError;
 use openlet_core::projection::ProjectionCaps;
+use openlet_core::runtime::LoopContext;
 use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus, plan_subagent_spawn};
-use openlet_core::runtime::{LoopContext, TurnInput};
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
@@ -122,13 +122,14 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         )?;
 
         // Persist the child session synchronously so SSE consumers see
-        // the row before SubagentStarted fires. Fall back to the parent
-        // agent_id since the API doesn't expose a per-slug AgentId yet.
-        if let Err(e) = state
-            .memory
-            .create_session(parent_meta.agent_id, Some(parent_meta.id))
-            .await
-        {
+        // the row before SubagentStarted fires. We MUST persist
+        // `plan.child` verbatim (via create_session_with_meta) rather than
+        // calling create_session: the planner pre-allocated `plan.child.id`
+        // — the id every seeded message/part and the driver loop are keyed
+        // on — and set the correct `depth` for the grandchild depth guard.
+        // create_session would mint a *fresh* id and reset depth to 0,
+        // orphaning the seed messages under FK enforcement.
+        if let Err(e) = state.memory.create_session_with_meta(plan.child.clone()).await {
             state.task_registry.finalize(plan.task_id);
             return Err(SpawnError::Internal(format!("create child session: {e}")));
         }
@@ -271,7 +272,7 @@ async fn drive_subagent(
             .await?
             .map(|m| m.permission_mode)
             .unwrap_or_default(),
-        max_steps: 50,
+        max_steps: crate::turn_driver::MAX_TURN_STEPS,
         agent: agent_def,
         hook_chains: state.hook_chains.clone(),
         questions: state.questions.clone(),
@@ -280,15 +281,7 @@ async fn drive_subagent(
         agent_registry: state.agent_registry.clone(),
     };
 
-    let input = TurnInput {
-        session_id: child_session_id,
-        messages: llm_messages,
-        system_prompt: None,
-        model: None,
-        max_tokens: None,
-        temperature: None,
-        tools,
-    };
+    let input = crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools);
 
     let memory = crate::turn_driver::memory_arc(&state);
     let outcome = state

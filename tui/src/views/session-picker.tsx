@@ -1,8 +1,9 @@
 import React from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text } from "ink";
 
 import { theme } from "../theme/index.js";
 import { shortId } from "../utils/format.js";
+import { useListNavigation } from "../hooks/use-list-navigation.js";
 
 import type { SessionDto } from "../api/types.js";
 
@@ -13,20 +14,15 @@ export interface SessionPickerProps {
 }
 
 export function SessionPicker(props: SessionPickerProps): React.ReactElement {
-  const [index, setIndex] = React.useState(0);
   const list = [...props.sessions].sort((a, b) =>
     b.updated_at.localeCompare(a.updated_at),
   );
 
-  useInput((_input, key) => {
-    if (key.escape) return props.onCancel();
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1));
-    if (key.downArrow) setIndex((i) => Math.min(list.length - 1, i + 1));
-    if (key.return) {
-      const s = list[index];
-      if (s) props.onSelect(s.id);
-    }
-  });
+  const { index } = useListNavigation(
+    list,
+    (session) => props.onSelect(session.id),
+    props.onCancel,
+  );
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.border.active} paddingX={1}>

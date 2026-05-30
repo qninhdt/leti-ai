@@ -18,6 +18,22 @@ use super::task_types::{
 };
 use crate::types::session::SessionId;
 
+/// Decrement an `AtomicUsize` quota counter without ever underflowing.
+/// A bare `fetch_sub(1)` on a counter already at 0 wraps to `usize::MAX`,
+/// which would permanently wedge the per-root quota (every future
+/// `admit` sees `cur >= max` and rejects). This CAS loop floors at 0 so
+/// an unbalanced release (double-release, or release racing finalize) is
+/// a harmless no-op instead of a permanent spawn lockout.
+fn saturating_dec(counter: &AtomicUsize) {
+    let mut cur = counter.load(Ordering::Acquire);
+    while cur > 0 {
+        match counter.compare_exchange_weak(cur, cur - 1, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => return,
+            Err(actual) => cur = actual,
+        }
+    }
+}
+
 /// Registry of running subagent tasks. Cloneable; interior mutability
 /// only (DashMap + Arc).
 #[derive(Default, Clone)]
@@ -88,7 +104,7 @@ impl TaskRegistry {
     /// installed (e.g. agent slug unknown).
     pub fn release_quota(&self, root: SessionId) {
         if let Some(c) = self.session_descendants.get(&root) {
-            c.fetch_sub(1, Ordering::AcqRel);
+            saturating_dec(&c);
         }
     }
 
@@ -105,7 +121,7 @@ impl TaskRegistry {
     pub fn finalize(&self, id: TaskId) {
         if let Some((_, handle)) = self.tasks.remove(&id) {
             if let Some(c) = self.session_descendants.get(&handle.root_session_id) {
-                c.fetch_sub(1, Ordering::AcqRel);
+                saturating_dec(&c);
             }
         }
     }
