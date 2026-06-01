@@ -158,6 +158,59 @@ async fn release_quota_rolls_back_admit_when_handle_install_skipped() {
     registry.finalize(id2);
 }
 
+/// C1 — `await_completion` must NOT return "task vanished" (`None`) when the
+/// driver finalizes (removes the registry entry + releases quota) immediately
+/// after flipping status to terminal. The fix reads the snapshot from the
+/// already-cloned handle instead of re-looking-up the (now-removed) entry.
+///
+/// We also assert quota is released so a subsequent spawn on the same root
+/// succeeds — proving `finalize` was left intact (the red-team correction).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn await_completion_returns_output_when_finalize_races_set_status() {
+    const ITERS: usize = 200;
+
+    for _ in 0..ITERS {
+        let registry = Arc::new(TaskRegistry::new(1));
+        let root = SessionId::new();
+
+        let id = registry.admit(root).expect("admit ok");
+        registry.insert(id, make_handle(root));
+
+        // Seed some output so a successful completion is observable.
+        registry.append_output(id, "subagent result").await;
+
+        let waiter = {
+            let registry = Arc::clone(&registry);
+            tokio::spawn(async move { registry.await_completion(id).await })
+        };
+
+        // Race: flip to terminal, yield, then finalize (removes the entry +
+        // releases quota) — exactly the driver's success-path ordering.
+        let driver = {
+            let registry = Arc::clone(&registry);
+            tokio::spawn(async move {
+                registry.set_status(id, TaskStatus::Finished).await;
+                tokio::task::yield_now().await;
+                registry.finalize(id);
+            })
+        };
+
+        driver.await.unwrap();
+        let snapshot = waiter.await.unwrap();
+
+        let snapshot =
+            snapshot.expect("await_completion must return the completed task, not 'vanished'");
+        assert_eq!(snapshot.status, TaskStatus::Finished);
+        assert_eq!(snapshot.output, "subagent result");
+        assert!(snapshot.finished);
+
+        // Quota released by finalize — a fresh spawn on the same root succeeds.
+        let id2 = registry.admit(root).expect("quota released; second admit ok");
+        registry.insert(id2, make_handle(root));
+        registry.finalize(id2);
+    }
+}
+
 /// Regression test documenting the panic-leak gap.
 ///
 /// `subagent_spawner.rs:132,177,350` calls `finalize` EXPLICITLY on

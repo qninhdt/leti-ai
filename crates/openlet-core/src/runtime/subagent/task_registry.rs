@@ -192,8 +192,24 @@ impl TaskRegistry {
             {
                 let s = handle.status.read().await;
                 if s.is_terminal() {
+                    let status = s.clone();
                     drop(s);
-                    return self.poll_async(id).await;
+                    // C1: read the snapshot straight from the ALREADY-CLONED
+                    // `handle` rather than `self.poll_async(id)`. The driver's
+                    // `finalize` may have removed the registry entry between
+                    // `set_status(terminal)` and this read; the clone at the
+                    // top keeps the `Arc<RwLock<..>>` state alive, so reading
+                    // from it returns the completed task's output instead of
+                    // racing into a "task vanished" `None`.
+                    let output = handle.output.read().await.clone();
+                    let cost = *handle.cost_usd.read().await;
+                    return Some(TaskSnapshot {
+                        task_id: id,
+                        status,
+                        output,
+                        cost_usd: cost,
+                        finished: true,
+                    });
                 }
             }
             notified.await;

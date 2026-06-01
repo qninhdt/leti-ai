@@ -73,23 +73,35 @@ impl RuntimeSubagentSpawner {
     }
 
     /// Resolve the root session id by walking parent_session_id up to a
-    /// session with `parent_session_id = None`. Caps at depth+1 walks
-    /// to keep the lookup bounded even on a corrupt chain.
-    async fn root_session_of(&self, sid: SessionId, fallback: SessionId) -> SessionId {
-        let Ok(state) = self.state() else {
-            return fallback;
-        };
+    /// session with `parent_session_id = None`. Caps at depth+2 walks to
+    /// keep the lookup bounded even on a corrupt chain.
+    ///
+    /// H3 — a DB error from `get_session` is PROPAGATED, not swallowed.
+    /// Silently returning `current` on a transient memory error would
+    /// resolve the WRONG root and admit the subagent against the wrong
+    /// quota bucket (a quota-bypass / accounting-corruption vector). A
+    /// genuine "session not found" (`Ok(None)`) is still treated as a
+    /// terminal root — the chain simply ends there.
+    async fn root_session_of(&self, sid: SessionId) -> Result<SessionId, SpawnError> {
+        let state = self.state()?;
         let mut current = sid;
         for _ in 0..(self.max_depth as usize + 2) {
             match state.memory.get_session(current).await {
                 Ok(Some(meta)) => match meta.parent_session_id {
                     Some(p) => current = p,
-                    None => return current,
+                    None => return Ok(current),
                 },
-                _ => return current,
+                // Session row absent — treat `current` as the terminal root.
+                Ok(None) => return Ok(current),
+                // Transient/store error — fail fast instead of resolving a
+                // wrong root and corrupting quota accounting.
+                Err(e) => {
+                    return Err(SpawnError::Internal(format!("root resolution failed: {e}")));
+                }
             }
         }
-        current
+        // Depth cap reached (corrupt/cyclic parent chain) — bounded fallback.
+        Ok(current)
     }
 }
 
@@ -108,7 +120,7 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             .await
             .map_err(|e| SpawnError::Internal(format!("memory: {e}")))?
             .ok_or_else(|| SpawnError::Internal("parent session missing".into()))?;
-        let root = self.root_session_of(ctx.session_id, ctx.session_id).await;
+        let root = self.root_session_of(ctx.session_id).await?;
 
         let plan = plan_subagent_spawn(
             &parent_meta,
@@ -290,23 +302,26 @@ async fn drive_subagent(
         .await;
 
     // Collect the final assistant text into the task output buffer.
+    // H4 — `final_assistant_message_id` is now `Option`: `None` means no
+    // model turn produced an assistant message (e.g. a before_turn hook
+    // halted turn 0). Skip `list_parts` entirely in that case — the
+    // subagent output is correctly empty, NOT the nil-UUID's (empty) part
+    // list masquerading as a real lookup.
     if let Ok(o) = &outcome {
-        if let Ok(parts) = state
-            .memory
-            .list_parts(child_session_id, o.final_assistant_message_id)
-            .await
-        {
-            let mut buf = String::new();
-            for p in parts {
-                if let Part::Text { text, .. } = p {
-                    if !buf.is_empty() {
-                        buf.push('\n');
+        if let Some(final_msg_id) = o.final_assistant_message_id {
+            if let Ok(parts) = state.memory.list_parts(child_session_id, final_msg_id).await {
+                let mut buf = String::new();
+                for p in parts {
+                    if let Part::Text { text, .. } = p {
+                        if !buf.is_empty() {
+                            buf.push('\n');
+                        }
+                        buf.push_str(&text);
                     }
-                    buf.push_str(&text);
                 }
-            }
-            if !buf.is_empty() {
-                registry.append_output(task_id, &buf).await;
+                if !buf.is_empty() {
+                    registry.append_output(task_id, &buf).await;
+                }
             }
         }
     }

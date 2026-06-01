@@ -42,14 +42,16 @@ pub fn compute_cost(usage: &Usage, pricing: &ModelPricing) -> Decimal {
         total += Decimal::from(usage.cached_input_tokens) / mtok * cr;
     }
     if let Some(cw) = pricing.cache_write_per_mtok {
-        // Sum both cache-write counters — providers populate one or
-        // the other (Anthropic uses `cache_creation_input_tokens`,
-        // DashScope uses `cache_write_tokens`). Adapters write to
-        // exactly one field so this can't double-charge in practice;
-        // belt-and-suspenders sum keeps it correct if both are set.
+        // L2 — providers populate EXACTLY ONE of these cache-write
+        // counters: Anthropic uses `cache_creation_input_tokens`,
+        // OpenRouter normalized usage uses `cache_write_tokens`. Take
+        // `max()` rather than summing: if a defensive adapter ever
+        // populated BOTH (with the same value), a sum would double-charge.
+        // `max()` bills the cache write exactly once in every case
+        // (one-field, other-field, or both-equal).
         let writes = usage
             .cache_write_tokens
-            .saturating_add(usage.cache_creation_input_tokens);
+            .max(usage.cache_creation_input_tokens);
         total += Decimal::from(writes) / mtok * cw;
     }
     total
@@ -146,8 +148,8 @@ mod tests {
     #[test]
     fn cache_creation_input_tokens_alias_charges_at_write_rate() {
         // Anthropic populates cache_creation_input_tokens; cost calc
-        // sums both write counters so a provider using either field
-        // gets billed exactly once at the cache_write rate.
+        // takes the max of both write counters so a provider using either
+        // field gets billed exactly once at the cache_write rate.
         let u = Usage {
             input_tokens: 0,
             cache_creation_input_tokens: 1_000_000,
@@ -160,6 +162,53 @@ mod tests {
             cache_write_per_mtok: Some(Decimal::from_str("3.75").unwrap()),
         };
         let cost = compute_cost(&u, &p);
+        assert_eq!(format_usd(cost), "3.7500");
+    }
+
+    #[test]
+    fn both_cache_write_fields_populated_charged_once_via_max() {
+        // L2 — a defensive adapter that populates BOTH cache-write fields
+        // with the SAME value must be billed ONCE, not summed (which would
+        // double-charge). `max()` takes a single count.
+        let u = Usage {
+            input_tokens: 0,
+            cache_write_tokens: 1_000_000,
+            cache_creation_input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let p = ModelPricing {
+            input_per_mtok: Decimal::from_str("3.00").unwrap(),
+            output_per_mtok: Decimal::from_str("15.00").unwrap(),
+            cached_input_per_mtok: None,
+            cache_write_per_mtok: Some(Decimal::from_str("3.75").unwrap()),
+        };
+        let cost = compute_cost(&u, &p);
+        // max(1e6, 1e6) = 1e6 → 1e6 * 3.75 / 1e6 = 3.75 (NOT 7.50).
+        assert_eq!(
+            format_usd(cost),
+            "3.7500",
+            "both fields set must charge once (max), not twice (sum)"
+        );
+    }
+
+    #[test]
+    fn differing_cache_write_fields_take_the_larger() {
+        // When the two counters disagree (shouldn't happen, but be
+        // explicit), `max()` bills the larger — never their sum.
+        let u = Usage {
+            input_tokens: 0,
+            cache_write_tokens: 400_000,
+            cache_creation_input_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let p = ModelPricing {
+            input_per_mtok: Decimal::from_str("3.00").unwrap(),
+            output_per_mtok: Decimal::from_str("15.00").unwrap(),
+            cached_input_per_mtok: None,
+            cache_write_per_mtok: Some(Decimal::from_str("3.75").unwrap()),
+        };
+        let cost = compute_cost(&u, &p);
+        // max(400k, 1e6) = 1e6 → 3.75, not 1.4e6-based 5.25.
         assert_eq!(format_usd(cost), "3.7500");
     }
 

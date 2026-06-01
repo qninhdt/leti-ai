@@ -34,10 +34,14 @@ pub trait EventSink: Send + Sync + 'static {
     /// Ordering contract: for two `Persistence::Durable` calls A and B
     /// where A returns `Ok` before B starts, every subscriber observes
     /// A's `event_id < B`'s `event_id` AND receives them in the same
-    /// order on the broadcast channel. Implementations MUST serialize
-    /// the `(repo.append → tx.send)` pair per call so the broadcast
-    /// order matches the assigned-id order — otherwise SSE consumers
-    /// tracking `Last-Event-ID` on the live channel could skip events.
+    /// order on the broadcast channel. `event_id` is monotonically
+    /// assigned at publish time AND broadcast in `event_id` order; replay
+    /// via `event_id` ordering is authoritative. Implementations MUST
+    /// serialize the `(allocate event_id → persist → tx.send)` triple per
+    /// call so the broadcast order matches the assigned-id order —
+    /// otherwise SSE consumers tracking `Last-Event-ID` on the live
+    /// channel could skip events (a frame broadcast out of order is
+    /// dropped live and never replayed).
     ///
     /// `Persistence::Transient` events skip the repo and have no
     /// `event_id`; ordering between transient and durable events is

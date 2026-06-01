@@ -81,9 +81,9 @@ async fn try_claim_session_slot_admits_exactly_one_winner() {
         assert_eq!(claimed.load(Ordering::SeqCst), 1);
 
         // Release; another claim succeeds.
-        reg.release_session_slot(session);
+        reg.remove_session_slot(session);
         assert!(reg.try_claim_session_slot(session));
-        reg.release_session_slot(session);
+        reg.remove_session_slot(session);
     }
 }
 

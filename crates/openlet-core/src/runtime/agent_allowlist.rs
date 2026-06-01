@@ -117,6 +117,16 @@ pub fn merge_with_denied(
             // Defensive — shouldn't happen because dispatched +
             // denied partition the original list. Surface as IO error
             // so the model sees something rather than a silent gap.
+            // M3 — log it: a hit here means a real partition bug (a
+            // call_id present in neither `dispatched` nor `denied`), and
+            // without a forensic trace the synthetic IO error is the only
+            // (silent) signal. No metrics infra in MVP; a tracing line is
+            // sufficient for post-incident diagnosis.
+            tracing::error!(
+                call_id = %inv.call_id,
+                tool = %inv.name,
+                "dispatch slot lost — partition mismatch in merge_with_denied"
+            );
             out.push(ToolDispatchResult {
                 call_id: inv.call_id.clone(),
                 name: inv.name.clone(),

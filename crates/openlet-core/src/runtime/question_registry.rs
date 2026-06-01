@@ -102,10 +102,14 @@ struct PendingEntry {
 #[derive(Default)]
 struct Inner {
     pending: DashMap<QuestionId, PendingEntry>,
-    /// Per-session count of in-flight questions. The `ask_user` tool
-    /// caps this at 1 to prevent the model from queueing a stack of
-    /// modal prompts the user can't reasonably answer in order.
-    pending_per_session: DashMap<SessionId, u8>,
+    /// Set of sessions with an in-flight question. The `ask_user` tool
+    /// caps this at 1 per session to prevent the model from queueing a
+    /// stack of modal prompts the user can't reasonably answer in order.
+    /// M6 — modeled as a Set (`()` value) rather than a counter: the cap
+    /// is "at most one pending question per session", so membership is the
+    /// only state. A `u8` count invited a decrement-vs-remove ambiguity;
+    /// a Set has exactly one mutation (insert on claim, remove on release).
+    pending_per_session: DashMap<SessionId, ()>,
 }
 
 /// Process-wide registry of in-flight `ask_user` questions. Cloning is
@@ -193,27 +197,29 @@ impl QuestionRegistry {
     /// Try to claim the per-session pending slot. Returns `true` when
     /// the caller now holds the slot; `false` when another question is
     /// already in flight for the same session. Callers MUST pair a
-    /// successful claim with [`Self::release_session_slot`] after the
+    /// successful claim with [`Self::remove_session_slot`] after the
     /// question resolves, times out, or is cancelled — even on the
     /// error path.
     pub fn try_claim_session_slot(&self, session_id: SessionId) -> bool {
         // `entry` returns a guard that lets us inspect-or-insert under
         // the shard lock so two concurrent claims can't both observe
-        // "no entry" and both flip to 1.
+        // "no entry" and both flip to present.
         use dashmap::mapref::entry::Entry;
         match self.inner.pending_per_session.entry(session_id) {
             Entry::Occupied(_) => false,
             Entry::Vacant(slot) => {
-                slot.insert(1);
+                slot.insert(());
                 true
             }
         }
     }
 
-    /// Release a previously claimed per-session slot. Idempotent — if
-    /// the slot was already released (because cancellation raced with
+    /// Remove a previously claimed per-session slot. M6 — the cap is a
+    /// Set, so "release" is a single `remove`; there is no count to
+    /// decrement and thus no decrement-vs-remove ambiguity. Idempotent —
+    /// if the slot was already removed (because cancellation raced with
     /// resolution) this is a no-op.
-    pub fn release_session_slot(&self, session_id: SessionId) {
+    pub fn remove_session_slot(&self, session_id: SessionId) {
         self.inner.pending_per_session.remove(&session_id);
     }
 }

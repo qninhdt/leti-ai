@@ -95,16 +95,6 @@ impl ConfigPermissionMgr {
         self.pending.get(&ask_id).map(|e| e.request.clone())
     }
 
-    /// Read-only peek at a pending ask's session id. Used by the HTTP
-    /// route to publish `PermissionResolved` to the correct session
-    /// before `accept_ask`/`reply` consumes the entry.
-    pub fn peek_session_id(
-        &self,
-        ask_id: AskId,
-    ) -> Option<openlet_core::types::session::SessionId> {
-        self.pending.get(&ask_id).map(|e| e.ctx.session_id)
-    }
-
     /// Hydrate persisted always-allow rules from the SQLite repo. Called
     /// on boot before any route is mounted, so existing always-allow
     /// rules apply to incoming requests immediately.
@@ -250,6 +240,11 @@ impl PermissionManager for ConfigPermissionMgr {
         self.pending.get_mut(&ask_id)?.deferred.take()
     }
 
+    /// Read-only peek at a pending ask's session id. Used by the HTTP
+    /// route to publish `PermissionResolved` to the correct session
+    /// before `accept_ask`/`reply` consumes the entry. M7 — this is the
+    /// SOLE definition; the duplicate inherent method was removed (all
+    /// callers go through `Arc<dyn PermissionManager>`).
     fn peek_session_id(&self, ask_id: AskId) -> Option<openlet_core::types::session::SessionId> {
         self.pending.get(&ask_id).map(|e| e.ctx.session_id)
     }

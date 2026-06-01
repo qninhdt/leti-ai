@@ -73,7 +73,7 @@ The `WorkspaceRoutingGuard` and the routing layer both refuse to proceed unless 
 - `AnthropicProvider` STUB — no-op (real impl injects `cache_control: {type: "ephemeral"}` blocks)
 - `GeminiProvider` STUB — no-op (Gemini auto-caches; native impl exposes `cachedContent`)
 
-The `Usage` struct carries `cache_creation_input_tokens` (Anthropic alias) alongside `cache_write_tokens` (DashScope). Cost calc sums both — providers populate one OR the other.
+The `Usage` struct carries `cache_creation_input_tokens` (Anthropic alias) alongside `cache_write_tokens` (DashScope/OpenRouter). Cost calc takes the `max()` of the two — providers populate one OR the other, and `max()` bills the cache write exactly once even if a defensive adapter sets both.
 
 ## Stub adapters
 

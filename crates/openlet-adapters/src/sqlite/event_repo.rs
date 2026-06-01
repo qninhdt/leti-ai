@@ -27,6 +27,18 @@ impl SqliteEventRepo {
         Self { pool }
     }
 
+    /// DEPRECATED — SQLite-`AUTOINCREMENT` id assignment. Superseded by
+    /// [`Self::append_with_id`], which lets `BroadcastBus` own monotonic
+    /// id allocation + ordering (H1). Do NOT call this alongside
+    /// `append_with_id`: a row inserted here is invisible to the bus's
+    /// in-memory counter, so the next bus-allocated id would collide on
+    /// the PK (the bus seeds from `MAX(id)` only once at first publish).
+    /// Retained only so the AUTOINCREMENT path stays available for any
+    /// future non-bus writer; currently has no callers.
+    #[deprecated(
+        note = "use append_with_id; BroadcastBus owns event_id allocation (H1). \
+                Mixing this with append_with_id drifts the bus counter and risks PK collision."
+    )]
     pub async fn append(
         &self,
         session_id: Option<SessionId>,
@@ -50,6 +62,53 @@ impl SqliteEventRepo {
         .map_err(map_io)?;
 
         Ok(id)
+    }
+
+    /// Highest persisted event id, or 0 when the table is empty. Used by
+    /// `BroadcastBus` to seed its monotonic event-id counter at boot so a
+    /// pre-assigned id never collides with a row that survived a restart
+    /// (the `events` table is durable; a counter starting at 0 each boot
+    /// would re-issue ids 1.. and hit a `UNIQUE` PK violation).
+    pub async fn max_event_id(&self) -> Result<i64, EventError> {
+        let max: i64 = sqlx::query_scalar(r#"SELECT COALESCE(MAX(id), 0) FROM events"#)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_io)?;
+        Ok(max)
+    }
+
+    /// Append an event with a caller-assigned `event_id` (the id is
+    /// allocated by `BroadcastBus` from its monotonic counter rather than
+    /// by SQLite `AUTOINCREMENT`). The PK is supplied explicitly so the
+    /// broadcast layer owns id assignment + ordering. A duplicate id
+    /// surfaces as the underlying `UNIQUE` violation mapped to
+    /// `EventError::Io` — it signals a counter-seed bug, never normal
+    /// operation.
+    pub async fn append_with_id(
+        &self,
+        event_id: i64,
+        session_id: Option<SessionId>,
+        ev: &AgentEvent,
+    ) -> Result<(), EventError> {
+        let kind = event_kind(ev);
+        let payload =
+            serde_json::to_string(ev).map_err(|e| EventError::Io(format!("encode event: {e}")))?;
+        let now = Utc::now().timestamp_millis();
+
+        sqlx::query(
+            r#"INSERT INTO events (id, session_id, kind, payload, created_at)
+               VALUES (?, ?, ?, ?, ?)"#,
+        )
+        .bind(event_id)
+        .bind(session_id.map(|s| s.to_string()))
+        .bind(kind)
+        .bind(&payload)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        Ok(())
     }
 
     /// Reject `after_id` more than `REPLAY_WINDOW` rows behind tip so a

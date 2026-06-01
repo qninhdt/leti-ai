@@ -183,29 +183,42 @@ impl Processor {
     }
 }
 
-/// Drain the accumulator into terminal parts. Called on `Finish`. Validates
-/// every pending tool call's `args_buf` parses as JSON; an empty buffer is
-/// treated as `{}` (some providers omit args for zero-param tools).
+/// Drain the accumulator into terminal parts. Called on `Finish`.
+///
+/// C3 + H5 — VALIDATE-ALL-THEN-DRAIN. Every pending tool call is validated
+/// (non-empty name, unique `call_id` across indices, `args_buf` parses as
+/// JSON — empty buffer treated as `{}` for zero-param tools) BEFORE any
+/// `state` field is drained. If any validation fails we return `Err` WITHOUT
+/// having drained `current_reasoning` / `current_text`, so the reasoning and
+/// text are preserved in `state` (the H5 guarantee) rather than being lost on
+/// a malformed tool-call stream.
 fn flush_into_parts(
     state: &mut ProcessorState,
     parts: &mut Vec<ProcessorPart>,
 ) -> Result<(), ProviderError> {
-    if !state.current_reasoning.is_empty() {
-        parts.push(ProcessorPart::Reasoning {
-            text: std::mem::take(&mut state.current_reasoning),
-            signature: state.current_reasoning_signature.take(),
-        });
-    }
-    if !state.current_text.is_empty() {
-        parts.push(ProcessorPart::Text {
-            text: std::mem::take(&mut state.current_text),
-        });
-    }
+    // Take the pending tool calls FIRST. This only moves the pending map; it
+    // does NOT touch reasoning/text, so an early return below still leaves
+    // those accumulators intact in `state`.
     let pending = std::mem::take(&mut state.pending_tool_calls);
+
+    // Pre-validate + fully materialize every tool-call part up front. Nothing
+    // here mutates reasoning/text state, so any `Err` return is side-effect
+    // free with respect to the H5-preserved fields.
+    let mut seen_call_ids: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(pending.len());
+    let mut tool_parts: Vec<ProcessorPart> = Vec::with_capacity(pending.len());
     for (idx, call) in pending {
         if call.name.is_empty() {
             return Err(ProviderError::Decode(format!(
                 "tool_call index {idx} finished without a name"
+            )));
+        }
+        // Duplicate call_id across DIFFERENT indices would clobber tool
+        // results downstream (results are keyed by call_id). Reject up front.
+        if !seen_call_ids.insert(call.call_id.clone()) {
+            return Err(ProviderError::Decode(format!(
+                "duplicate call_id across tool indices (call_id={})",
+                call.call_id
             )));
         }
         let args_str = if call.args_buf.is_empty() {
@@ -219,12 +232,27 @@ fn flush_into_parts(
                 call.call_id, call.name
             ))
         })?;
-        parts.push(ProcessorPart::ToolCall {
+        tool_parts.push(ProcessorPart::ToolCall {
             call_id: call.call_id,
             name: call.name,
             args,
         });
     }
+
+    // All validations passed — NOW it is safe to drain reasoning/text and emit
+    // every part in the canonical order: reasoning, text, tool calls, finish.
+    if !state.current_reasoning.is_empty() {
+        parts.push(ProcessorPart::Reasoning {
+            text: std::mem::take(&mut state.current_reasoning),
+            signature: state.current_reasoning_signature.take(),
+        });
+    }
+    if !state.current_text.is_empty() {
+        parts.push(ProcessorPart::Text {
+            text: std::mem::take(&mut state.current_text),
+        });
+    }
+    parts.extend(tool_parts);
     if let Some(reason) = state.finish {
         parts.push(ProcessorPart::StepFinish {
             reason: finish_reason_label(reason).to_string(),
@@ -245,5 +273,127 @@ fn finish_reason_label(reason: FinishReason) -> &'static str {
         FinishReason::Error => "error",
         FinishReason::Cancelled => "cancelled",
         FinishReason::Halted => "halted",
+    }
+}
+
+#[cfg(test)]
+mod flush_validate_then_drain_tests {
+    //! C3 + H5 — `flush_into_parts` validate-all-then-drain.
+    //!
+    //! Two guarantees:
+    //! 1. **C3**: a `call_id` reused across DIFFERENT tool-call indices is a
+    //!    clean `ProviderError::Decode` (it would otherwise clobber downstream
+    //!    tool-result routing, which keys results by `call_id`).
+    //! 2. **H5**: on ANY validation error, `current_reasoning` / `current_text`
+    //!    are NOT drained — they remain in `state` so the reasoning is not lost
+    //!    on a malformed tool-call stream.
+    use super::*;
+
+    fn pending(call_id: &str, name: &str, args: &str) -> PendingToolCall {
+        PendingToolCall {
+            call_id: call_id.to_string(),
+            name: name.to_string(),
+            args_buf: args.to_string(),
+        }
+    }
+
+    #[test]
+    fn duplicate_call_id_across_indices_errors_and_preserves_reasoning() {
+        let mut state = ProcessorState {
+            current_reasoning: "important chain of thought".to_string(),
+            current_text: "partial answer".to_string(),
+            ..Default::default()
+        };
+        // Two DISTINCT indices sharing the same call_id.
+        state
+            .pending_tool_calls
+            .insert(0, pending("dup", "bash", "{}"));
+        state
+            .pending_tool_calls
+            .insert(1, pending("dup", "read_file", "{}"));
+
+        let mut parts = Vec::new();
+        let err = flush_into_parts(&mut state, &mut parts)
+            .expect_err("duplicate call_id across indices must error");
+
+        match err {
+            ProviderError::Decode(msg) => {
+                assert!(
+                    msg.contains("duplicate call_id"),
+                    "unexpected decode message: {msg}"
+                );
+            }
+            other => panic!("expected Decode error; got {other:?}"),
+        }
+
+        // H5: reasoning + text NOT drained — still present in state.
+        assert_eq!(state.current_reasoning, "important chain of thought");
+        assert_eq!(state.current_text, "partial answer");
+        // Nothing emitted on the error path.
+        assert!(parts.is_empty(), "no parts should be drained on error");
+    }
+
+    #[test]
+    fn missing_name_errors_and_preserves_reasoning() {
+        let mut state = ProcessorState {
+            current_reasoning: "thinking".to_string(),
+            ..Default::default()
+        };
+        // Empty name → validation failure.
+        state.pending_tool_calls.insert(0, pending("c1", "", "{}"));
+
+        let mut parts = Vec::new();
+        let err = flush_into_parts(&mut state, &mut parts).expect_err("empty name must error");
+        assert!(matches!(err, ProviderError::Decode(_)));
+        // H5: reasoning preserved.
+        assert_eq!(state.current_reasoning, "thinking");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn invalid_args_json_errors_and_preserves_reasoning() {
+        let mut state = ProcessorState {
+            current_reasoning: "thinking".to_string(),
+            ..Default::default()
+        };
+        state
+            .pending_tool_calls
+            .insert(0, pending("c1", "bash", "{not-json"));
+
+        let mut parts = Vec::new();
+        let err =
+            flush_into_parts(&mut state, &mut parts).expect_err("invalid args JSON must error");
+        assert!(matches!(err, ProviderError::Decode(_)));
+        // H5: reasoning preserved even though the failure is the LAST validation.
+        assert_eq!(state.current_reasoning, "thinking");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn valid_calls_drain_in_canonical_order() {
+        let mut state = ProcessorState {
+            current_reasoning: "r".to_string(),
+            current_text: "t".to_string(),
+            finish: Some(FinishReason::ToolUse),
+            ..Default::default()
+        };
+        state.pending_tool_calls.insert(0, pending("a", "bash", "{}"));
+        state
+            .pending_tool_calls
+            .insert(1, pending("b", "read_file", "{}"));
+
+        let mut parts = Vec::new();
+        flush_into_parts(&mut state, &mut parts).expect("valid flush");
+
+        // reasoning, text, tool(a), tool(b), step_finish
+        assert!(matches!(&parts[0], ProcessorPart::Reasoning { text, .. } if text == "r"));
+        assert!(matches!(&parts[1], ProcessorPart::Text { text } if text == "t"));
+        assert!(matches!(&parts[2], ProcessorPart::ToolCall { call_id, .. } if call_id == "a"));
+        assert!(matches!(&parts[3], ProcessorPart::ToolCall { call_id, .. } if call_id == "b"));
+        assert!(matches!(&parts[4], ProcessorPart::StepFinish { .. }));
+        // Drained.
+        assert!(state.current_reasoning.is_empty());
+        assert!(state.current_text.is_empty());
+        assert!(state.pending_tool_calls.is_empty());
     }
 }

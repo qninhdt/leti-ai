@@ -68,7 +68,24 @@ pub fn should_compact(
     provider_actual: Option<usize>,
 ) -> CompactDecision {
     let total = provider_actual.unwrap_or_else(|| estimate_conversation_tokens(msgs));
-    let limit = (f64::from(agent.context_window) * f64::from(agent.compaction_threshold)) as usize;
+    // M4 — defense in depth. `AgentDefinition::validate` rejects an invalid
+    // threshold at load time; this guard keeps the runtime safe even if an
+    // unvalidated definition reaches here. NaN or a non-positive threshold
+    // must NOT silently compact-every-turn (a <= 0.0 threshold yields
+    // `limit = 0`, and `total < 0` is never true → every turn would compact),
+    // so skip (and log) — never-compact is the safe failure mode vs. an
+    // infinite compaction loop.
+    let threshold = agent.compaction_threshold;
+    if threshold.is_nan() || threshold <= 0.0 {
+        tracing::error!(
+            agent = %agent.slug.as_str(),
+            threshold,
+            "compaction_threshold is NaN or non-positive — skipping compaction (validator bug upstream)"
+        );
+        return CompactDecision::Skip;
+    }
+    let threshold = threshold.clamp(0.0, 1.0);
+    let limit = (f64::from(agent.context_window) * f64::from(threshold)) as usize;
     if total < limit {
         return CompactDecision::Skip;
     }

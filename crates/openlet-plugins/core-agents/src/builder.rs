@@ -32,7 +32,7 @@ pub(crate) struct AgentBlueprint {
 /// Assemble an [`AgentDefinition`] from a blueprint, applying the tuning
 /// constants every built-in agent shares.
 pub(crate) fn build(bp: AgentBlueprint) -> AgentDefinition {
-    AgentDefinition {
+    let def = AgentDefinition {
         slug: AgentSlug::new(bp.slug).expect("static slug"),
         title: bp.title.into(),
         description: bp.description.into(),
@@ -47,5 +47,10 @@ pub(crate) fn build(bp: AgentBlueprint) -> AgentDefinition {
         compaction_threshold: COMPACTION_THRESHOLD,
         compaction_summary_cap_tokens: COMPACTION_SUMMARY_CAP_TOKENS,
         hidden: false,
-    }
+    };
+    // M4 — reject malformed numeric tuning at load time. The shared
+    // constants above are valid, so this only fires if a future edit breaks
+    // the invariant — fail loudly at boot rather than silently mis-compacting.
+    def.validate().expect("built-in agent definition invalid");
+    def
 }

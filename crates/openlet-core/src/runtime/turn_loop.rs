@@ -91,17 +91,24 @@ pub struct LoopContext {
 pub struct LoopOutcome {
     pub steps: usize,
     pub finish_reason: FinishReason,
-    pub final_assistant_message_id: MessageId,
+    /// Id of the last assistant message the loop produced, or `None` when
+    /// no model turn ran (e.g. a `before_turn` hook halted turn 0, or
+    /// max_steps was 0). H4 — this was previously a non-optional
+    /// `MessageId` defaulting to the nil UUID, which consumers (e.g.
+    /// `subagent_spawner`) would feed into `list_parts` and silently match
+    /// zero rows. `Option` forces callers to handle the no-message case.
+    pub final_assistant_message_id: Option<MessageId>,
 }
 
 /// Build a `Halted` loop outcome from the current step counter and the
-/// last real assistant message id. Falls back to a fresh id when no
-/// model turn has run yet (e.g. a `before_turn` hook halts turn 0).
+/// last real assistant message id. `final_assistant_message_id` is `None`
+/// when no model turn has run yet (e.g. a `before_turn` hook halts turn 0)
+/// rather than a nil-UUID sentinel.
 fn halted_outcome(steps: usize, last_assistant_id: Option<MessageId>) -> LoopOutcome {
     LoopOutcome {
         steps,
         finish_reason: FinishReason::Halted,
-        final_assistant_message_id: last_assistant_id.unwrap_or_default(),
+        final_assistant_message_id: last_assistant_id,
     }
 }
 
@@ -246,7 +253,7 @@ impl ConversationRuntime {
                 return Ok(LoopOutcome {
                     steps: model_steps,
                     finish_reason: outcome.finish_reason,
-                    final_assistant_message_id: outcome.assistant_message_id,
+                    final_assistant_message_id: Some(outcome.assistant_message_id),
                 });
             }
 
@@ -257,7 +264,7 @@ impl ConversationRuntime {
                 return Ok(LoopOutcome {
                     steps: model_steps,
                     finish_reason: FinishReason::EndTurn,
-                    final_assistant_message_id: outcome.assistant_message_id,
+                    final_assistant_message_id: Some(outcome.assistant_message_id),
                 });
             }
 
@@ -347,7 +354,7 @@ impl ConversationRuntime {
                 return Ok(LoopOutcome {
                     steps: model_steps,
                     finish_reason: FinishReason::Halted,
-                    final_assistant_message_id: outcome.assistant_message_id,
+                    final_assistant_message_id: Some(outcome.assistant_message_id),
                 });
             }
 
@@ -359,7 +366,7 @@ impl ConversationRuntime {
         Ok(LoopOutcome {
             steps: loop_ctx.max_steps,
             finish_reason: FinishReason::MaxSteps,
-            final_assistant_message_id: last_assistant_id.unwrap_or_default(),
+            final_assistant_message_id: last_assistant_id,
         })
     }
 
@@ -517,12 +524,59 @@ impl ConversationRuntime {
             }
         }
         // Post-compaction overflow check (amendment §P).
+        //
+        // H2-moved — thread the SAME provider-actual anchor the top-of-loop
+        // `should_compact` uses, instead of a hardcoded `None`, so the two
+        // checks share one mechanism (use provider-reported tokens when
+        // known; otherwise trust the heuristic). At THIS point
+        // `last_actual_tokens` was just reset to `None` above because the
+        // pre-compaction usage is stale and the compaction turn measured the
+        // OLD (large) input, not the new summary+tail projection — so this
+        // correctly falls back to the heuristic over `input.messages`. The
+        // post-compaction check tolerates a small heuristic overshoot to
+        // avoid false aborts when the heuristic and the provider tokenizer
+        // disagree.
         if matches!(
-            should_compact(&input.messages, agent, None),
+            should_compact(&input.messages, agent, *last_actual_tokens),
             CompactDecision::Run { .. }
         ) {
             return Err(CoreError::ContextOverflowAfterCompaction);
         }
         Ok(CompactionFlow::Continue)
+    }
+}
+
+#[cfg(test)]
+mod halted_outcome_tests {
+    //! H4 — `halted_outcome` must surface `final_assistant_message_id =
+    //! None` when no model turn produced an assistant message (e.g. a
+    //! `before_turn` hook halts turn 0). Previously it returned
+    //! `MessageId::default()` (the nil UUID), which the subagent consumer
+    //! fed into `list_parts`, silently matching zero rows and masking the
+    //! "no message" case as a real-but-empty lookup.
+    use super::*;
+
+    #[test]
+    fn halt_with_no_prior_turn_yields_none_not_nil_uuid() {
+        let outcome = halted_outcome(0, None);
+        assert_eq!(outcome.finish_reason, FinishReason::Halted);
+        assert_eq!(outcome.steps, 0);
+        assert!(
+            outcome.final_assistant_message_id.is_none(),
+            "halt before any model turn must be None, NOT a nil-UUID sentinel"
+        );
+    }
+
+    #[test]
+    fn halt_after_a_real_turn_preserves_the_message_id() {
+        let mid = MessageId::new();
+        let outcome = halted_outcome(3, Some(mid));
+        assert_eq!(outcome.finish_reason, FinishReason::Halted);
+        assert_eq!(outcome.steps, 3);
+        assert_eq!(
+            outcome.final_assistant_message_id,
+            Some(mid),
+            "halt after a model turn must carry that turn's assistant message id"
+        );
     }
 }

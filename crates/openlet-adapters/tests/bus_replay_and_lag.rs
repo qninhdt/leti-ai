@@ -229,3 +229,115 @@ async fn slow_subscriber_lags_rather_than_blocking_publisher() {
         "after Lagged, recv must yield buffered events, got {next:?}"
     );
 }
+
+/// H1 — the monotonic event-id counter MUST be seeded from the persisted
+/// `MAX(id)` on first durable publish, NOT from 0. The `events` table is
+/// durable across restarts; a counter that restarts at 0 each boot would
+/// re-issue ids 1.. and collide with surviving rows on the explicit-PK
+/// insert (`append_with_id`), so every durable publish after a restart
+/// would fail with a `UNIQUE` violation.
+///
+/// We simulate a restart by sharing one pool (the durable `events` table)
+/// across two `BroadcastBus` instances: the first writes some events, the
+/// second is a "fresh boot" over the same data.
+#[tokio::test]
+async fn durable_publish_after_restart_seeds_counter_from_max_id() {
+    let pool = make_pool().await;
+    let mem = SqliteMemoryStore::new(pool.clone());
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
+
+    // Boot #1: publish 3 durable events → ids 1, 2, 3.
+    {
+        let bus = BroadcastBus::with_repo(SqliteEventRepo::new(pool.clone()));
+        for _ in 0..3 {
+            bus.publish(session_status_event(session), Persistence::Durable)
+                .await
+                .unwrap();
+        }
+        let all = bus.replay_since(session, 0).await.unwrap();
+        let ids: Vec<_> = all.iter().map(|e| e.event_id.unwrap()).collect();
+        assert_eq!(ids, vec![1, 2, 3], "boot #1 assigns 1..=3");
+    }
+
+    // Boot #2: brand-new bus over the SAME durable table. Its counter is
+    // unseeded; the first durable publish must seed from MAX(id)=3 and
+    // assign 4 — NOT 1 (which would be a PK collision).
+    {
+        let bus = BroadcastBus::with_repo(SqliteEventRepo::new(pool.clone()));
+        bus.publish(session_status_event(session), Persistence::Durable)
+            .await
+            .expect("post-restart durable publish must not collide on PK");
+
+        let all = bus.replay_since(session, 0).await.unwrap();
+        let ids: Vec<_> = all.iter().map(|e| e.event_id.unwrap()).collect();
+        assert_eq!(
+            ids,
+            vec![1, 2, 3, 4],
+            "post-restart publish continues the id sequence at 4"
+        );
+    }
+}
+
+/// H1 — under concurrent durable publishes, event_ids must be assigned,
+/// persisted, AND broadcast in the same strictly-increasing order so a
+/// `Last-Event-ID`-tracking SSE subscriber never observes a gap. This
+/// guards the replay-seam contract: arrival order on the live channel must
+/// match id order (`routes/event.rs` drops live frames `id <= high_water`
+/// and replays strictly `id > after`, so an out-of-order broadcast is lost
+/// both live AND on replay).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_durable_publishes_broadcast_in_event_id_order() {
+    use std::sync::Arc;
+
+    const N: usize = 64;
+
+    let pool = make_pool().await;
+    let mem = SqliteMemoryStore::new(pool.clone());
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
+    let bus = Arc::new(BroadcastBus::with_repo(SqliteEventRepo::new(pool.clone())));
+
+    // Subscribe BEFORE publishing so every frame is observed live.
+    let mut rx = bus.subscribe(EventFilter::default());
+
+    // Fire N concurrent durable publishes.
+    let mut handles = Vec::new();
+    for _ in 0..N {
+        let bus = Arc::clone(&bus);
+        handles.push(tokio::spawn(async move {
+            bus.publish(session_status_event(session), Persistence::Durable)
+                .await
+                .unwrap();
+        }));
+    }
+    for h in handles {
+        h.await.unwrap();
+    }
+
+    // Collect the live-broadcast ids in ARRIVAL order.
+    let mut live_ids = Vec::with_capacity(N);
+    for _ in 0..N {
+        let d = rx.recv().await.unwrap();
+        live_ids.push(d.event_id.expect("durable event carries id"));
+    }
+
+    // Arrival order MUST be strictly increasing with no gaps (1..=N).
+    let expected: Vec<i64> = (1..=N as i64).collect();
+    assert_eq!(
+        live_ids, expected,
+        "live broadcast must arrive in strict event_id order with no gaps"
+    );
+
+    // The durable log MUST match exactly — replay returns the same set in
+    // the same order (no event dropped at the replay seam).
+    let replayed: Vec<i64> = bus
+        .replay_since(session, 0)
+        .await
+        .unwrap()
+        .iter()
+        .map(|e| e.event_id.unwrap())
+        .collect();
+    assert_eq!(
+        replayed, expected,
+        "durable replay must contain every event in id order"
+    );
+}

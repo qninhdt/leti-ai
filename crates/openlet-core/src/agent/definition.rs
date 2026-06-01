@@ -67,6 +67,31 @@ impl AgentDefinition {
             .map(|s| s.cacheable.as_str())
             .unwrap_or_default()
     }
+
+    /// M4 — validate numeric invariants the runtime relies on. Call this at
+    /// load time (builder / future from-toml path) so a malformed
+    /// `compaction_threshold` is rejected up front rather than silently
+    /// producing a degenerate compaction limit (a negative or NaN threshold
+    /// makes `context_window * threshold` zero/NaN, which would either
+    /// compact on every turn or never).
+    ///
+    /// Contract: `compaction_threshold` must be a real number in `(0.0, 1.0]`.
+    pub fn validate(&self) -> Result<(), String> {
+        let t = self.compaction_threshold;
+        if t.is_nan() {
+            return Err(format!(
+                "agent '{}': compaction_threshold is NaN (must be in (0.0, 1.0])",
+                self.slug.as_str()
+            ));
+        }
+        if !(t > 0.0 && t <= 1.0) {
+            return Err(format!(
+                "agent '{}': compaction_threshold {t} out of range (must be in (0.0, 1.0])",
+                self.slug.as_str()
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Default for PromptSegments {
@@ -75,5 +100,60 @@ impl Default for PromptSegments {
             cacheable: String::new(),
             dynamic: Arc::new(|_| String::new()),
         }
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    //! M4 — `compaction_threshold` must be a real number in `(0.0, 1.0]`.
+    use super::*;
+
+    fn agent_with_threshold(t: f32) -> AgentDefinition {
+        AgentDefinition {
+            slug: AgentSlug::new("general").unwrap(),
+            title: "General".into(),
+            description: String::new(),
+            prompt_segments: Some(PromptSegments::default()),
+            tool_allowlist: Vec::new(),
+            model_id: "test/model".into(),
+            default_temperature: 0.0,
+            context_window: 1000,
+            compaction_threshold: t,
+            compaction_summary_cap_tokens: 500,
+            hidden: false,
+        }
+    }
+
+    #[test]
+    fn accepts_valid_threshold() {
+        assert!(agent_with_threshold(0.8).validate().is_ok());
+        assert!(agent_with_threshold(1.0).validate().is_ok(), "1.0 inclusive");
+        assert!(
+            agent_with_threshold(f32::MIN_POSITIVE).validate().is_ok(),
+            "smallest positive is valid"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_threshold() {
+        let err = agent_with_threshold(-0.5).validate().unwrap_err();
+        assert!(err.contains("out of range"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_zero_threshold() {
+        // 0.0 would make the limit 0 → compact on every turn. Reject.
+        assert!(agent_with_threshold(0.0).validate().is_err());
+    }
+
+    #[test]
+    fn rejects_above_one_threshold() {
+        assert!(agent_with_threshold(1.5).validate().is_err());
+    }
+
+    #[test]
+    fn rejects_nan_threshold() {
+        let err = agent_with_threshold(f32::NAN).validate().unwrap_err();
+        assert!(err.contains("NaN"), "got: {err}");
     }
 }

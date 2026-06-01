@@ -123,6 +123,40 @@ async fn returns_timeout_when_no_reply_arrives() {
     assert_eq!(questions.pending_len(), 0);
 }
 
+/// H6 — when NO answer has arrived, a pre-cancelled token (operator kill /
+/// consent revocation = `CancelReason::SessionEnding`) MUST win: the tool
+/// returns the cancelled error, never serving an answer for a session the
+/// operator aborted. This is the consent-preserving half of the H6 fix;
+/// the already-delivered-answer half is unit-tested in `ask_user_runner`.
+#[tokio::test]
+async fn cancel_wins_when_no_answer_pending() {
+    let memory = Arc::new(StubMemory::with_capability(true));
+    let questions = Arc::new(QuestionRegistry::new());
+    let session_id = SessionId::new();
+    // Token already cancelled before the tool runs — no answer will ever
+    // be delivered.
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let ctx = test_ctx_with(
+        memory,
+        questions.clone(),
+        session_id,
+        cancel,
+        Duration::from_secs(60),
+    );
+    let tool = AskUserTool::with_timeout(Duration::from_secs(60));
+
+    let err = Tool::run(&tool, ctx, valid_input())
+        .await
+        .expect_err("cancelled session must not serve an answer");
+    match err {
+        ToolError::InvalidInput(code) => assert_eq!(code, "question_cancelled"),
+        other => panic!("expected question_cancelled, got {other:?}"),
+    }
+    // Slot released on the cancel path too.
+    assert_eq!(questions.pending_len(), 0);
+}
+
 fn valid_input() -> AskUserInput {
     AskUserInput {
         header: "Choose".to_string(),

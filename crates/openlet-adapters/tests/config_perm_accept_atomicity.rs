@@ -98,6 +98,64 @@ async fn accept_ask_restores_pending_on_persist_failure() {
     );
 }
 
+/// C2 (verify-only) — crash AFTER `repo.record` succeeds but BEFORE the
+/// in-memory `inner.push`. The persisted rule is orphaned in-memory for the
+/// remainder of that process, but the durability contract says it MUST be
+/// recovered on the next boot via the load path (`hydrate`). This test
+/// simulates the crash by persisting a rule directly through the repo
+/// (skipping the in-memory push entirely), then constructs a FRESH manager
+/// over the same pool and hydrates it — the rule must be active afterwards.
+///
+/// This documents and guards the recovery guarantee. It also justifies why
+/// `accept_ask` keeps the safe persist-first-then-push order (reversing it
+/// would open a TOCTOU privilege-escalation window): persist is the source of
+/// truth, the in-memory push is a same-process cache that the load path
+/// rebuilds.
+#[tokio::test]
+async fn persisted_rule_recovered_on_reload_after_crash_before_inmemory_push() {
+    let pool = open_in_memory().await.unwrap();
+    let session = make_session(&pool).await;
+
+    // Simulate the crash-after-persist orphan: write the rule straight to the
+    // repo and DO NOT push it into any in-memory ruleset. This is the exact
+    // state a process would be in if it died between `repo.record` (manager.rs
+    // :294) and `inner.push` (:299).
+    let repo = SqlitePermissionRepo::new(pool.clone());
+    let rec = openlet_adapters::sqlite::permission_repo::PermissionRecord {
+        session_id: session,
+        ask_id: openlet_core::types::permission::AskId::new(),
+        permission: "test:perm".into(),
+        decision: openlet_adapters::sqlite::permission_repo::PersistedDecision::Always,
+    };
+    repo.record(&rec).await.expect("persist rule");
+
+    // New boot: a fresh manager over the same pool. Before hydrate the rule is
+    // NOT yet in memory — a check would fall back to Ask.
+    let mgr = ConfigPermissionMgr::new().with_repo(SqlitePermissionRepo::new(pool.clone()));
+    let ctx = PermissionCtx {
+        session_id: session,
+        mode: PermissionMode::ReadOnly,
+    };
+    let req = PermissionRequest {
+        permission: "test:perm".into(),
+        reason: None,
+        timeout: None,
+    };
+    match mgr.check(ctx.clone(), req.clone()).await.unwrap() {
+        Decision::Pending { .. } => {} // expected pre-hydrate
+        other => panic!("expected Pending before hydrate; got {other:?}"),
+    }
+
+    // Load path replays persisted Always rules.
+    mgr.hydrate(&[session]).await.expect("hydrate");
+
+    // The orphaned-but-persisted rule is now active — recovery guaranteed.
+    match mgr.check(ctx, req).await.unwrap() {
+        Decision::Allow => {}
+        other => panic!("expected Allow after hydrate recovery; got {other:?}"),
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn double_accept_ask_has_exactly_one_winner() {
     const ITERS: usize = 50;

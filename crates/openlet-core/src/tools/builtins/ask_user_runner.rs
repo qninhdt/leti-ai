@@ -130,9 +130,25 @@ async fn await_reply(
     qid: QuestionId,
     mut rx: oneshot::Receiver<Vec<usize>>,
 ) -> Result<Vec<usize>, ToolError> {
+    // H6 — honor an ALREADY-DELIVERED answer first. If the user's reply
+    // landed on the oneshot BEFORE we reach the select, drain it and
+    // return it. Without this, a `cancel` that fires in the same scheduler
+    // tick would preempt a reply the user already gave (the biased select
+    // always polls `cancel` first), silently dropping a legitimate answer.
+    //
+    // We do NOT weaken cancellation: `cancel` = `CancelReason::SessionEnding`
+    // is an operator kill / consent revocation. It MUST still win over an
+    // answer that has NOT yet arrived. So we only short-circuit on an answer
+    // that is already buffered; otherwise we fall through to the still-`biased`
+    // select where cancel is preferred. We never coin-flip consent.
+    if let Some(buffered) = drain_buffered_answer(&mut rx) {
+        return buffered;
+    }
+
     // Race the reply against (a) the cancellation token from the loop
     // (session DELETE / abort) and (b) the timeout. Whichever fires
-    // first deregisters the entry.
+    // first deregisters the entry. `cancel` stays preferred (biased) so a
+    // not-yet-arrived answer cannot beat a revocation.
     tokio::select! {
         biased;
         () = ctx.cancel.cancelled() => {
@@ -150,6 +166,27 @@ async fn await_reply(
     }
 }
 
+/// H6 — non-blocking drain of an already-delivered answer.
+///
+/// Returns:
+/// - `Some(Ok(selected))` when an answer is already buffered on the oneshot
+///   (honored before the cancel-biased select can preempt it),
+/// - `Some(Err(cancelled))` when the sender was dropped without sending
+///   (mirrors the `Err(_)` arm of the select's receiver branch),
+/// - `None` when no answer is buffered yet (caller falls through to the
+///   still-`biased` cancel-vs-rx-vs-timeout select).
+fn drain_buffered_answer(
+    rx: &mut oneshot::Receiver<Vec<usize>>,
+) -> Option<Result<Vec<usize>, ToolError>> {
+    match rx.try_recv() {
+        Ok(selected) => Some(Ok(selected)),
+        Err(oneshot::error::TryRecvError::Empty) => None,
+        Err(oneshot::error::TryRecvError::Closed) => {
+            Some(Err(ToolError::InvalidInput(ERR_CANCELLED.to_string())))
+        }
+    }
+}
+
 struct SessionSlotGuard<'a> {
     ctx: &'a ToolCtx,
 }
@@ -162,6 +199,47 @@ impl<'a> SessionSlotGuard<'a> {
 
 impl Drop for SessionSlotGuard<'_> {
     fn drop(&mut self) {
-        self.ctx.questions.release_session_slot(self.ctx.session_id);
+        self.ctx.questions.remove_session_slot(self.ctx.session_id);
+    }
+}
+
+#[cfg(test)]
+mod h6_buffered_answer_tests {
+    //! H6 — an answer that has ALREADY been delivered before a cancel must
+    //! be honored, not dropped by the cancel-biased select. The drain helper
+    //! is the deterministic core of that guarantee.
+    use super::*;
+    use tokio::sync::oneshot;
+
+    #[test]
+    fn buffered_answer_is_returned_even_when_cancel_would_be_preferred() {
+        let (tx, mut rx) = oneshot::channel::<Vec<usize>>();
+        // Answer delivered BEFORE we drain.
+        tx.send(vec![2]).unwrap();
+        match drain_buffered_answer(&mut rx) {
+            Some(Ok(selected)) => assert_eq!(selected, vec![2]),
+            other => panic!("expected buffered answer to be honored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_buffered_answer_falls_through_to_select() {
+        let (_tx, mut rx) = oneshot::channel::<Vec<usize>>();
+        // Sender alive, nothing sent — must fall through (None) so the
+        // biased select (cancel-preferred) runs.
+        assert!(
+            drain_buffered_answer(&mut rx).is_none(),
+            "empty channel must fall through to the cancel-biased select"
+        );
+    }
+
+    #[test]
+    fn dropped_sender_maps_to_cancelled() {
+        let (tx, mut rx) = oneshot::channel::<Vec<usize>>();
+        drop(tx);
+        match drain_buffered_answer(&mut rx) {
+            Some(Err(ToolError::InvalidInput(code))) => assert_eq!(code, ERR_CANCELLED),
+            other => panic!("expected cancelled error on closed channel, got {other:?}"),
+        }
     }
 }
