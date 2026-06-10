@@ -1,11 +1,11 @@
-//! Parity test: drive the real `OpenAiCompatProvider` against the in-process
+//! Parity test: drive the real `OpenAiProvider` against the in-process
 //! mock service, assert the streamed `ChatDelta`s match the expected shape.
 //!
 //! The token `PARITY_SCENARIO:<name>` embedded in the user message picks the
 //! canned response — no live network, no API key.
 
 use futures::StreamExt;
-use openlet_adapters::openai_compat::OpenAiCompatProvider;
+use openlet_adapters::openai::OpenAiProvider;
 use openlet_core::adapters::model_provider::{ChatDelta, ChatRequest, FinishReason, ModelProvider};
 use openlet_core::error::ProviderError;
 use openlet_core::projection::{LlmMessage, LlmRole};
@@ -32,7 +32,7 @@ fn make_request(scenario: &str) -> ChatRequest {
     }
 }
 
-async fn drain(provider: &OpenAiCompatProvider, scenario: &str) -> Vec<ChatDelta> {
+async fn drain(provider: &OpenAiProvider, scenario: &str) -> Vec<ChatDelta> {
     let req = make_request(scenario);
     let mut stream = provider
         .chat_stream(req, CancellationToken::new())
@@ -48,7 +48,7 @@ async fn drain(provider: &OpenAiCompatProvider, scenario: &str) -> Vec<ChatDelta
     out
 }
 
-async fn drain_expect_err(provider: &OpenAiCompatProvider, scenario: &str) -> ProviderError {
+async fn drain_expect_err(provider: &OpenAiProvider, scenario: &str) -> ProviderError {
     let req = make_request(scenario);
     match provider.chat_stream(req, CancellationToken::new()).await {
         Err(e) => e,
@@ -66,7 +66,7 @@ async fn drain_expect_err(provider: &OpenAiCompatProvider, scenario: &str) -> Pr
 #[tokio::test]
 async fn parity_simple_text() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let deltas = drain(&provider, "simple_text").await;
 
@@ -95,7 +95,7 @@ async fn parity_simple_text() {
 #[tokio::test]
 async fn parity_with_tool_call() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let deltas = drain(&provider, "with_tool_call").await;
 
@@ -136,7 +136,7 @@ async fn parity_with_tool_call() {
 #[tokio::test]
 async fn parity_reasoning() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let deltas = drain(&provider, "reasoning").await;
 
@@ -154,7 +154,7 @@ async fn parity_reasoning() {
 #[tokio::test]
 async fn parity_rate_limit_maps_to_provider_error() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let err = drain_expect_err(&provider, "rate_limit").await;
     assert!(
@@ -168,7 +168,7 @@ async fn parity_context_overflow_maps_to_network_error() {
     // The current adapter maps non-2xx (other than 401/403/429) to
     // `Network`. This test pins that behavior so we notice if it changes.
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let err = drain_expect_err(&provider, "context_overflow").await;
     assert!(
@@ -180,7 +180,7 @@ async fn parity_context_overflow_maps_to_network_error() {
 #[tokio::test]
 async fn captured_request_carries_authorization_header() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let _ = drain(&provider, "simple_text").await;
 

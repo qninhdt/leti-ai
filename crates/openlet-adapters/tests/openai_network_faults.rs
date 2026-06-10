@@ -1,10 +1,10 @@
-//! Network failure paths for `OpenAiCompatProvider`.
+//! Network failure paths for `OpenAiProvider`.
 //!
 //! Drives the real provider against the in-process mock service +
 //! a hand-bound dropped TCP listener for connect-refused.
 //!
 //! Case coverage (subset of plan; rest covered by existing
-//! `openai_compat_parity.rs`):
+//! `openai_parity.rs`):
 //! - Connect refused → `ProviderError::Network`
 //! - Mid-stream disconnect → durable deltas seen so far + clean stream
 //!   terminate (no panic)
@@ -16,7 +16,7 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use openlet_adapters::openai_compat::OpenAiCompatProvider;
+use openlet_adapters::openai::OpenAiProvider;
 use openlet_core::adapters::model_provider::{ChatDelta, ChatRequest, ModelProvider};
 use openlet_core::error::ProviderError;
 use openlet_core::projection::{LlmMessage, LlmRole};
@@ -54,7 +54,7 @@ async fn connect_refused_surfaces_network_error_no_panic() {
     let addr = listener.local_addr().unwrap();
     drop(listener);
 
-    let provider = OpenAiCompatProvider::new(
+    let provider = OpenAiProvider::new(
         format!("http://{addr}/v1"),
         Some(SecretString::from("test-key")),
     );
@@ -74,7 +74,7 @@ async fn connect_refused_surfaces_network_error_no_panic() {
 #[tokio::test]
 async fn mid_stream_disconnect_yields_partial_deltas_then_terminates() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let req = make_request("mid_stream_cancel");
     let mut stream = provider
@@ -107,7 +107,7 @@ async fn mid_stream_disconnect_yields_partial_deltas_then_terminates() {
 #[tokio::test]
 async fn rate_limit_surfaces_retry_after_ms() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let req = make_request("rate_limit");
     let err = match provider.chat_stream(req, CancellationToken::new()).await {
@@ -132,7 +132,7 @@ async fn context_overflow_413_maps_to_network_error() {
     // future refactor adds a `ContextWindowExceeded` case at the
     // adapter, this test should be updated to match.
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let req = make_request("context_overflow");
     let err = match provider.chat_stream(req, CancellationToken::new()).await {
@@ -149,7 +149,7 @@ async fn context_overflow_413_maps_to_network_error() {
 #[tokio::test]
 async fn cancellation_after_open_terminates_stream() {
     let svc = MockOpenAiService::spawn().await.unwrap();
-    let provider = OpenAiCompatProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
+    let provider = OpenAiProvider::new(svc.base_url(), Some(SecretString::from("test-key")));
 
     let req = make_request("simple_text");
     let cancel = CancellationToken::new();

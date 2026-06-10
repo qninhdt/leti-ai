@@ -22,8 +22,7 @@ use serde_json::Value;
 /// hyphen so `claude-` never matches `claude2` and `gpt-` never matches
 /// `gptastic`. Slash-form (`anthropic/`) covers OpenRouter's
 /// vendor-prefixed names. Returns the [`ProviderCapabilities`] flags
-/// for that model family — used by both the prefix shaper here AND the
-/// `MultiProvider` router.
+/// for that model family.
 #[must_use]
 pub fn detect_quirks(model: &str) -> ProviderCapabilities {
     let mut caps = ProviderCapabilities::default();

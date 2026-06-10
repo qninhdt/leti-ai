@@ -15,7 +15,7 @@ use openlet_adapters::{
     config_perm::ConfigPermissionMgr,
     localfs::{LocalFilesystem, LocalFsArtifactStore},
     localshell::{LocalShellExecutor, LocalShellToolExecutor},
-    openai_compat::OpenAiCompatProvider,
+    openrouter::{OpenRouterConfig, OpenRouterProvider},
     sqlite::SqliteMemoryStore,
 };
 use openlet_core::adapters::hooked_event_sink::HookedEventSink;
@@ -102,7 +102,11 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
 
     let base_url = resolve_model_base_url();
     info!(model_base_url = %base_url, "model backend endpoint");
-    let provider = OpenAiCompatProvider::new(base_url, config.openrouter_api_key.clone());
+    let provider = OpenRouterProvider::new(
+        base_url,
+        config.openrouter_api_key.clone(),
+        openrouter_config_from_env(),
+    );
 
     let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(provider);
     let inner_memory: Arc<dyn openlet_core::adapters::MemoryStore> =
@@ -438,8 +442,21 @@ fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
 /// serve path and the diagnostics path can never disagree.
 fn resolve_model_base_url() -> String {
     let raw = std::env::var(openlet_server::diagnostics::MODEL_BASE_URL_ENV)
-        .unwrap_or_else(|_| openlet_adapters::openai_compat::DEFAULT_BASE_URL.to_string());
+        .unwrap_or_else(|_| openlet_adapters::openrouter::DEFAULT_BASE_URL.to_string());
     raw.strip_suffix('/').unwrap_or(&raw).to_string()
+}
+
+/// Build OpenRouter request-enrichment config from env. All optional —
+/// unset values send a vanilla OpenAI-shaped request. `HTTP-Referer` /
+/// `X-Title` are the app-attribution headers OpenRouter shows on its
+/// dashboards; they are non-secret.
+fn openrouter_config_from_env() -> OpenRouterConfig {
+    OpenRouterConfig {
+        referer: std::env::var("OPENLET_OPENROUTER_REFERER").ok(),
+        title: std::env::var("OPENLET_OPENROUTER_TITLE").ok(),
+        routing: None,
+        models_fallback: Vec::new(),
+    }
 }
 
 /// Build the tool registry from plugin-drained handles. Shared by the
@@ -564,9 +581,12 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
 
     tokio::fs::create_dir_all(&artifact_root).await.ok();
 
-    let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(
-        OpenAiCompatProvider::new(resolve_model_base_url(), config.openrouter_api_key.clone()),
-    );
+    let provider: Arc<dyn openlet_core::adapters::ModelProvider> =
+        Arc::new(OpenRouterProvider::new(
+            resolve_model_base_url(),
+            config.openrouter_api_key.clone(),
+            openrouter_config_from_env(),
+        ));
     let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
         Arc::new(SqliteMemoryStore::new(pool.clone()));
     let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());

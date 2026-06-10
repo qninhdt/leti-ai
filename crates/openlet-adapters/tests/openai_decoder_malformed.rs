@@ -9,7 +9,7 @@
 //! 5. `reasoning_content` AND `reasoning` in same chunk → exactly one
 //!    `Reasoning` delta emitted (precedence: `reasoning_content`)
 
-use openlet_adapters::openai_compat::chunk_decoder::decode_chunk;
+use openlet_adapters::openai::chunk_decoder::decode_chunk;
 use openlet_core::adapters::model_provider::{ChatDelta, FinishReason};
 use openlet_core::error::ProviderError;
 

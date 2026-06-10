@@ -10,7 +10,7 @@
 //! 4. `gpt-5*` `max_tokens: null` rename produces
 //!    `max_completion_tokens: null`.
 
-use openlet_adapters::openai_compat::prefix_shaping::{apply_request_shaping, detect_quirks};
+use openlet_adapters::openai::prefix_shaping::{apply_request_shaping, detect_quirks};
 use openlet_core::error::ProviderError;
 use serde_json::{Value, json};
 

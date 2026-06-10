@@ -26,7 +26,7 @@ use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
 use openlet_adapters::localshell::{LocalShellExecutor, LocalShellToolExecutor};
-use openlet_adapters::openai_compat::OpenAiCompatProvider;
+use openlet_adapters::openrouter::OpenRouterProvider;
 use openlet_adapters::sqlite::event_repo::SqliteEventRepo;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory, open_pool, run_migrations};
 use openlet_core::adapters::ModelProvider;
@@ -105,7 +105,7 @@ impl LiveServer {
         let model = std::env::var("OPENLET_LIVE_E2E_MODEL")
             .unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
         Self::boot(
-            openlet_adapters::openai_compat::DEFAULT_BASE_URL,
+            openlet_adapters::openrouter::DEFAULT_BASE_URL,
             Some(SecretString::from(key)),
             &model,
             None,
@@ -151,8 +151,11 @@ impl LiveServer {
         let events: Arc<dyn openlet_core::adapters::EventSink> =
             Arc::new(BroadcastBus::with_repo(event_repo));
 
-        let provider: Arc<dyn ModelProvider> =
-            Arc::new(OpenAiCompatProvider::new(base_url.to_string(), api_key));
+        let provider: Arc<dyn ModelProvider> = Arc::new(OpenRouterProvider::new(
+            base_url.to_string(),
+            api_key,
+            openlet_adapters::openrouter::OpenRouterConfig::default(),
+        ));
 
         let config = Config {
             bind_addr: "127.0.0.1:0".to_string(),

@@ -13,7 +13,7 @@
 //!    chunks.** Parser emits exactly one frame after the separator
 //!    arrives, and nothing before.
 
-use openlet_adapters::openai_compat::sse::SseParser;
+use openlet_adapters::openai::sse::SseParser;
 
 /// Canonical buffer: 3 frames + heartbeat. LF-only separators —
 /// providers don't mix CRLF and LF within a single stream, and the

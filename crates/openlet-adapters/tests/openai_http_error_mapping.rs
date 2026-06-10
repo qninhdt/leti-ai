@@ -1,4 +1,4 @@
-//! Wiremock-driven tests for `OpenAiCompatProvider` HTTP error mapping.
+//! Wiremock-driven tests for `OpenAiProvider` HTTP error mapping.
 //!
 //! Locks the contract for `map_http_error`:
 //! 1. 401 → `ProviderError::Auth` (with truncated body).
@@ -16,7 +16,7 @@
 mod common;
 
 use common::wiremock_helpers::mount_status_only;
-use openlet_adapters::openai_compat::OpenAiCompatProvider;
+use openlet_adapters::openai::OpenAiProvider;
 use openlet_core::adapters::ModelProvider;
 use openlet_core::adapters::model_provider::{ChatRequest, FinishReason};
 use openlet_core::error::ProviderError;
@@ -45,14 +45,14 @@ fn make_request(model: &str) -> ChatRequest {
     }
 }
 
-async fn make_provider(server: &MockServer) -> OpenAiCompatProvider {
-    OpenAiCompatProvider::new(
+async fn make_provider(server: &MockServer) -> OpenAiProvider {
+    OpenAiProvider::new(
         format!("{}/v1", server.uri()),
         Some(SecretString::new("sk-test".into())),
     )
 }
 
-async fn expect_err(provider: &OpenAiCompatProvider, model: &str) -> ProviderError {
+async fn expect_err(provider: &OpenAiProvider, model: &str) -> ProviderError {
     match provider
         .chat_stream(make_request(model), CancellationToken::new())
         .await
@@ -149,7 +149,7 @@ async fn unknown_4xx_maps_to_network_error() {
 async fn missing_api_key_returns_missing_credentials_error_before_request() {
     // Provider with no api key never hits the network — the error
     // surfaces synchronously from chat_stream.
-    let provider = OpenAiCompatProvider::new("https://example.invalid/v1".to_string(), None);
+    let provider = OpenAiProvider::new("https://example.invalid/v1".to_string(), None);
     let err = match provider
         .chat_stream(make_request("gpt-5"), CancellationToken::new())
         .await
