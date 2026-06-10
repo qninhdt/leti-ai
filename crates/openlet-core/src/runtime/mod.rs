@@ -19,6 +19,7 @@ pub mod question_registry;
 pub mod subagent;
 pub mod token_estimate;
 pub mod turn_loop;
+mod turn_loop_compaction;
 mod turn_loop_helpers;
 mod turn_stream;
 
