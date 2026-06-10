@@ -28,7 +28,7 @@ use openlet_plugin_api::context::CoreApi;
 use openlet_plugin_registry::{FinalizedRegistry, install_all};
 use openlet_server::{
     AgentResources, AppStateBuilder, RouterBuilder,
-    cli::{Cli, Command, DoctorArgs, DoctorFormat},
+    cli::{Cli, Command},
 };
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -36,6 +36,8 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+mod doctor_cmd;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -60,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
             run_server(config).await
         }
         Command::Audit(args) => openlet_server::audit::run(args, &config.data_dir).await,
-        Command::Doctor(args) => run_doctor(args, config).await,
+        Command::Doctor(args) => doctor_cmd::run_doctor(args, config).await,
     }
 }
 
@@ -410,7 +412,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
 /// after the conversation runtime is built. Plugin hook closures
 /// receive `Arc<dyn CoreApi>` and only invoke it from inside dispatch
 /// sites, well after boot has bound the runtime.
-async fn install_plugins(
+pub(crate) async fn install_plugins(
     core_api: Arc<dyn CoreApi>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
     memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
@@ -427,7 +429,7 @@ async fn install_plugins(
 /// Resolve the agent workspace root: `OPENLET_WORKSPACE` if set,
 /// otherwise `<data_dir>/workspace`. Pure — the caller creates the
 /// directory with whatever error handling its boot path needs.
-fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
+pub(crate) fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
     std::env::var("OPENLET_WORKSPACE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| config.data_dir.join("workspace"))
@@ -440,7 +442,7 @@ fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
 /// `…/v1/` interchangeably without producing `//chat/completions`. The
 /// env-var name is owned by the doctor probe and imported here so the
 /// serve path and the diagnostics path can never disagree.
-fn resolve_model_base_url() -> String {
+pub(crate) fn resolve_model_base_url() -> String {
     let raw = std::env::var(openlet_server::diagnostics::MODEL_BASE_URL_ENV)
         .unwrap_or_else(|_| openlet_adapters::openrouter::DEFAULT_BASE_URL.to_string());
     raw.strip_suffix('/').unwrap_or(&raw).to_string()
@@ -450,7 +452,7 @@ fn resolve_model_base_url() -> String {
 /// unset values send a vanilla OpenAI-shaped request. `HTTP-Referer` /
 /// `X-Title` are the app-attribution headers OpenRouter shows on its
 /// dashboards; they are non-secret.
-fn openrouter_config_from_env() -> OpenRouterConfig {
+pub(crate) fn openrouter_config_from_env() -> OpenRouterConfig {
     OpenRouterConfig {
         referer: std::env::var("OPENLET_OPENROUTER_REFERER").ok(),
         title: std::env::var("OPENLET_OPENROUTER_TITLE").ok(),
@@ -462,7 +464,7 @@ fn openrouter_config_from_env() -> OpenRouterConfig {
 /// Build the tool registry from plugin-drained handles. Shared by the
 /// `serve` and `doctor` boot paths so both materialize tools the same
 /// way.
-fn build_tool_registry(
+pub(crate) fn build_tool_registry(
     tools: Vec<openlet_core::tools::ToolHandle>,
 ) -> Arc<openlet_core::tools::ToolRegistry> {
     let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
@@ -475,7 +477,7 @@ fn build_tool_registry(
 /// Wire the single default agent (one workspace → one fs + shell) that
 /// MVP boot registers. Returns the generated id alongside the
 /// one-entry `agents` map both boot paths hand to `AppStateBuilder`.
-fn single_default_agent(
+pub(crate) fn single_default_agent(
     workspace_root: std::path::PathBuf,
     fs: Arc<dyn openlet_core::adapters::Filesystem>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
@@ -514,140 +516,4 @@ async fn shutdown_signal() {
         () = ctrl_c => info!("received Ctrl+C, shutting down"),
         () = term => info!("received SIGTERM, shutting down"),
     }
-}
-
-/// Build a minimal AppState off the live `Config`, run preflight
-/// diagnostics, print the (redacted) report, and exit with a status code
-/// matching the worst-case check.
-async fn run_doctor(args: DoctorArgs, config: Config) -> anyhow::Result<()> {
-    use openlet_server::diagnostics::run_diagnostics;
-
-    let state = build_doctor_state(&config).await?;
-    let report = run_diagnostics(&state).await;
-
-    match args.format {
-        DoctorFormat::Json => {
-            let value = report.to_redacted_json();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
-            );
-        }
-        DoctorFormat::Text => print_doctor_text(&report),
-    }
-
-    let code = report.exit_code();
-    if code != 0 {
-        std::process::exit(code);
-    }
-    Ok(())
-}
-
-fn print_doctor_text(report: &openlet_server::diagnostics::DoctorReport) {
-    use openlet_server::diagnostics::Status;
-    for c in &report.checks {
-        let glyph = match c.status {
-            Status::Healthy => "[OK]",
-            Status::Degraded => "[WARN]",
-            Status::Failed => "[FAIL]",
-        };
-        match &c.detail {
-            Some(d) => println!("{glyph} {} ({} ms) — {}", c.name, c.elapsed_ms, d),
-            None => println!("{glyph} {} ({} ms)", c.name, c.elapsed_ms),
-        }
-    }
-    let overall = match report.overall {
-        Status::Healthy => "Healthy",
-        Status::Degraded => "Degraded",
-        Status::Failed => "Failed",
-    };
-    println!("\nOverall: {overall}");
-}
-
-/// Build a slim AppState for the `doctor` subcommand. Same wiring as
-/// `run_server` but skips graceful shutdown / hook plumbing the report
-/// doesn't read. Crash recovery is intentionally NOT run here — `doctor`
-/// is read-only.
-async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::AppState> {
-    let db_path = config.data_dir.join("db.sqlite");
-    let artifact_root = config.data_dir.join("artifacts");
-
-    let pool = openlet_adapters::sqlite::open_pool(&db_path, 2)
-        .await
-        .with_context(|| format!("opening sqlite at {}", db_path.display()))?;
-    openlet_adapters::sqlite::run_migrations(&pool)
-        .await
-        .context("running sqlite migrations")?;
-
-    tokio::fs::create_dir_all(&artifact_root).await.ok();
-
-    let provider: Arc<dyn openlet_core::adapters::ModelProvider> =
-        Arc::new(OpenRouterProvider::new(
-            resolve_model_base_url(),
-            config.openrouter_api_key.clone(),
-            openrouter_config_from_env(),
-        ));
-    let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
-        Arc::new(SqliteMemoryStore::new(pool.clone()));
-    let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());
-    let events: Arc<dyn openlet_core::adapters::EventSink> =
-        Arc::new(BroadcastBus::with_repo(event_repo));
-
-    let workspace_root = resolve_workspace_root(config);
-    tokio::fs::create_dir_all(&workspace_root).await.ok();
-
-    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
-    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
-    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
-
-    let core_api: Arc<dyn openlet_plugin_api::context::CoreApi> =
-        Arc::new(openlet_server::core_api_impl::CoreApiImpl::new(
-            memory.clone(),
-            events.clone(),
-            Arc::new(config.clone()),
-        ));
-    let task_registry_dr = Arc::new(openlet_core::runtime::subagent::TaskRegistry::from_env());
-    let subagent_spawner_dr = Arc::new(openlet_server::RuntimeSubagentSpawner::new());
-    let spawner_dyn_dr: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> =
-        subagent_spawner_dr.clone();
-    let installed = install_plugins(
-        core_api,
-        shell.clone(),
-        memory.clone(),
-        task_registry_dr.clone(),
-        spawner_dyn_dr,
-    )
-    .await?;
-    let provider = installed.provider.unwrap_or(provider);
-    let hook_chains = Arc::new(installed.chains);
-
-    let tool_registry = build_tool_registry(installed.tools);
-
-    let (default_agent_id, agents) =
-        single_default_agent(workspace_root.clone(), fs_adapter, shell);
-
-    let mut plugin_registry = openlet_plugin_registry::PluginRegistry::new();
-    for plugin in installed.plugins {
-        plugin_registry.push(plugin);
-    }
-
-    AppStateBuilder::new()
-        .provider(provider)
-        .memory(memory)
-        .artifacts(Arc::new(LocalFsArtifactStore::new(
-            artifact_root,
-            pool.clone(),
-        )))
-        .tools(Arc::new(LocalShellToolExecutor::new()))
-        .tool_registry(tool_registry)
-        .events(events)
-        .permission(Arc::new(ConfigPermissionMgr::new()))
-        .config(Arc::new(config.clone()))
-        .plugin_registry(Arc::new(plugin_registry))
-        .hook_chains(hook_chains)
-        .agents(agents)
-        .default_agent_id(default_agent_id)
-        .agent_registry(Arc::new(openlet_core::agent::AgentRegistry::new()))
-        .build()
-        .context("building doctor app state")
 }
