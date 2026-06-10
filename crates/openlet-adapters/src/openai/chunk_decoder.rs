@@ -264,6 +264,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_openrouter_cost_into_usage() {
+        // OpenRouter returns an authoritative turn cost on the trailing
+        // usage chunk. It must reach `Usage.cost_usd` so the cost path
+        // prefers it over the static pricing table.
+        let p =
+            r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"cost":0.0123}}"#;
+        let deltas = decode_chunk(p).unwrap();
+        match &deltas[0] {
+            ChatDelta::Finish { usage: Some(u), .. } => assert_eq!(
+                u.cost_usd,
+                Some(rust_decimal::Decimal::from_str_exact("0.0123").unwrap())
+            ),
+            other => panic!("expected Finish with usage, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn trailing_usage_chunk_emits_finish_endturn() {
         let p = r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5}}"#;
         let deltas = decode_chunk(p).unwrap();
