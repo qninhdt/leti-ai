@@ -114,7 +114,7 @@ impl EventSink for BroadcastBus {
                     None => repo.max_event_id().await?,
                 };
                 let event_id = seed + 1;
-                let session_id = session_id_of(&ev);
+                let session_id = ev.session_id();
                 // Self-heal on append failure: drop the cached counter so the
                 // NEXT durable publish re-seeds from `SELECT MAX(id)`. This
                 // covers both a transient IO error (row NOT inserted → MAX(id)
@@ -183,38 +183,5 @@ impl EventSink for BroadcastBus {
                 event: ev,
             })
             .collect())
-    }
-}
-
-/// Extract the session id from an `AgentEvent` so it can be written to
-/// the `events.session_id` column for per-session replay queries.
-fn session_id_of(ev: &AgentEvent) -> Option<openlet_core::types::session::SessionId> {
-    match ev {
-        AgentEvent::SessionStatus { session_id, .. }
-        | AgentEvent::MessageCreated { session_id, .. }
-        | AgentEvent::PartCreated { session_id, .. }
-        | AgentEvent::PartDelta { session_id, .. }
-        | AgentEvent::PartUpdated { session_id, .. }
-        | AgentEvent::StepFinished { session_id, .. }
-        | AgentEvent::PermissionAsked { session_id, .. }
-        | AgentEvent::PermissionResolved { session_id, .. }
-        | AgentEvent::QuestionRequested { session_id, .. }
-        | AgentEvent::PlanModeEntered { session_id, .. }
-        | AgentEvent::PlanModeExited { session_id, .. }
-        | AgentEvent::AttachmentAccepted { session_id, .. } => Some(*session_id),
-        AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
-            *session_id
-        }
-        AgentEvent::SubagentStarted {
-            parent_session_id, ..
-        }
-        | AgentEvent::SubagentOutput {
-            parent_session_id, ..
-        }
-        | AgentEvent::SubagentFinished {
-            parent_session_id, ..
-        } => Some(*parent_session_id),
-        AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
-        AgentEvent::Heartbeat => None,
     }
 }

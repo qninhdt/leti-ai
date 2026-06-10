@@ -19,7 +19,7 @@ use axum::response::Sse;
 use axum::response::sse::{Event, KeepAlive};
 use futures::stream::{self, Stream, StreamExt};
 use openlet_core::adapters::event_sink::DeliveredEvent;
-use openlet_core::types::event::{AgentEvent, EventFilter};
+use openlet_core::types::event::EventFilter;
 use openlet_core::types::session::SessionId;
 use openlet_protocol::EventDto;
 use serde::Deserialize;
@@ -142,7 +142,7 @@ pub async fn stream(
                     .data(format!("{{\"missed\":{n}}}"))))
             }
             LiveItem::Event(d) => {
-                let allow = match (session_filter, event_session_id(&d.event)) {
+                let allow = match (session_filter, d.event.session_id()) {
                     (Some(want), Some(got)) => want == got,
                     (Some(_), None) => false,
                     (None, _) => true,
@@ -161,7 +161,7 @@ pub async fn stream(
 }
 
 fn encode_frame(d: DeliveredEvent) -> Result<Event, Infallible> {
-    let kind = event_kind(&d.event);
+    let kind = d.event.kind();
     let dto = EventDto::from(d.event);
     let mut frame = Event::default()
         .event(kind)
@@ -171,59 +171,4 @@ fn encode_frame(d: DeliveredEvent) -> Result<Event, Infallible> {
         frame = frame.id(id.to_string());
     }
     Ok(frame)
-}
-
-fn event_kind(ev: &AgentEvent) -> &'static str {
-    match ev {
-        AgentEvent::SessionStatus { .. } => "session.status",
-        AgentEvent::MessageCreated { .. } => "message.created",
-        AgentEvent::PartCreated { .. } => "part.created",
-        AgentEvent::PartDelta { .. } => "part.delta",
-        AgentEvent::PartUpdated { .. } => "part.updated",
-        AgentEvent::StepFinished { .. } => "step.finished",
-        AgentEvent::PermissionAsked { .. } => "permission.asked",
-        AgentEvent::PermissionResolved { .. } => "permission.resolved",
-        AgentEvent::Error { .. } => "error",
-        AgentEvent::PluginError { .. } => "plugin.error",
-        AgentEvent::QuestionRequested { .. } => "question.requested",
-        AgentEvent::PlanModeEntered { .. } => "plan_mode.entered",
-        AgentEvent::PlanModeExited { .. } => "plan_mode.exited",
-        AgentEvent::AttachmentAccepted { .. } => "attachment.accepted",
-        AgentEvent::SubagentStarted { .. } => "subagent.started",
-        AgentEvent::SubagentOutput { .. } => "subagent.output",
-        AgentEvent::SubagentFinished { .. } => "subagent.finished",
-        AgentEvent::NotificationEmitted { .. } => "notification.emitted",
-        AgentEvent::Heartbeat => "heartbeat",
-    }
-}
-
-fn event_session_id(ev: &AgentEvent) -> Option<SessionId> {
-    match ev {
-        AgentEvent::SessionStatus { session_id, .. }
-        | AgentEvent::MessageCreated { session_id, .. }
-        | AgentEvent::PartCreated { session_id, .. }
-        | AgentEvent::PartDelta { session_id, .. }
-        | AgentEvent::PartUpdated { session_id, .. }
-        | AgentEvent::StepFinished { session_id, .. }
-        | AgentEvent::PermissionAsked { session_id, .. }
-        | AgentEvent::PermissionResolved { session_id, .. }
-        | AgentEvent::QuestionRequested { session_id, .. }
-        | AgentEvent::PlanModeEntered { session_id, .. }
-        | AgentEvent::PlanModeExited { session_id, .. }
-        | AgentEvent::AttachmentAccepted { session_id, .. } => Some(*session_id),
-        AgentEvent::Error { session_id, .. } | AgentEvent::PluginError { session_id, .. } => {
-            *session_id
-        }
-        AgentEvent::SubagentStarted {
-            parent_session_id, ..
-        }
-        | AgentEvent::SubagentOutput {
-            parent_session_id, ..
-        }
-        | AgentEvent::SubagentFinished {
-            parent_session_id, ..
-        } => Some(*parent_session_id),
-        AgentEvent::NotificationEmitted { session_id, .. } => *session_id,
-        AgentEvent::Heartbeat => None,
-    }
 }

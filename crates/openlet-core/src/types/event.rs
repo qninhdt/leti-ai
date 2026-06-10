@@ -175,6 +175,71 @@ pub enum AgentEvent {
     Heartbeat,
 }
 
+impl AgentEvent {
+    /// Stable wire discriminator (the SSE `event:` name / persisted kind).
+    /// Single source of truth so the SSE encoder and the event repo can
+    /// never disagree on the string for a variant.
+    #[must_use]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::SessionStatus { .. } => "session.status",
+            Self::MessageCreated { .. } => "message.created",
+            Self::PartCreated { .. } => "part.created",
+            Self::PartDelta { .. } => "part.delta",
+            Self::PartUpdated { .. } => "part.updated",
+            Self::StepFinished { .. } => "step.finished",
+            Self::PermissionAsked { .. } => "permission.asked",
+            Self::PermissionResolved { .. } => "permission.resolved",
+            Self::Error { .. } => "error",
+            Self::PluginError { .. } => "plugin.error",
+            Self::QuestionRequested { .. } => "question.requested",
+            Self::PlanModeEntered { .. } => "plan_mode.entered",
+            Self::PlanModeExited { .. } => "plan_mode.exited",
+            Self::AttachmentAccepted { .. } => "attachment.accepted",
+            Self::SubagentStarted { .. } => "subagent.started",
+            Self::SubagentOutput { .. } => "subagent.output",
+            Self::SubagentFinished { .. } => "subagent.finished",
+            Self::NotificationEmitted { .. } => "notification.emitted",
+            Self::Heartbeat => "heartbeat",
+        }
+    }
+
+    /// The session this event belongs to, if any. Subagent events carry
+    /// the PARENT session so per-session SSE subscribers see child
+    /// fan-out; `Error`/`PluginError`/`NotificationEmitted` are
+    /// session-optional; `Heartbeat` has none.
+    #[must_use]
+    pub fn session_id(&self) -> Option<SessionId> {
+        match self {
+            Self::SessionStatus { session_id, .. }
+            | Self::MessageCreated { session_id, .. }
+            | Self::PartCreated { session_id, .. }
+            | Self::PartDelta { session_id, .. }
+            | Self::PartUpdated { session_id, .. }
+            | Self::StepFinished { session_id, .. }
+            | Self::PermissionAsked { session_id, .. }
+            | Self::PermissionResolved { session_id, .. }
+            | Self::QuestionRequested { session_id, .. }
+            | Self::PlanModeEntered { session_id, .. }
+            | Self::PlanModeExited { session_id, .. }
+            | Self::AttachmentAccepted { session_id, .. } => Some(*session_id),
+            Self::Error { session_id, .. }
+            | Self::PluginError { session_id, .. }
+            | Self::NotificationEmitted { session_id, .. } => *session_id,
+            Self::SubagentStarted {
+                parent_session_id, ..
+            }
+            | Self::SubagentOutput {
+                parent_session_id, ..
+            }
+            | Self::SubagentFinished {
+                parent_session_id, ..
+            } => Some(*parent_session_id),
+            Self::Heartbeat => None,
+        }
+    }
+}
+
 /// Discriminator for `AttachmentAccepted`. Mirrors the upload route's
 /// content-sniff result so the frontend doesn't have to re-classify.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -260,4 +325,55 @@ pub struct Usage {
 pub struct EventFilter {
     pub session_id: Option<SessionId>,
     pub include_transient: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::session::SessionId;
+
+    /// Locks the wire discriminators. The SSE encoder and the SQLite
+    /// event repo both depend on these exact strings; a silent rename
+    /// would desync persisted rows from live frames. If a variant is
+    /// added, extend this list deliberately.
+    #[test]
+    fn kind_strings_are_stable() {
+        let sid = SessionId::new();
+        let cases: &[(AgentEvent, &str)] = &[
+            (
+                AgentEvent::Error {
+                    session_id: Some(sid),
+                    code: "x".into(),
+                    message: "y".into(),
+                },
+                "error",
+            ),
+            (
+                AgentEvent::PluginError {
+                    session_id: None,
+                    plugin_id: "p".into(),
+                    hook: "h".into(),
+                    message: "m".into(),
+                },
+                "plugin.error",
+            ),
+            (AgentEvent::Heartbeat, "heartbeat"),
+        ];
+        for (ev, want) in cases {
+            assert_eq!(ev.kind(), *want);
+        }
+    }
+
+    /// Subagent events report the PARENT session; `Heartbeat` has none.
+    #[test]
+    fn session_id_routing() {
+        let parent = SessionId::new();
+        let started = AgentEvent::SubagentStarted {
+            task_id: uuid::Uuid::nil(),
+            parent_session_id: parent,
+            subagent_type: "t".into(),
+        };
+        assert_eq!(started.session_id(), Some(parent));
+        assert_eq!(AgentEvent::Heartbeat.session_id(), None);
+    }
 }
