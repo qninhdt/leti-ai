@@ -5,6 +5,7 @@
 pub mod app_state;
 pub mod app_state_builder;
 pub mod audit;
+pub mod auth;
 pub mod cli;
 pub mod core_api_impl;
 pub mod diagnostics;
