@@ -16,6 +16,7 @@ pub mod notif_bucket;
 pub mod openapi;
 pub mod router;
 pub mod routes;
+pub mod subagent_driver;
 pub mod subagent_spawner;
 pub mod turn_driver;
 pub mod workspace_resolver;
