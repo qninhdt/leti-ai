@@ -84,6 +84,22 @@ pub struct StepOutcome {
 pub struct Processor;
 
 impl Processor {
+    /// Reject a brand-new tool-call index once the pending map is at the
+    /// cap. Existing indices are always allowed (they don't grow the map).
+    /// Shared by `ToolCallStart` and `ToolCallArgsDelta` so an adversarial
+    /// stream can't bypass the bound via either entry point (ISSUE-A11).
+    fn reject_if_over_cap(
+        pending: &BTreeMap<usize, PendingToolCall>,
+        index: usize,
+    ) -> Result<(), ProviderError> {
+        if pending.len() >= MAX_PENDING_TOOL_CALLS && !pending.contains_key(&index) {
+            return Err(ProviderError::Decode(format!(
+                "too many pending tool calls (cap {MAX_PENDING_TOOL_CALLS})"
+            )));
+        }
+        Ok(())
+    }
+
     /// Apply one `ChatDelta`. Returns parts/events to persist+publish and
     /// the next state. Errors short-circuit the turn (the runtime should
     /// stop draining the stream and finalize with `reason=error`).
@@ -133,13 +149,7 @@ impl Processor {
                         )));
                     }
                 }
-                if state.pending_tool_calls.len() >= MAX_PENDING_TOOL_CALLS
-                    && !state.pending_tool_calls.contains_key(&index)
-                {
-                    return Err(ProviderError::Decode(format!(
-                        "too many pending tool calls (cap {MAX_PENDING_TOOL_CALLS})"
-                    )));
-                }
+                Self::reject_if_over_cap(&state.pending_tool_calls, index)?;
                 state.pending_tool_calls.insert(
                     index,
                     PendingToolCall {
@@ -154,13 +164,7 @@ impl Processor {
                 // index would otherwise insert via `or_default()` and bypass
                 // the cap, letting an adversarial stream grow the map without
                 // bound (ISSUE-A11). Existing indices are always allowed.
-                if state.pending_tool_calls.len() >= MAX_PENDING_TOOL_CALLS
-                    && !state.pending_tool_calls.contains_key(&index)
-                {
-                    return Err(ProviderError::Decode(format!(
-                        "too many pending tool calls (cap {MAX_PENDING_TOOL_CALLS})"
-                    )));
-                }
+                Self::reject_if_over_cap(&state.pending_tool_calls, index)?;
                 let entry = state.pending_tool_calls.entry(index).or_default();
                 entry.args_buf.push_str(&args_chunk);
                 events.push(ProcessorEvent::PartDelta {

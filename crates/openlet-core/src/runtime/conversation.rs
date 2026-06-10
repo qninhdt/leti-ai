@@ -177,11 +177,11 @@ impl ConversationRuntime {
         )
         .await?;
 
-        // OnChatHeaders — auth/tracing headers per provider call. Phase
-        // 4 widens `ModelProvider::chat_stream` to consume the headers;
-        // for now plugins can register and observe (audit logs, metrics)
-        // but any `Replace` mutation is silently dropped until phase 4.
-        crate::runtime::chat_hooks::run_chat_headers(
+        // OnChatHeaders — auth/tracing headers per provider call. Plugins
+        // return header pairs (e.g. service-account auth, trace ids); the
+        // provider merges them over the request, filtering reserved
+        // auth-bearing names so a plugin can't hijack upstream credentials.
+        let plugin_headers = crate::runtime::chat_hooks::run_chat_headers(
             &self.hook_chains,
             &self.events,
             session_id,
@@ -197,7 +197,7 @@ impl ConversationRuntime {
             temperature: params.temperature,
             tools: input.tools,
             stream: true,
-            headers: Default::default(),
+            headers: plugin_headers,
         };
 
         let outcome = self
@@ -330,6 +330,14 @@ impl ConversationRuntime {
     /// boundaries.
     pub fn add_session_cost_external(&self, session_id: SessionId, delta: Decimal) {
         self.add_session_cost(session_id, delta);
+    }
+
+    /// Drop the cumulative-cost entry for a session. Called when a session
+    /// is deleted (the true terminal — `Idle`/`Errored` are resumable, so
+    /// the entry must survive those). Prevents the cost map from growing
+    /// unbounded over a long-lived process. No-op for unknown sessions.
+    pub fn evict_session_cost(&self, session_id: SessionId) {
+        self.session_costs.remove(&session_id);
     }
 
     async fn create_assistant_message(

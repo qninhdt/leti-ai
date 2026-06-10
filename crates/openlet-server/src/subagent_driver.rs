@@ -87,7 +87,11 @@ pub(crate) async fn drive_subagent(
     // as a real lookup.
     if let Ok(o) = &outcome {
         if let Some(final_msg_id) = o.final_assistant_message_id {
-            if let Ok(parts) = state.memory.list_parts(child_session_id, final_msg_id).await {
+            if let Ok(parts) = state
+                .memory
+                .list_parts(child_session_id, final_msg_id)
+                .await
+            {
                 let mut buf = String::new();
                 for p in parts {
                     if let Part::Text { text, .. } = p {

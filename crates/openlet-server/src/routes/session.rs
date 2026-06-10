@@ -114,6 +114,10 @@ pub async fn delete(
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), exited.notified()).await;
     }
     state.memory.delete_session(sid).await?;
+    // Drop the cumulative-cost entry now the session is gone — DELETE is
+    // the true terminal (Idle/Errored are resumable), so this is the one
+    // place it's safe to evict without losing mid-conversation totals.
+    state.runtime.evict_session_cost(sid);
     publish_status(
         &state.events,
         sid,

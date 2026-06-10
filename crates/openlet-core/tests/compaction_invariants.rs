@@ -91,7 +91,7 @@ proptest! {
         let limit = (f64::from(ctx) * 0.8) as usize;
         // Pick an actual strictly below the limit.
         let actual = actual_short.min(limit.saturating_sub(1));
-        prop_assert_eq!(should_compact(&msgs, &agent, Some(actual)), CompactDecision::Skip);
+        prop_assert_eq!(should_compact(&msgs, &agent, Some(actual), 0), CompactDecision::Skip);
     }
 
     /// Provider-actual at or above the threshold ALWAYS runs and the
@@ -106,7 +106,7 @@ proptest! {
         let agent = agent_with(ctx, 0.8);
         let limit = (f64::from(ctx) * 0.8) as usize;
         let actual = limit.saturating_add(over).max(limit);
-        match should_compact(&msgs, &agent, Some(actual)) {
+        match should_compact(&msgs, &agent, Some(actual), 0) {
             CompactDecision::Run { keep } => {
                 prop_assert!(keep <= msgs.len(), "keep {} exceeds msgs.len() {}", keep, msgs.len());
                 prop_assert!(keep <= PRESERVE_RECENT, "keep {} exceeds PRESERVE_RECENT", keep);

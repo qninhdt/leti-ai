@@ -57,7 +57,18 @@ where
 
     fn input_schema(&self) -> Value {
         let schema = schema_for!(T::Input);
-        serde_json::to_value(schema).unwrap_or(Value::Null)
+        serde_json::to_value(schema).unwrap_or_else(|e| {
+            // A schemars-generated schema is always serializable, so this
+            // path should be unreachable. If it ever fires, surface it
+            // loudly rather than silently shipping a null schema (which the
+            // provider would reject or mis-handle as "no input").
+            tracing::error!(
+                tool = Tool::name(self),
+                error = %e,
+                "tool input schema failed to serialize; sending empty object schema"
+            );
+            serde_json::json!({ "type": "object" })
+        })
     }
 
     fn permission(&self, input: &Value) -> Result<PermissionRequest, ToolError> {

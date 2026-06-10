@@ -6,8 +6,9 @@
 //! same root's bucket) so a depth-3 fan-out can't bypass the cap by
 //! spreading work across grandchildren.
 
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use rust_decimal::Decimal;
@@ -42,7 +43,46 @@ pub struct TaskRegistry {
     /// Quota counter per ROOT session. Every started task increments
     /// `session_descendants[root]`; completion / cancellation decrements.
     session_descendants: Arc<DashMap<SessionId, AtomicUsize>>,
+    /// Terminal snapshots retained after `finalize` removes the live
+    /// entry, so a `poll`/`await_completion` that races behind `finalize`
+    /// still returns the real result instead of a spurious "vanished".
+    /// Bounded ring — see [`TerminalCache`].
+    terminal: Arc<Mutex<TerminalCache>>,
     max_per_session: usize,
+}
+
+/// Bounded LRU-ish cache of terminal task snapshots. A subagent that
+/// finishes and finalizes before its parent's `await_completion` even
+/// looks up the live entry would otherwise see `None` ("task vanished")
+/// despite having succeeded. `finalize` records the terminal snapshot
+/// here first; lookups fall back to it. Capacity-capped so a long-lived
+/// server with many short subagents can't grow it without bound.
+#[derive(Default)]
+struct TerminalCache {
+    map: HashMap<TaskId, TaskSnapshot>,
+    order: VecDeque<TaskId>,
+}
+
+/// Max terminal snapshots retained. Generous for the await/poll race
+/// window (a parent reads its child's result within milliseconds of
+/// finalize) while bounding memory on a busy server.
+const TERMINAL_CACHE_CAP: usize = 1024;
+
+impl TerminalCache {
+    fn insert(&mut self, id: TaskId, snap: TaskSnapshot) {
+        if self.map.insert(id, snap).is_none() {
+            self.order.push_back(id);
+            while self.order.len() > TERMINAL_CACHE_CAP {
+                if let Some(evict) = self.order.pop_front() {
+                    self.map.remove(&evict);
+                }
+            }
+        }
+    }
+
+    fn get(&self, id: TaskId) -> Option<TaskSnapshot> {
+        self.map.get(&id).cloned()
+    }
 }
 
 impl TaskRegistry {
@@ -54,6 +94,7 @@ impl TaskRegistry {
         Self {
             tasks: Arc::new(DashMap::new()),
             session_descendants: Arc::new(DashMap::new()),
+            terminal: Arc::new(Mutex::new(TerminalCache::default())),
             max_per_session,
         }
     }
@@ -128,7 +169,10 @@ impl TaskRegistry {
 
     #[must_use]
     pub fn poll(&self, id: TaskId) -> Option<TaskSnapshot> {
-        let handle = self.tasks.get(&id)?.clone();
+        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
+            // Lost the race with `finalize` — fall back to the terminal cache.
+            return self.terminal.lock().unwrap().get(id);
+        };
         let status = handle.status.blocking_read().clone();
         let output = handle.output.blocking_read().clone();
         let cost = *handle.cost_usd.blocking_read();
@@ -146,7 +190,10 @@ impl TaskRegistry {
     /// [`Self::poll`] uses `blocking_read` and panics under a
     /// `current_thread` runtime if the lock is held by an async writer.
     pub async fn poll_async(&self, id: TaskId) -> Option<TaskSnapshot> {
-        let handle = self.tasks.get(&id)?.clone();
+        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
+            // Lost the race with `finalize` — fall back to the terminal cache.
+            return self.terminal.lock().unwrap().get(id);
+        };
         let status = handle.status.read().await.clone();
         let output = handle.output.read().await.clone();
         let cost = *handle.cost_usd.read().await;
@@ -180,7 +227,12 @@ impl TaskRegistry {
     /// Park until task `id` finishes (status becomes terminal). Returns
     /// `None` if the task id was never installed or was already removed.
     pub async fn await_completion(&self, id: TaskId) -> Option<TaskSnapshot> {
-        let handle = self.tasks.get(&id)?.clone();
+        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
+            // Lost the race: the driver already finalized (removed the
+            // live entry) before we looked it up. The terminal snapshot
+            // recorded by `set_status` is the authoritative result.
+            return self.terminal.lock().unwrap().get(id);
+        };
         loop {
             // `Notified` futures are NOT subscribed until polled or
             // explicitly enabled. Without this, a `set_status(terminal)
@@ -239,12 +291,25 @@ impl TaskRegistry {
     /// Replace the status atomically and signal `finished` waiters so
     /// `await_completion` can resume.
     pub async fn set_status(&self, id: TaskId, status: TaskStatus) {
-        let Some(handle) = self.tasks.get(&id) else {
+        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
             return;
         };
         {
             let mut s = handle.status.write().await;
-            *s = status;
+            *s = status.clone();
+        }
+        // Record the terminal snapshot BEFORE notifying waiters so a
+        // racing `finalize` (which removes the live entry) can't strand a
+        // poll/await that lost the lookup race — they fall back to this.
+        if status.is_terminal() {
+            let snap = TaskSnapshot {
+                task_id: id,
+                status,
+                output: handle.output.read().await.clone(),
+                cost_usd: *handle.cost_usd.read().await,
+                finished: true,
+            };
+            self.terminal.lock().unwrap().insert(id, snap);
         }
         handle.finished.notify_waiters();
     }

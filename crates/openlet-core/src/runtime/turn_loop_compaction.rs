@@ -200,7 +200,7 @@ impl ConversationRuntime {
         // avoid false aborts when the heuristic and the provider tokenizer
         // disagree.
         if matches!(
-            should_compact(&input.messages, agent, *last_actual_tokens),
+            should_compact(&input.messages, agent, *last_actual_tokens, 0),
             CompactDecision::Run { .. }
         ) {
             return Err(CoreError::ContextOverflowAfterCompaction);

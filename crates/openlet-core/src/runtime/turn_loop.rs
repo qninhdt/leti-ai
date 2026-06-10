@@ -125,6 +125,11 @@ impl ConversationRuntime {
         let session_id = input.session_id;
         let mut last_assistant_id: Option<MessageId> = None;
         let mut last_actual_tokens: Option<usize> = None;
+        // Count of projected messages sent on the turn that produced
+        // `last_actual_tokens`. Messages beyond this in `input.messages`
+        // are the "unsent tail" (tool results + the assistant turn just
+        // produced) not yet reflected in the provider's prompt-token count.
+        let mut sent_message_count: usize = 0;
         let mut compacted_this_loop = false;
         // Compaction iterations don't count against the model-step budget;
         // they're not the model doing user-visible work, just keeping the
@@ -140,9 +145,22 @@ impl ConversationRuntime {
             // compaction-induced turn to avoid recursion.
             if let Some(agent) = loop_ctx.agent.as_ref() {
                 if !compacted_this_loop {
-                    if let CompactDecision::Run { keep } =
-                        should_compact(&input.messages, agent, last_actual_tokens)
-                    {
+                    // Estimate tokens for messages appended since the last
+                    // provider-reported prompt size (tool results from the
+                    // turn just completed). Added to `last_actual_tokens`
+                    // so a large tool result triggers compaction this cycle
+                    // rather than overflowing the window next turn.
+                    let unsent_tail_tokens = input
+                        .messages
+                        .get(sent_message_count..)
+                        .map(crate::runtime::token_estimate::estimate_conversation_tokens)
+                        .unwrap_or(0);
+                    if let CompactDecision::Run { keep } = should_compact(
+                        &input.messages,
+                        agent,
+                        last_actual_tokens,
+                        unsent_tail_tokens,
+                    ) {
                         compacted_this_loop = true;
                         match self
                             .run_compaction(
@@ -201,6 +219,11 @@ impl ConversationRuntime {
             last_assistant_id = Some(outcome.assistant_message_id);
             if let Some(u) = outcome.usage.as_ref() {
                 last_actual_tokens = Some(u.input_tokens as usize);
+                // Anchor the unsent-tail boundary: these are the messages
+                // whose tokens `provider_actual` now accounts for. Tool
+                // results appended after this turn fall beyond the boundary
+                // and are estimated separately by the next compaction check.
+                sent_message_count = input.messages.len();
             }
             // Reset the per-loop compaction guard after a real model turn
             // — subsequent turns may need to compact again.
@@ -355,7 +378,6 @@ impl ConversationRuntime {
             final_assistant_message_id: last_assistant_id,
         })
     }
-
 }
 
 #[cfg(test)]

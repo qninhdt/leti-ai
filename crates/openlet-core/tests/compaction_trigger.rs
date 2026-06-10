@@ -34,14 +34,17 @@ fn user_msg(body: &str) -> LlmMessage {
 fn skips_under_threshold() {
     let agent = agent_with_window(10_000, 0.8);
     let convo = vec![user_msg("hello")];
-    assert_eq!(should_compact(&convo, &agent, None), CompactDecision::Skip);
+    assert_eq!(
+        should_compact(&convo, &agent, None, 0),
+        CompactDecision::Skip
+    );
 }
 
 #[test]
 fn fires_via_provider_actual() {
     let agent = agent_with_window(10_000, 0.8);
     let convo = vec![user_msg("hi")];
-    let d = should_compact(&convo, &agent, Some(8_500));
+    let d = should_compact(&convo, &agent, Some(8_500), 0);
     match d {
         CompactDecision::Run { keep } => assert!(keep <= PRESERVE_RECENT),
         _ => panic!("expected Run"),
@@ -54,7 +57,7 @@ fn fires_via_heuristic() {
     let big = "x".repeat(4_000); // 4000 / 4 = 1000 tokens, threshold 800
     let convo = vec![user_msg(&big)];
     assert!(matches!(
-        should_compact(&convo, &agent, None),
+        should_compact(&convo, &agent, None, 0),
         CompactDecision::Run { .. }
     ));
 }
@@ -64,7 +67,7 @@ fn keep_capped_by_history_length() {
     let agent = agent_with_window(1_000, 0.8);
     let big = "x".repeat(4_000);
     let convo = vec![user_msg(&big), user_msg(&big)]; // only 2 messages
-    match should_compact(&convo, &agent, Some(2_000)) {
+    match should_compact(&convo, &agent, Some(2_000), 0) {
         CompactDecision::Run { keep } => assert_eq!(keep, 2),
         _ => panic!("expected Run"),
     }

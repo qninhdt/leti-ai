@@ -55,16 +55,30 @@ pub enum CompactDecision {
 
 /// Inspect a projection and decide whether to compact.
 ///
-/// Threshold: `agent.context_window * agent.compaction_threshold`. When
-/// `provider_actual` is `Some` it overrides the heuristic — this is the
-/// path taken after the first turn returns `usage.prompt_tokens`.
+/// Threshold: `agent.context_window * agent.compaction_threshold`.
+///
+/// Token accounting:
+/// - When `provider_actual` is `Some`, it is the prompt size the model
+///   last measured (`usage.prompt_tokens`). It covers the history sent on
+///   that turn but NOT messages appended since (tool results from the
+///   turn just completed). `unsent_tail_tokens` — the heuristic estimate
+///   of that appended tail — is added so a large tool result triggers
+///   compaction THIS cycle instead of one turn late (which could overflow
+///   the model window first). Pass `0` when nothing was appended since.
+/// - When `provider_actual` is `None` (before the first turn returns
+///   usage, or right after a compaction reset), the full heuristic over
+///   `msgs` is used and `unsent_tail_tokens` is ignored.
 #[must_use]
 pub fn should_compact(
     msgs: &[LlmMessage],
     agent: &AgentDefinition,
     provider_actual: Option<usize>,
+    unsent_tail_tokens: usize,
 ) -> CompactDecision {
-    let total = provider_actual.unwrap_or_else(|| estimate_conversation_tokens(msgs));
+    let total = match provider_actual {
+        Some(actual) => actual.saturating_add(unsent_tail_tokens),
+        None => estimate_conversation_tokens(msgs),
+    };
     // Defense in depth. `AgentDefinition::validate` rejects an invalid
     // threshold at load time; this guard keeps the runtime safe even if an
     // unvalidated definition reaches here. NaN or a non-positive threshold
@@ -228,7 +242,7 @@ mod tests {
     #[test]
     fn skips_when_under_threshold() {
         let convo = vec![msg(LlmRole::User, "hello")];
-        let d = should_compact(&convo, &agent(), None);
+        let d = should_compact(&convo, &agent(), None, 0);
         assert_eq!(d, CompactDecision::Skip);
     }
 
@@ -236,7 +250,7 @@ mod tests {
     fn fires_at_threshold_via_provider_actual() {
         let convo = vec![msg(LlmRole::User, "hi")];
         // ctx 1000 * 0.8 = 800 — provider says we're at 850.
-        let d = should_compact(&convo, &agent(), Some(850));
+        let d = should_compact(&convo, &agent(), Some(850), 0);
         assert!(matches!(d, CompactDecision::Run { keep: 1 }));
     }
 
@@ -245,7 +259,7 @@ mod tests {
         // 4000 chars / 4 = 1000 tokens, threshold 800 → fire.
         let big = "x".repeat(4000);
         let convo = vec![msg(LlmRole::User, &big)];
-        let d = should_compact(&convo, &agent(), None);
+        let d = should_compact(&convo, &agent(), None, 0);
         assert!(matches!(d, CompactDecision::Run { .. }));
     }
 
@@ -277,16 +291,30 @@ mod tests {
     }
 
     #[test]
-    fn provider_actual_overrides_heuristic_regardless_of_message_size() {
-        // Tiny convo + huge provider_actual → fires.
+    fn unsent_tail_pushes_sub_threshold_provider_actual_over_limit() {
+        // ctx 1000 * 0.8 = 800 limit.
+        // Tiny convo + huge provider_actual → fires on the anchor alone.
         let convo = vec![msg(LlmRole::User, "hi")];
-        let d = should_compact(&convo, &agent(), Some(10_000));
+        let d = should_compact(&convo, &agent(), Some(10_000), 0);
         assert!(matches!(d, CompactDecision::Run { .. }));
 
-        // Huge convo + tiny provider_actual → skips. Provider value
-        // anchors the decision; heuristic is the fallback.
+        // The corrected behavior: provider_actual (700) is below the 800
+        // limit, but a large tool result was appended THIS cycle
+        // (unsent_tail = 200). 700 + 200 = 900 > 800 → must fire now, not
+        // one turn late. Previously provider_actual alone (700) decided →
+        // Skip → context could overflow before compaction.
+        let d = should_compact(&convo, &agent(), Some(700), 200);
+        assert!(
+            matches!(d, CompactDecision::Run { .. }),
+            "large unsent tail must be counted against the threshold this cycle"
+        );
+
+        // Provider value still anchors: a huge message BODY does not force
+        // compaction when the provider reported a small prompt and nothing
+        // new was appended (unsent_tail = 0). The full-history heuristic is
+        // NOT consulted when provider_actual is Some.
         let big = msg(LlmRole::User, &"x".repeat(8000));
-        let d = should_compact(&[big], &agent(), Some(10));
+        let d = should_compact(&[big], &agent(), Some(10), 0);
         assert_eq!(d, CompactDecision::Skip);
     }
 
@@ -298,7 +326,7 @@ mod tests {
             msg(LlmRole::User, "first"),
             msg(LlmRole::User, &"x".repeat(8000)),
         ];
-        let d = should_compact(&convo, &agent(), Some(900));
+        let d = should_compact(&convo, &agent(), Some(900), 0);
         if let CompactDecision::Run { keep } = d {
             assert_eq!(keep, 2, "keep clamps to msgs.len() when < PRESERVE_RECENT");
         } else {

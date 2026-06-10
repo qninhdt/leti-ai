@@ -460,3 +460,42 @@ async fn idle_timeout_surfaces_as_network_error() {
     );
     drop(tx);
 }
+
+#[tokio::test]
+async fn evict_session_cost_drops_the_entry() {
+    // A turn that bills cost populates the session_costs map; eviction
+    // (called on session DELETE) must remove it so the map can't grow
+    // unbounded over a long-lived process.
+    let provider = MockProvider::fixed(vec![
+        Ok(ChatDelta::Content { text: "hi".into() }),
+        Ok(ChatDelta::Finish {
+            reason: FinishReason::EndTurn,
+            usage: Some(Usage {
+                input_tokens: 1000,
+                output_tokens: 1000,
+                ..Default::default()
+            }),
+        }),
+    ])
+    .with_pricing(ModelPricing {
+        input_per_mtok: Decimal::from_str("3.00").unwrap(),
+        output_per_mtok: Decimal::from_str("15.00").unwrap(),
+        cached_input_per_mtok: None,
+        cache_write_per_mtok: None,
+    });
+    let session_id = SessionId::new();
+    let (rt, _memory, _events) = build(provider, cfg());
+    rt.run_turn(turn_input(session_id), CancellationToken::new())
+        .await
+        .expect("turn ok");
+    assert!(
+        !rt.session_cost(session_id).is_zero(),
+        "turn should have recorded cost"
+    );
+
+    rt.evict_session_cost(session_id);
+    assert!(
+        rt.session_cost(session_id).is_zero(),
+        "evicted session must report zero cost"
+    );
+}
