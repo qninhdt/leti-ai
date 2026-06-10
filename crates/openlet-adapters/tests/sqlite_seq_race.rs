@@ -1,4 +1,4 @@
-//! Phase 2 — `SqliteMemoryStore` per-session monotonic `seq` under
+//! `SqliteMemoryStore` per-session monotonic `seq` under
 //! concurrent appends.
 //!
 //! `append_message` and `append_part` compute their seq via
@@ -7,7 +7,7 @@
 //! observable contract: 50 concurrent appends produce seq values
 //! `1..=50` exactly, with no duplicates and no holes.
 //!
-//! `:memory:` is used per `Plan §Phase 2 risk-mitigation` — existing
+//! `:memory:` is used — existing
 //! sqlite_memory_store.rs proves migrations work in :memory:; if a
 //! future race needs file-backed semantics, switch to NamedTempFile.
 

@@ -1,16 +1,15 @@
 //! Token estimator — bytes/4 heuristic + provider-actual override.
 //!
-//! Phase-07 deliberately picks the cheap heuristic (matches claw-code's
-//! `estimate_message_tokens` at `compact.rs:448-462`) to avoid pulling
-//! `tiktoken-rs` in Phase 7. When a provider supplies `usage.prompt_tokens`
+//! Deliberately picks the cheap bytes/4 heuristic to avoid pulling
+//! `tiktoken-rs`. When a provider supplies `usage.prompt_tokens`
 //! from the previous turn, that value anchors the next estimate so drift
-//! stays bounded. Phase-08 may upgrade to `tiktoken-rs` if accuracy proves
-//! insufficient — the trait shape is stable.
+//! stays bounded. A future revision may upgrade to `tiktoken-rs` if accuracy
+//! proves insufficient — the trait shape is stable.
 
 use crate::projection::LlmMessage;
 
 /// Rough chars-per-token used by the heuristic. 4 is the OpenAI tokenizer
-/// rule of thumb across English + code; claw-code uses the same constant.
+/// rule of thumb across English + code.
 pub const CHARS_PER_TOKEN: usize = 4;
 
 /// Estimate tokens in a single message body. Counts text + reasoning +

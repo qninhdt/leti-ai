@@ -1,4 +1,4 @@
-//! Phase 4 — extended `workspace_data_root` traversal coverage.
+//! Extended `workspace_data_root` traversal coverage.
 //!
 //! Source-side tests already cover the basics. This file extends:
 //! - Every ASCII control char (0x00–0x1F, 0x7F) → Invalid

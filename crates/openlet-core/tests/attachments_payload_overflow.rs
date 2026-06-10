@@ -1,4 +1,4 @@
-//! Phase 4 — attachments payload overflow + malformed input.
+//! Attachments payload overflow + malformed input.
 //!
 //! Caps verified at:
 //! - `crates/openlet-core/src/runtime/attachments/image_resize.rs:29,33,39`

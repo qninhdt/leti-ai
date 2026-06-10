@@ -89,7 +89,7 @@ pub enum Part {
         id: PartId,
         reason: String,
     },
-    /// A compaction summary produced by phase-07 compaction turn. Replaces
+    /// A compaction summary produced by the compaction turn. Replaces
     /// the listed `compacted_message_ids` during projection. Persisted as a
     /// regular Part on the assistant message produced by the compaction
     /// turn — projection substitutes the summary in place of the listed
@@ -102,7 +102,7 @@ pub enum Part {
         /// dragging `Uuid` features into adapter-side Part decoding.
         compacted_message_ids: Vec<String>,
         /// Estimated token count of the messages this summary replaced.
-        /// Used by post-compaction overflow check (amendment §P).
+        /// Used by post-compaction overflow check.
         original_token_count: u32,
     },
     /// Frozen plan text emitted by `ExitPlanMode`. Persisted on the

@@ -27,8 +27,8 @@ fn lexical_normalize(path: &Path) -> Result<PathBuf, FsError> {
 }
 
 /// Resolve `input` relative to `root`, then verify the result stays
-/// inside the workspace via canonicalization. Per amendment §L,
-/// canonicalization walks to the deepest existing ancestor so we can
+/// inside the workspace via canonicalization. Canonicalization
+/// walks to the deepest existing ancestor so we can
 /// safely resolve write/edit targets that don't exist yet.
 pub(crate) async fn resolve_in_workspace(root: &Path, input: &Path) -> Result<PathBuf, FsError> {
     let combined = if input.is_absolute() {

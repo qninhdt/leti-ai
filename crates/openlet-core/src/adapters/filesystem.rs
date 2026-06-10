@@ -11,7 +11,7 @@
 //! decides what "the workspace" actually is. The local impl
 //! (`openlet_adapters::localfs::LocalFilesystem`) keeps today's
 //! tokio-fs behavior with the deepest-existing-ancestor canonicalize
-//! trick (amendment §L). A future cloud impl maps the same calls onto
+//! trick. A future cloud impl maps the same calls onto
 //! file-service gRPC + presigned URLs.
 //!
 //! Invariants the trait imposes on every impl:

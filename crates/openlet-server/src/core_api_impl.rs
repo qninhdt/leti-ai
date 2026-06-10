@@ -130,7 +130,7 @@ impl CoreApi for CoreApiImpl {
     async fn cancel_session(&self, session_id: SessionId, reason: String) {
         // CAS gate so concurrent abort/DELETE/cancel_session emit exactly
         // one Cancelling event. Don't remove the slot — driving task
-        // removes its own on exit (closes C1-server stale-finalizer race).
+        // removes its own on exit (closes stale-finalizer race).
         let mut emitted = false;
         if let Some(active) = self.active_turns.get() {
             if let Some(handle) = active.get(&session_id).map(|h| h.clone()) {

@@ -143,7 +143,7 @@ mod tests {
 
     #[tokio::test]
     async fn accept_ask_uses_original_pattern_not_client_input() {
-        // Closes SA-F1: a client cannot persist a broader rule than was
+        // A client cannot persist a broader rule than was
         // shown in the prompt. The pattern comes from the PermissionRequest
         // that produced the ask_id, never from a client-supplied field.
         let m = ConfigPermissionMgr::new();

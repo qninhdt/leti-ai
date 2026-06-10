@@ -1,6 +1,6 @@
 //! AppState — shared handles every route accesses.
 //!
-//! Per amendment §B, AppState commits to `Arc<dyn _>` at the seam. Reasons:
+//! AppState commits to `Arc<dyn _>` at the seam. Reasons:
 //! ToolCtx already used `Arc<dyn _>`, so the original 6-param generic was
 //! buying nothing on the hot path while costing compile time + ergonomics.
 
@@ -97,7 +97,7 @@ pub struct AgentResources {
 /// Shared application state. Cloneable via interior `Arc`s.
 ///
 /// All event publishing flows through `events: Arc<dyn EventSink>` —
-/// Phase 5's two-tier publisher (§G) lives behind that seam, so callers
+/// the two-tier publisher lives behind that seam, so callers
 /// can never bypass persistence by holding a raw broadcast sender.
 ///
 /// `agents` carries one `AgentResources` per registered agent. MVP boot
@@ -123,7 +123,7 @@ pub struct AppState {
     pub default_agent_id: AgentId,
     /// Agent definitions registered by plugins. Indexed by slug; the
     /// HTTP route resolves the per-session slug via `SessionMeta` once
-    /// the column lands (phase-08), and falls back to the `general` slug
+    /// the column lands, and falls back to the `general` slug
     /// for MVP.
     pub agent_registry: Arc<AgentRegistry>,
     /// In-flight `ask_user` rendezvous map. Tools register oneshots

@@ -1,5 +1,5 @@
 //! Tests for the `enter_plan_mode` / `exit_plan_mode` tools and the
-//! per-dispatch allowlist enforcement (F2.5 + F2.6).
+//! per-dispatch allowlist enforcement.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

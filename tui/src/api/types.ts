@@ -18,8 +18,11 @@ export interface UsageDto {
 
 export interface AgentDto {
   id: string;
-  name: string;
+  // Server emits `display_name` (openlet_protocol::dto::AgentDto), not `name`.
+  display_name: string;
   description?: string | null;
+  // Effective serve model for this agent's turns (config.default_model).
+  // Always present from the server; optional here for forward-compat.
   model?: string | null;
 }
 

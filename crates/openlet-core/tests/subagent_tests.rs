@@ -1,9 +1,8 @@
 //! Subagent infrastructure tests — depth/quota policy, ScopedPermissionManager
 //! chain semantics, mention parser anchoring, cancel cascade, cost rollup.
 //!
-//! Covers F4.1 (per-root quota), F4.2 (dynamic chain), F4.3 (cancel cascade),
-//! F4.4 (cost rollup), F4.5 (ASCII-only mentions), F4.6 (anchored mentions),
-//! F4.10 (output cap).
+//! Covers per-root quota, dynamic chain, cancel cascade, cost rollup,
+//! ASCII-only mentions, anchored mentions, and output cap.
 
 use std::sync::Arc;
 
@@ -360,7 +359,7 @@ async fn cancellation_cascades_within_1s() {
 #[tokio::test]
 async fn cost_absorbed_into_parent() {
     // Concurrent reads on the registry's cost lock observe the
-    // accumulated decimal sum (F4.4 RwLock semantics — the runtime's
+    // accumulated decimal sum (RwLock semantics — the runtime's
     // session-cost rollup is exercised by the server-side driver).
     let parent = make_session(0);
     let mut registry = AgentRegistry::new();

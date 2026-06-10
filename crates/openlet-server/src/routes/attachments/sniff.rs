@@ -1,6 +1,6 @@
 //! Content sniffing for the attachments route.
 //!
-//! Closes F3.5: rejects polyglot files where the magic bytes match
+//! Rejects polyglot files where the magic bytes match
 //! BOTH a PDF and an image format. We always trust the sniffed kind
 //! over the multipart `Content-Type` claim.
 
@@ -22,7 +22,7 @@ pub(super) enum DetectedKind {
     Pdf,
 }
 
-/// `infer`-based content sniffing. Closes F3.5: rejects polyglot
+/// `infer`-based content sniffing. Rejects polyglot
 /// files where the magic bytes match BOTH a PDF and an image format.
 /// We always trust the sniffed kind over the multipart `Content-Type`.
 pub(super) fn sniff_content_type(bytes: &[u8]) -> Result<DetectedKind, AppError> {

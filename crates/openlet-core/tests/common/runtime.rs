@@ -1,7 +1,7 @@
 //! `RuntimeFixture` — boot a `ConversationRuntime` wired to the in-memory
 //! mocks (`ScriptedProvider`, `MockMemoryStore`, `RecordingEventSink`).
 //!
-//! Used by phase-2 end-to-end tests that exercise `run_turn` without
+//! Used by end-to-end tests that exercise `run_turn` without
 //! pulling in SQLite or a real model.
 
 use std::sync::Arc;

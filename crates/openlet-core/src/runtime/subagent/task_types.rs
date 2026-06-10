@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::types::session::SessionId;
 
-/// Per-task output cap. Mirrors the F4.10 contract — once a task's
+/// Per-task output cap — once a task's
 /// concatenated output exceeds this, additional appends are discarded
 /// and the buffer is replaced with a single `[truncated]` sentinel so
 /// memory is bounded for adversarial subagent runs.

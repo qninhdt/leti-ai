@@ -5,7 +5,7 @@ use crate::error::EventError;
 use crate::types::event::{AgentEvent, EventFilter};
 use crate::types::session::SessionId;
 
-/// Whether an event must be persisted to durable storage. Per amendment §G,
+/// Whether an event must be persisted to durable storage.
 /// `part.delta` and `heartbeat` are TRANSIENT (broadcast-only); all other
 /// kinds are durable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +24,8 @@ pub struct DeliveredEvent {
     pub event: AgentEvent,
 }
 
-/// Publishes domain events. Phase 5 implements `BroadcastBus` with the
-/// two-tier publisher (in-memory broadcast + SQLite write for durable).
+/// Publishes domain events via a two-tier publisher
+/// (in-memory broadcast + SQLite write for durable).
 #[async_trait]
 pub trait EventSink: Send + Sync + 'static {
     /// Publish `ev` to durable storage (if `Persistence::Durable` and a

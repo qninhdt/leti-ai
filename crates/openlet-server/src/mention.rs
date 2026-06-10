@@ -2,7 +2,7 @@
 //! matching synthetic `subagent_task` tool call.
 //!
 //! Mid-prompt mentions and unknown slugs leave the parts untouched
-//! (literal). Per F4.5, the parser is ASCII-only and rejects Unicode
+//! (literal). The parser is ASCII-only and rejects Unicode
 //! confusables.
 //!
 //! Behaviour:

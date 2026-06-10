@@ -118,7 +118,7 @@ async fn replace_swaps_forwarded_event_payload() {
 
 #[tokio::test]
 async fn deny_preserves_original_event_for_downstream_observers() {
-    // Firehose contract (amendment §4): a Deny outcome MUST NOT silence
+    // Firehose contract: a Deny outcome MUST NOT silence
     // the inner sink for non-buggy observers. The dispatch_event runner
     // preserves the original event so audit/SSE/replay still receive it.
     let inner = Arc::new(CapturingSink::default());

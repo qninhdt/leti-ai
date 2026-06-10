@@ -10,7 +10,7 @@ use openlet_core::types::permission::{Decision, PermissionRequest};
 ///
 /// `decision` mirrors the runtime enum but adds two persisted variants:
 /// `always_allow` and `always_deny` (recorded into `permission_decisions`
-/// per amendment §E so future calls bypass the ask).
+/// so future calls bypass the ask).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionReplyKind {

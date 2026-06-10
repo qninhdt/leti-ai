@@ -32,8 +32,7 @@ pub struct PendingAsk {
 }
 
 /// Mode-default policy: in `ReadOnly` and `WorkspaceWrite` we ask if no
-/// rule matches; in `Danger` we allow. Mirrors the claw-code mode table
-/// (`permission_enforcer.rs`) but without their first-match shortcut.
+/// rule matches; in `Danger` we allow. No first-match shortcut.
 fn fallback_for_mode(mode: PermissionMode) -> PermissionAction {
     match mode {
         PermissionMode::ReadOnly | PermissionMode::WorkspaceWrite => PermissionAction::Ask,
@@ -242,7 +241,7 @@ impl PermissionManager for ConfigPermissionMgr {
 
     /// Read-only peek at a pending ask's session id. Used by the HTTP
     /// route to publish `PermissionResolved` to the correct session
-    /// before `accept_ask`/`reply` consumes the entry. M7 — this is the
+    /// before `accept_ask`/`reply` consumes the entry. This is the
     /// SOLE definition; the duplicate inherent method was removed (all
     /// callers go through `Arc<dyn PermissionManager>`).
     fn peek_session_id(&self, ask_id: AskId) -> Option<openlet_core::types::session::SessionId> {

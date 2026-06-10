@@ -1,7 +1,4 @@
 //! Core domain types — IO-free, plain data.
-//!
-//! Subsequent phases extend `Part`/`AgentEvent` variants; the IDs and trait
-//! shapes lock in Phase 1.
 
 pub mod agent;
 pub mod event;

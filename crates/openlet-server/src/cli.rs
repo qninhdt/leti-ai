@@ -1,6 +1,6 @@
-//! CLI surface — `serve` (default) and `audit` (Phase 8 placeholder).
+//! CLI surface — `serve` (default) and `audit` (placeholder).
 //!
-//! Per amendment §O, clap derive structure is locked early so phase-08
+//! The clap derive structure is locked early so the audit implementation
 //! does not need a restructure.
 
 use clap::{Parser, Subcommand};
@@ -21,7 +21,7 @@ pub struct Cli {
 pub enum Command {
     /// Run the HTTP + SSE server (default if no subcommand is given).
     Serve(ServeArgs),
-    /// Audit subcommand — Phase 8 implements; reserved here.
+    /// Audit subcommand — reserved; implementation pending.
     Audit(AuditArgs),
     /// Preflight diagnostics — checks API key, data dir, sqlite, plugins,
     /// model reachability, and bind port. Read-only.

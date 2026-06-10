@@ -1,4 +1,4 @@
-//! Phase 2 — `QuestionRegistry` resolve / claim / cancel races.
+//! `QuestionRegistry` resolve / claim / cancel races.
 //!
 //! Three concurrency paths are exercised:
 //!

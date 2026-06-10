@@ -69,6 +69,12 @@ pub struct UsageWire {
     pub completion_tokens: u64,
     #[serde(default)]
     pub prompt_tokens_details: Option<PromptTokenDetails>,
+    /// OpenRouter's authoritative turn cost in USD, returned in the final
+    /// usage chunk when `stream_options.include_usage` is set. Carried
+    /// through to the domain `Usage` so the displayed cost reflects real
+    /// billing for every model with no static pricing row.
+    #[serde(default)]
+    pub cost: Option<rust_decimal::Decimal>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -92,6 +98,7 @@ impl UsageWire {
             input_tokens: self.prompt_tokens,
             output_tokens: self.completion_tokens,
             cached_input_tokens: cached,
+            cost_usd: self.cost,
             ..Default::default()
         }
     }

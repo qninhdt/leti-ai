@@ -14,8 +14,10 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/e2e/tui-real-binary-e2e.test.tsx",
     "test:watch": "vitest",
+    "test:e2e:real": "OPENLET_TUI_REAL_E2E=1 vitest run tests/e2e/tui-real-binary-e2e.test.tsx",
+    "test:e2e:real:openrouter": "OPENLET_TUI_REAL_E2E=1 OPENLET_LIVE_E2E=1 vitest run tests/e2e/tui-real-binary-e2e.test.tsx",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

@@ -163,7 +163,10 @@ async fn create_session_with_meta_persists_verbatim_and_accepts_children() {
     let got = store.get_session(child_id).await.unwrap().expect("present");
     assert_eq!(got.id, child_id);
     assert_eq!(got.parent_session_id, Some(parent));
-    assert_eq!(got.depth, 2, "depth must be preserved for the grandchild guard");
+    assert_eq!(
+        got.depth, 2,
+        "depth must be preserved for the grandchild guard"
+    );
     assert_eq!(got.status, SessionStatus::Running);
     assert_eq!(got.current_agent_slug.as_deref(), Some("indexer"));
 

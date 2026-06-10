@@ -1,8 +1,8 @@
-//! Local adapter implementations (Phase 1: stubs only).
+//! Local adapter implementations.
 //!
 //! Each module hosts one of the six adapter trait impls:
 //! `openai_compat`, `sqlite`, `localfs`, `localshell`, `bus`, `config_perm`.
-//! Phase 5 adds `anthropic`, `gemini`, and the `multi_provider` router.
+//! Provider modules add `anthropic`, `gemini`, and the `multi_provider` router.
 
 pub mod anthropic;
 pub mod bus;

@@ -1,7 +1,6 @@
 //! In-process OpenAI-compat mock server for parity / replay testing.
 //!
-//! Pattern ported from `claw-code/rust/crates/mock-anthropic-service/`:
-//! a hand-rolled `tokio::net::TcpListener` (NOT axum) so tests have
+//! Uses a hand-rolled `tokio::net::TcpListener` (NOT axum) so tests have
 //! byte-exact control over chunking, headers, and timing — properties
 //! a higher-level framework would hide.
 //!
@@ -22,5 +21,5 @@
 mod scenarios;
 mod server;
 
-pub use scenarios::{SCENARIO_PREFIX, Scenario, detect_scenario};
+pub use scenarios::{FS_WRITE_CONTENT, FS_WRITE_PATH, SCENARIO_PREFIX, Scenario, detect_scenario};
 pub use server::{CapturedRequest, MockOpenAiService};

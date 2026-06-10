@@ -78,6 +78,27 @@ src/
     format.ts                USD formatter, short-id
 ```
 
+## Testing
+
+```bash
+npm test               # default: unit + Node-wire-double E2E (no Rust toolchain)
+npm run test:e2e:real           # gated: real openlet-server + Rust mock LLM
+npm run test:e2e:real:openrouter  # double-gated: real binary → real OpenRouter
+```
+
+Two E2E tiers exercise the same `<App>`:
+
+- **Node wire-double** (`tests/e2e/tui-live-e2e.test.tsx`) — the default
+  `npm test` lane. The App runs against a faithful Node HTTP/SSE double, so
+  the suite stays self-contained (no cargo build coupling).
+- **Real binary** (`tests/e2e/tui-real-binary-e2e.test.tsx`) — gated behind
+  `OPENLET_TUI_REAL_E2E=1`. Spawns the actual compiled `openlet-server`
+  talking to the in-process Rust `mock-openai-service`: real axum HTTP, real
+  SSE socket, real provider stream. Requires the binaries prebuilt
+  (`cargo build -p openlet-server -p openlet-test-mock-provider`). The
+  real-OpenRouter sub-tier additionally needs `OPENLET_LIVE_E2E=1` +
+  `OPENROUTER_API_KEY` and asserts shape only, never exact model words.
+
 ## Architecture notes
 
 - Pin Ink 5.2 / React 18.3 — Ink 6 / React 19 had flicker reports during

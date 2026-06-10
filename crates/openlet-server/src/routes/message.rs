@@ -2,8 +2,7 @@
 //!
 //! Fire-and-forget: spawns the runtime loop on a tokio task, returns
 //! `202 Accepted` with the message id immediately. Errors propagate via
-//! SSE `error` events, not the HTTP response (per amendment §C / phase-05
-//! plan step 4).
+//! SSE `error` events, not the HTTP response.
 
 use std::sync::Arc;
 
@@ -29,7 +28,7 @@ use crate::mention::rewrite_mention_into_subagent_task;
 
 /// Drop-guard that releases the `active_turns` slot if any `?` propagates
 /// before we commit it to the spawned task. Once `committed = true`, the
-/// driving task owns slot lifecycle (closes C3-server slot leak).
+/// driving task owns slot lifecycle (closes slot leak).
 struct SlotGuard<'a> {
     state: &'a AppState,
     sid: SessionId,
@@ -97,7 +96,7 @@ pub async fn prompt_async(
     // callers both pass and one would clobber the other, orphaning a
     // running task. The `SlotGuard` Drop releases the slot if any `?`
     // propagates before we commit it to the spawned task (closes
-    // C3-server: slot-leak on error path).
+    // slot-leak on error path).
     let handle = TurnHandle::new(sid);
     match state.active_turns.entry(sid) {
         dashmap::mapref::entry::Entry::Occupied(_) => {
@@ -185,7 +184,7 @@ pub async fn prompt_async(
         // Remove ONLY our own handle. If a fresh prompt_async raced past
         // a still-cancelling driver, this `remove_if` is a no-op so the
         // dying loop's tail finalizer can't stomp the new turn's slot
-        // (closes C1-server stale-finalizer race).
+        // (closes stale-finalizer race).
         task_state.active_turns.remove_if(&sid, |_, h| {
             Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted)
         });
@@ -224,8 +223,8 @@ async fn drive_loop(
 
     // Resolve provider capabilities by model so vision-capable
     // sessions don't degrade attachments to text. Uses the workspace's
-    // configured default model — Phase 5 wires per-session model
-    // overrides through SessionMeta.
+    // configured default model — per-session model overrides are wired
+    // through SessionMeta.
     let model = state.config.default_model.clone();
     let provider_caps = state.provider.capabilities(&model);
     let projection_caps = ProjectionCaps {

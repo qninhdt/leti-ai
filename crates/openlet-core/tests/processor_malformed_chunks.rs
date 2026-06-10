@@ -1,4 +1,4 @@
-//! Phase 4 — `Processor::step` rejection of malformed chunk streams.
+//! `Processor::step` rejection of malformed chunk streams.
 //!
 //! Cases under test:
 //!

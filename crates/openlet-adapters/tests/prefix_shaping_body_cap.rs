@@ -1,4 +1,4 @@
-//! Phase 4 — `prefix_shaping::apply_request_shaping` cap edges + adversarial inputs.
+//! `prefix_shaping::apply_request_shaping` cap edges + adversarial inputs.
 //!
 //! Inline tests in source already cover happy paths for each provider
 //! family. This file exercises edges:

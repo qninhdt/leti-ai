@@ -1,4 +1,4 @@
-//! Phase 4 — `LocalFilesystem::read` size caps + range edge cases.
+//! `LocalFilesystem::read` size caps + range edge cases.
 //!
 //! `MAX_READ_BYTES = 8 MiB` is the hard floor in
 //! `localfs/filesystem/operations/read.rs:19`. The tool layer caps

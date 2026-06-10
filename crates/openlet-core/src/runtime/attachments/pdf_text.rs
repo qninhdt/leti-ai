@@ -10,7 +10,7 @@
 //!      implementation start; see Cargo.toml — no `panic` key, default
 //!      is unwind).
 //!
-//! Inlined text is capped at 50K characters (F3.10). The full text is
+//! Inlined text is capped at 50K characters. The full text is
 //! preserved on the result struct so the caller can decide whether to
 //! also persist it as a separate artifact.
 
@@ -26,7 +26,7 @@ const MIN_USEFUL_TEXT_LEN: usize = 100;
 
 /// Cap on inlined `extracted_text`. Beyond this we truncate with a
 /// marker referencing the artifact id so the model can still reach
-/// for the full text via a tool call. Closes F3.10.
+/// for the full text via a tool call.
 pub const MAX_INLINE_TEXT_CHARS: usize = 50_000;
 
 /// Successful extraction result. `extracted_text` is the truncated

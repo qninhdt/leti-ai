@@ -3,13 +3,12 @@
 //! Pipeline order:
 //!   1. Pre-validate dimensions via `image::ImageReader::with_guessed_format`
 //!      (header read only). Reject if `width * height * 4 > 200MB` BEFORE
-//!      allocating the pixel buffer. Closes F3.2 (decompression bomb).
+//!      allocating the pixel buffer. Guards against a decompression bomb.
 //!   2. Decode in `tokio::task::spawn_blocking` — the `image` crate is
 //!      synchronous and CPU-bound.
 //!   3. Resize to fit ≤2000×2000 preserving aspect (Lanczos3).
 //!   4. Re-encode through JPEG. Always re-encode, even on small input:
 //!      this strips EXIF (incl. GPS) and avoids MIME-claim drift.
-//!      Closes F3.4.
 //!   5. JPEG quality ladder [85, 75, 65] — accept the first encode
 //!      ≤5MB, otherwise return `TooComplexToResize` rather than
 //!      degrading silently.
@@ -147,7 +146,7 @@ fn resize_to_fit(img: DynamicImage, max_edge: u32) -> DynamicImage {
 }
 
 /// Try [85, 75, 65] in order. Return the first encode ≤5MB. The
-/// `image` JPEG encoder strips ancillary metadata (EXIF, ICC) — F3.4.
+/// `image` JPEG encoder strips ancillary metadata (EXIF, ICC).
 fn encode_with_quality_ladder(img: &DynamicImage) -> Result<Vec<u8>, ImageProcessError> {
     // Convert once. JPEG cannot carry alpha, so RGBA inputs flatten
     // to RGB on encode anyway; doing it explicitly keeps the encoder

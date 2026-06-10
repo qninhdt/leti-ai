@@ -1,15 +1,11 @@
 //! Security-focused tests for the image and PDF attachment pipelines.
-//!
-//! These tests must pass for the phase to be considered complete. Each
-//! test maps to a Red Team finding (F3.x) in
-//! `phase-03-image-and-pdf-attachments.md`.
 
 use openlet_core::runtime::attachments::image_resize::{ImageProcessError, process_image_blocking};
 use openlet_core::runtime::attachments::pdf_text::{
     MAX_INLINE_TEXT_CHARS, substitute_artifact_id, truncate_inline_text,
 };
 
-/// F3.2 — header-only dimension validation rejects a decompression
+/// Header-only dimension validation rejects a decompression
 /// bomb without allocating the pixel buffer. We hand-craft a minimal
 /// PNG header claiming 100000×100000 pixels (≈40GB decoded) and
 /// verify the pre-validation kicks in.
@@ -35,7 +31,7 @@ fn image_dim_overflow_rejected_pre_alloc() {
     }
 }
 
-/// F3.4 — re-encoding through JPEG strips EXIF. We feed a JPEG with
+/// Re-encoding through JPEG strips EXIF. We feed a JPEG with
 /// an EXIF block (containing a fake GPS marker string) and verify
 /// the output bytes do NOT contain the marker.
 #[test]
@@ -53,7 +49,7 @@ fn image_resize_strips_exif() {
     );
 }
 
-/// F3.10 — inline truncation marker present at exactly the cap and
+/// Inline truncation marker present at exactly the cap and
 /// the head still substitutable with a concrete artifact id.
 #[test]
 fn pdf_extract_truncates_at_50k() {

@@ -76,6 +76,18 @@ export interface State {
   setClientError: (message: string | null) => void;
 }
 
+// Sum two 4-decimal USD cost strings, returning a 4-decimal string. Used
+// to accumulate per-turn step_finished costs into a session running total
+// (the server's SessionDto carries no cost). A NaN parse falls back to the
+// prior total so a malformed delta never zeroes the displayed cost.
+function addCostStr(prev: string | undefined, delta: string): string {
+  const a = Number.parseFloat(prev ?? "0");
+  const b = Number.parseFloat(delta);
+  const base = Number.isNaN(a) ? 0 : a;
+  if (Number.isNaN(b)) return base.toFixed(4);
+  return (base + b).toFixed(4);
+}
+
 function emptyMessage(sessionId: string, messageId: string): MessageView {
   return {
     id: messageId,
@@ -281,7 +293,25 @@ export const useStore = create<State>((set) => ({
             ...msg,
             step_finish: { reason: ev.reason, usage_total: totalUsage, cost: ev.cost_decimal_str },
           }));
-          return messages ? { messages } : {};
+          // Accumulate the per-turn cost into the session's running total.
+          // The server's SessionDto carries no cost; the live figure lives
+          // only on the step_finished event, so the status bar gets its
+          // value from here.
+          const session = s.sessions[ev.session_id];
+          const sessions =
+            session && ev.cost_decimal_str
+              ? {
+                  ...s.sessions,
+                  [ev.session_id]: {
+                    ...session,
+                    cost_decimal_str: addCostStr(session.cost_decimal_str, ev.cost_decimal_str),
+                  },
+                }
+              : undefined;
+          if (messages && sessions) return { messages, sessions };
+          if (messages) return { messages };
+          if (sessions) return { sessions };
+          return {};
         }
 
         case "permission_asked": {

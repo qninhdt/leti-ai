@@ -78,7 +78,7 @@ export function App(props: AppProps): React.ReactElement {
             if (store.activeSessionId) await props.client.setMode(store.activeSessionId, { mode });
           },
           enterPlanMode: async () => {
-            // F8 strict: /plan only ENTERS plan mode. Exit is via the
+            // /plan only ENTERS plan mode. Exit is via the
             // model's ExitPlanMode tool. We submit a synthetic user
             // message asking the model to enter plan mode; the model
             // then issues the EnterPlanMode tool call. This keeps the
@@ -97,10 +97,26 @@ export function App(props: AppProps): React.ReactElement {
         return;
       }
     }
-    if (!store.activeSessionId) return;
+    // Create-then-send: a first-time user has no active session on boot
+    // (bootstrap lists sessions but activates none). Rather than silently
+    // swallowing the message, create a session from the default agent and
+    // send to it. Use the id returned by createSession directly — reading
+    // store.activeSessionId back here would race the set.
+    let sessionId = store.activeSessionId;
+    if (!sessionId) {
+      const agent = store.agents[0];
+      if (!agent) {
+        store.setClientError("No agent registered — cannot start a session.");
+        return;
+      }
+      const s = await props.client.createSession({ agent_id: agent.id });
+      store.setSessions([...Object.values(store.sessions), s]);
+      store.setActiveSession(s.id);
+      sessionId = s.id;
+    }
     props.history.push(text);
     setHistoryIdx(null);
-    await props.client.promptAsync(store.activeSessionId, textPrompt(text));
+    await props.client.promptAsync(sessionId, textPrompt(text));
   };
 
   // Bind to a const so TS keeps the discriminated-union narrowing inside

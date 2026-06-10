@@ -1,9 +1,8 @@
 //! Compile-time plugin registry.
 //!
-//! Phase 7 wires the `core-agents` plugin (general + indexer). Plugin
-//! amendment §6 mandates built-in agents register through the plugin
+//! Built-in agents register through the plugin
 //! surface so external Cloud agents can extend or replace them without
-//! forking core.
+//! forking core. The `core-agents` plugin ships general + indexer.
 
 use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;

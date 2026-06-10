@@ -18,6 +18,10 @@ use crate::app_state::AppState;
 mod checks;
 mod model_probe;
 
+/// Canonical env-var name selecting the model API base URL. Re-exported
+/// so the serve path can resolve the same variable the doctor probe reads.
+pub use model_probe::BASE_URL_ENV as MODEL_BASE_URL_ENV;
+
 /// Per-check timeout. Sum of 6 checks ≤ 12 s — fits the 10 s "healthy
 /// install" target with ~2 s of slack for the model probe (which has
 /// its own internal fallback path that may double-spend the budget).

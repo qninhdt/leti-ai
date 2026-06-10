@@ -21,8 +21,7 @@ pub struct ProjectionCaps {
 
 /// One LLM-shape message. `tool_calls` and `tool` role messages are
 /// paired by `tool_call_id`. Content can be a plain string or a
-/// multi-part array when the assistant emits images (forward-compat
-/// for phase-06).
+/// multi-part array when the assistant emits images (forward-compat).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LlmRole {

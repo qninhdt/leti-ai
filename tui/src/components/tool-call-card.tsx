@@ -9,7 +9,7 @@ export interface ToolCallCardProps {
   status?: "streaming" | "complete" | "errored";
 }
 
-// ╭─ NAME ─╮ shape ported from claw-code main.rs:9285-9336.
+// ╭─ NAME ─╮ shape.
 // `theme.border.muted` ≈ ANSI 245; tool name in bold cyan.
 export function ToolCallCard(props: ToolCallCardProps): React.ReactElement {
   return (

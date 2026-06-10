@@ -4,8 +4,8 @@
 //! drives this from the provider's stream and dispatches the resulting
 //! writes/events to storage + the bus.
 //!
-//! Cross-check (`research/cross-check-phase-03.md` §3): args accumulated in
-//! a `String` buffer, parsed only on `Finish`. §T: duplicate `(name, index)`
+//! Args are accumulated in
+//! a `String` buffer, parsed only on `Finish`. A duplicate `(name, index)`
 //! triggers a typed `ProviderError::Decode` mid-stream.
 
 use std::collections::BTreeMap;
@@ -63,7 +63,7 @@ pub enum ProcessorPart {
 }
 
 /// Event the runtime should publish on the bus. Persistence flag (durable
-/// vs transient per amendment §G) is decided at the runtime layer.
+/// vs transient) is decided at the runtime layer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProcessorEvent {
     /// Streaming delta — transient. `delta` is the new fragment ONLY.
@@ -185,12 +185,12 @@ impl Processor {
 
 /// Drain the accumulator into terminal parts. Called on `Finish`.
 ///
-/// C3 + H5 — VALIDATE-ALL-THEN-DRAIN. Every pending tool call is validated
+/// VALIDATE-ALL-THEN-DRAIN. Every pending tool call is validated
 /// (non-empty name, unique `call_id` across indices, `args_buf` parses as
 /// JSON — empty buffer treated as `{}` for zero-param tools) BEFORE any
 /// `state` field is drained. If any validation fails we return `Err` WITHOUT
 /// having drained `current_reasoning` / `current_text`, so the reasoning and
-/// text are preserved in `state` (the H5 guarantee) rather than being lost on
+/// text are preserved in `state` rather than being lost on
 /// a malformed tool-call stream.
 fn flush_into_parts(
     state: &mut ProcessorState,
@@ -203,7 +203,7 @@ fn flush_into_parts(
 
     // Pre-validate + fully materialize every tool-call part up front. Nothing
     // here mutates reasoning/text state, so any `Err` return is side-effect
-    // free with respect to the H5-preserved fields.
+    // free with respect to the preserved reasoning/text fields.
     let mut seen_call_ids: std::collections::HashSet<String> =
         std::collections::HashSet::with_capacity(pending.len());
     let mut tool_parts: Vec<ProcessorPart> = Vec::with_capacity(pending.len());
@@ -278,13 +278,13 @@ fn finish_reason_label(reason: FinishReason) -> &'static str {
 
 #[cfg(test)]
 mod flush_validate_then_drain_tests {
-    //! C3 + H5 — `flush_into_parts` validate-all-then-drain.
+    //! `flush_into_parts` validate-all-then-drain.
     //!
     //! Two guarantees:
-    //! 1. **C3**: a `call_id` reused across DIFFERENT tool-call indices is a
+    //! 1. A `call_id` reused across DIFFERENT tool-call indices is a
     //!    clean `ProviderError::Decode` (it would otherwise clobber downstream
     //!    tool-result routing, which keys results by `call_id`).
-    //! 2. **H5**: on ANY validation error, `current_reasoning` / `current_text`
+    //! 2. On ANY validation error, `current_reasoning` / `current_text`
     //!    are NOT drained — they remain in `state` so the reasoning is not lost
     //!    on a malformed tool-call stream.
     use super::*;
@@ -326,7 +326,7 @@ mod flush_validate_then_drain_tests {
             other => panic!("expected Decode error; got {other:?}"),
         }
 
-        // H5: reasoning + text NOT drained — still present in state.
+        // reasoning + text NOT drained — still present in state.
         assert_eq!(state.current_reasoning, "important chain of thought");
         assert_eq!(state.current_text, "partial answer");
         // Nothing emitted on the error path.
@@ -345,7 +345,7 @@ mod flush_validate_then_drain_tests {
         let mut parts = Vec::new();
         let err = flush_into_parts(&mut state, &mut parts).expect_err("empty name must error");
         assert!(matches!(err, ProviderError::Decode(_)));
-        // H5: reasoning preserved.
+        // reasoning preserved.
         assert_eq!(state.current_reasoning, "thinking");
         assert!(parts.is_empty());
     }
@@ -364,7 +364,7 @@ mod flush_validate_then_drain_tests {
         let err =
             flush_into_parts(&mut state, &mut parts).expect_err("invalid args JSON must error");
         assert!(matches!(err, ProviderError::Decode(_)));
-        // H5: reasoning preserved even though the failure is the LAST validation.
+        // reasoning preserved even though the failure is the LAST validation.
         assert_eq!(state.current_reasoning, "thinking");
         assert!(parts.is_empty());
     }
@@ -377,7 +377,9 @@ mod flush_validate_then_drain_tests {
             finish: Some(FinishReason::ToolUse),
             ..Default::default()
         };
-        state.pending_tool_calls.insert(0, pending("a", "bash", "{}"));
+        state
+            .pending_tool_calls
+            .insert(0, pending("a", "bash", "{}"));
         state
             .pending_tool_calls
             .insert(1, pending("b", "read_file", "{}"));

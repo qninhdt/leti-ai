@@ -1,6 +1,6 @@
 //! Cost calculation — `Decimal` USD per turn.
 //!
-//! Formula (cross-check §5; mirrors opencode `session.ts:430-440`):
+//! Formula:
 //! ```text
 //!   input_non_cache  / 1e6 * input_per_mtok
 //! + output           / 1e6 * output_per_mtok
@@ -42,7 +42,7 @@ pub fn compute_cost(usage: &Usage, pricing: &ModelPricing) -> Decimal {
         total += Decimal::from(usage.cached_input_tokens) / mtok * cr;
     }
     if let Some(cw) = pricing.cache_write_per_mtok {
-        // L2 — providers populate EXACTLY ONE of these cache-write
+        // Providers populate EXACTLY ONE of these cache-write
         // counters: Anthropic uses `cache_creation_input_tokens`,
         // OpenRouter normalized usage uses `cache_write_tokens`. Take
         // `max()` rather than summing: if a defensive adapter ever
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn matches_plan_fixture() {
-        // Plan §Success Criteria: usage {prompt:1000, completion:500},
+        // Reference fixture: usage {prompt:1000, completion:500},
         // pricing (3.0, 15.0) per Mtok → 0.0105
         let u = Usage {
             input_tokens: 1000,
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn both_cache_write_fields_populated_charged_once_via_max() {
-        // L2 — a defensive adapter that populates BOTH cache-write fields
+        // A defensive adapter that populates BOTH cache-write fields
         // with the SAME value must be billed ONCE, not summed (which would
         // double-charge). `max()` takes a single count.
         let u = Usage {

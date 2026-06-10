@@ -74,10 +74,7 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(id)
     }
 
-    async fn create_session_with_meta(
-        &self,
-        meta: SessionMeta,
-    ) -> Result<SessionId, MemoryError> {
+    async fn create_session_with_meta(&self, meta: SessionMeta) -> Result<SessionId, MemoryError> {
         // Persist the caller-supplied row verbatim — id, depth,
         // permission_mode, status, and parent link are all preserved.
         // Subagent spawning relies on this so the child id seeded

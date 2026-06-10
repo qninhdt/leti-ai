@@ -109,6 +109,26 @@ async fn handle_connection(
 ) -> io::Result<()> {
     let req = read_request(&mut stream).await?;
 
+    // `GET /models` (or any `/models` suffix) returns a small canned
+    // catalog so the `list_models()` / `GET /v1/models` path has a
+    // network-free fixture. Chat dispatch below is body-driven and never
+    // hits this branch.
+    if req.method.eq_ignore_ascii_case("GET") && req.path.contains("/models") {
+        captured
+            .lock()
+            .expect("captured mutex")
+            .push(CapturedRequest {
+                method: req.method,
+                path: req.path,
+                headers: req.headers,
+                scenario: None,
+                body: req.body,
+            });
+        write_response(&mut stream, models_catalog_response()).await?;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
     // Empty / non-JSON bodies parse to nothing → SimpleText fallback.
     let scenario = serde_json::from_str::<serde_json::Value>(&req.body)
         .ok()
@@ -221,6 +241,14 @@ async fn read_request(stream: &mut TcpStream) -> io::Result<ParsedRequest> {
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+/// Canned OpenRouter-shaped `/models` catalog. Two entries with the
+/// `{ data: [ { id, name, context_length } ] }` envelope the adapter's
+/// `list_models()` decoder expects.
+fn models_catalog_response() -> Response {
+    let body = r#"{"data":[{"id":"mock/model-small","name":"Mock Small","context_length":8192},{"id":"mock/model-large","name":"Mock Large","context_length":128000}]}"#;
+    Response::ok_json(body)
 }
 
 async fn write_response(stream: &mut TcpStream, resp: Response) -> io::Result<()> {

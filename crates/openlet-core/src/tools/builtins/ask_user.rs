@@ -1,8 +1,7 @@
 //! `ask_user` builtin tool — interactive multiple-choice prompt.
 //!
-//! Mirrors the AskUserQuestion affordance from claw-code's TUI: a typed
-//! prompt with a short header, a question, and a small set of labeled
-//! options. The model picks via integer index.
+//! A typed interactive prompt with a short header, a question, and a small
+//! set of labeled options. The model picks via integer index.
 //!
 //! Wire flow:
 //! 1. Tool runs → checks `SessionCapabilities::user_questions` (synchronous

@@ -105,7 +105,7 @@ struct Inner {
     /// Set of sessions with an in-flight question. The `ask_user` tool
     /// caps this at 1 per session to prevent the model from queueing a
     /// stack of modal prompts the user can't reasonably answer in order.
-    /// M6 — modeled as a Set (`()` value) rather than a counter: the cap
+    /// Modeled as a Set (`()` value) rather than a counter: the cap
     /// is "at most one pending question per session", so membership is the
     /// only state. A `u8` count invited a decrement-vs-remove ambiguity;
     /// a Set has exactly one mutation (insert on claim, remove on release).
@@ -214,7 +214,7 @@ impl QuestionRegistry {
         }
     }
 
-    /// Remove a previously claimed per-session slot. M6 — the cap is a
+    /// Remove a previously claimed per-session slot. The cap is a
     /// Set, so "release" is a single `remove`; there is no count to
     /// decrement and thus no decrement-vs-remove ambiguity. Idempotent —
     /// if the slot was already removed (because cancellation raced with

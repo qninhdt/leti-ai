@@ -5,7 +5,7 @@
 //! via a [`WorkspaceResolver`] and stashes it on the request extensions
 //! so per-route handlers can pull it out via [`WorkspaceRoutingGuard`].
 //!
-//! ## Cross-tenant isolation gate (F5.1)
+//! ## Cross-tenant isolation gate
 //!
 //! [`WorkspaceRoutingGuard`] asserts an [`AuthPrincipal`] is present in
 //! request extensions BEFORE consulting the resolver. Without
@@ -33,8 +33,8 @@ use crate::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 pub const WORKSPACE_HEADER: &str = "x-openlet-workspace";
 
 /// Authenticated principal — populated by upstream auth middleware
-/// (Phase 1's ask_user route uses an env-key fallback). The presence
-/// of this extension is the F5.1 cross-tenant gate.
+/// (the ask_user route uses an env-key fallback). The presence
+/// of this extension is the cross-tenant gate.
 ///
 /// Cloud integrators replace this struct with their own (mounting
 /// before workspace_routing); the type identity is what the guard
@@ -159,7 +159,7 @@ where
     }
 
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
-        // F5.1 gate: assert auth ran before resolver lookup. Absence
+        // Gate: assert auth ran before resolver lookup. Absence
         // of AuthPrincipal in extensions → 401, no resolver call.
         if req.extensions().get::<AuthPrincipal>().is_none() {
             return Box::pin(async move {

@@ -23,9 +23,8 @@ use super::memory_store::MemoryStore;
 use super::permission_manager::PermissionManager;
 
 /// Per-call context carrying handles a tool needs to enforce permissions
-/// and emit events. Per amendment §B, ToolCtx already used `Arc<dyn _>`,
-/// which is why moving AppState to dyn was free on the hot path. The
-/// filesystem is itself an `Arc<dyn Filesystem>` (Phase 4D) — built-in
+/// and emit events. `ToolCtx` uses `Arc<dyn _>` handles throughout. The
+/// filesystem is itself an `Arc<dyn Filesystem>` — built-in
 /// file tools (`read`/`write`/`edit`/`list`/`glob`/`grep`) call
 /// `ctx.fs.*` so a cloud impl can swap the workspace backing without
 /// touching tool code.
@@ -104,8 +103,7 @@ pub struct GrepHit {
     pub text: String,
 }
 
-/// Six built-in tool methods. Phase 4 implements `LocalShellToolExecutor`
-/// with workspace canonicalization (§L).
+/// Six built-in tool methods, implemented with workspace canonicalization.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + 'static {
     async fn run_bash(&self, ctx: ToolCtx, cmd: BashCommand) -> Result<BashOutput, ToolError>;

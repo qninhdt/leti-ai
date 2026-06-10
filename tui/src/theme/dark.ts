@@ -1,6 +1,5 @@
-// Dark theme. Semantic tokens mirror claw-code ColorTheme split into the
-// nested shape opencode lacked (see cross-check-phase-06-clawcode.md
-// "Port targets"). Truecolor hex values; chalk/Ink falls back to 256/16
+// Dark theme. Semantic tokens use a nested shape. Truecolor hex values;
+// chalk/Ink falls back to 256/16
 // on terminals that don't support truecolor.
 
 export interface Theme {

@@ -32,7 +32,7 @@ pub struct ChatRequest {
     /// hook chain. `String` keys (not `HeaderName`) so `openlet-core`
     /// stays decoupled from `reqwest`. `BTreeMap` for stable iteration.
     /// Reserved header names (`authorization`, `x-api-key`, etc.) are
-    /// filtered structurally by adapters before merge — see Phase 6
+    /// filtered structurally by adapters before merge — see
     /// RESERVED_HEADERS in openai_compat::provider.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
@@ -76,7 +76,7 @@ pub enum FinishReason {
 
 /// Streaming chunk emitted by `chat_stream`.
 ///
-/// Granularity mirrors claw-code/api/src/types.rs `StreamEvent` collapsed
+/// Granularity collapses a provider `StreamEvent` set
 /// into a flat enum. Tool-call args arrive in chunks indexed by position;
 /// the processor accumulates them and parses on `Finish`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,7 +113,7 @@ pub enum ChatDelta {
 }
 
 /// Per-model pricing. Stored as `Decimal` (USD per million tokens) to avoid
-/// f64 drift in cost math (§S no-`Other`, plan-locked rule).
+/// f64 drift in cost math.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPricing {
     pub input_per_mtok: Decimal,
@@ -125,7 +125,7 @@ pub struct ModelPricing {
 }
 
 /// Type alias for the streaming chunk channel — kept as a boxed trait object
-/// per phase-03 step 1 (revisit when GATs stabilize cleanly across runtime).
+/// (revisit when GATs stabilize cleanly across runtime).
 pub type ChatStream =
     Box<dyn Stream<Item = Result<ChatDelta, ProviderError>> + Send + Unpin + 'static>;
 
@@ -174,6 +174,23 @@ pub struct CacheHint {
     pub last_user_turn: bool,
 }
 
+/// One model entry returned by [`ModelProvider::list_models`]. Mirrors the
+/// common subset of the OpenAI / OpenRouter `GET /models` response — `id`
+/// is the only guaranteed field; the rest are best-effort enrichment the
+/// catalog may omit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// Canonical model id used in `ChatRequest::model` (e.g.
+    /// `anthropic/claude-sonnet-4-6`).
+    pub id: String,
+    /// Human-readable label when the catalog provides one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    /// Maximum context window in tokens, when advertised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_length: Option<u32>,
+}
+
 /// Wraps an LLM provider — local mock, OpenAI-compat, OpenRouter.
 ///
 /// Implementations MUST be cancellation-aware: dropping `chat_stream` or
@@ -187,6 +204,14 @@ pub trait ModelProvider: Send + Sync + 'static {
     ) -> Result<ChatStream, ProviderError>;
 
     fn pricing(&self, model: &str) -> Option<ModelPricing>;
+
+    /// Fetch the provider's catalog of available models. Default impl
+    /// returns an empty list so providers that don't expose a catalog
+    /// (mock, self-hosted single-model gateways) don't have to opt in;
+    /// the `GET /v1/models` route then returns `[]` rather than erroring.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        Ok(Vec::new())
+    }
 
     /// Per-model capability descriptor consulted by the runtime when
     /// projecting a turn. Providers that don't implement vision /

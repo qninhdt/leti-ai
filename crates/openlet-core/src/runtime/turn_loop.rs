@@ -1,4 +1,4 @@
-//! Multi-step turn loop (claw `run_turn` / opencode `runLoop` analogue).
+//! Multi-step turn loop.
 //!
 //! Drives `ConversationRuntime::run_turn` → tool dispatch → next turn
 //! until the model emits `finish_reason = end_turn` (or the runtime hits
@@ -6,8 +6,7 @@
 //! collected from the latest assistant message, dispatched via the
 //! `ToolRegistry`, and appended back as `tool` role messages.
 //!
-//! Phase 4C scope: the loop itself + tool-result message append. Wiring
-//! to the HTTP route + SSE permission events lands in Phase 5.
+//! The loop itself appends tool-result messages and drives turns.
 
 use std::sync::Arc;
 
@@ -93,7 +92,7 @@ pub struct LoopOutcome {
     pub finish_reason: FinishReason,
     /// Id of the last assistant message the loop produced, or `None` when
     /// no model turn ran (e.g. a `before_turn` hook halted turn 0, or
-    /// max_steps was 0). H4 — this was previously a non-optional
+    /// max_steps was 0). This was previously a non-optional
     /// `MessageId` defaulting to the nil UUID, which consumers (e.g.
     /// `subagent_spawner`) would feed into `list_parts` and silently match
     /// zero rows. `Option` forces callers to handle the no-message case.
@@ -293,7 +292,7 @@ impl ConversationRuntime {
                 task_registry: Arc::clone(&lc.task_registry),
                 agent_registry: Arc::clone(&lc.agent_registry),
             };
-            // F2.5 — snapshot the active agent slug RIGHT BEFORE dispatch
+            // Snapshot the active agent slug RIGHT BEFORE dispatch
             // (not at turn start). A previous tool in the same loop may
             // have swapped the agent (EnterPlanMode), so the next batch
             // must see the new allowlist.
@@ -523,9 +522,9 @@ impl ConversationRuntime {
                 return Ok(CompactionFlow::Halt);
             }
         }
-        // Post-compaction overflow check (amendment §P).
+        // Post-compaction overflow check.
         //
-        // H2-moved — thread the SAME provider-actual anchor the top-of-loop
+        // Thread the SAME provider-actual anchor the top-of-loop
         // `should_compact` uses, instead of a hardcoded `None`, so the two
         // checks share one mechanism (use provider-reported tokens when
         // known; otherwise trust the heuristic). At THIS point
@@ -548,7 +547,7 @@ impl ConversationRuntime {
 
 #[cfg(test)]
 mod halted_outcome_tests {
-    //! H4 — `halted_outcome` must surface `final_assistant_message_id =
+    //! `halted_outcome` must surface `final_assistant_message_id =
     //! None` when no model turn produced an assistant message (e.g. a
     //! `before_turn` hook halts turn 0). Previously it returned
     //! `MessageId::default()` (the nil UUID), which the subagent consumer

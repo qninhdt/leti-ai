@@ -17,8 +17,8 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::app_state::AppState;
 use crate::openapi::ApiDoc;
 use crate::routes::{
-    agent, attachments, cancel, diagnostics, event, health, message, permission, plugin, question,
-    session,
+    agent, attachments, cancel, diagnostics, event, health, message, model, permission, plugin,
+    question, session,
 };
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
@@ -41,6 +41,7 @@ impl Default for RouterBuilder {
             .with_permission_routes()
             .with_question_routes()
             .with_agent_routes()
+            .with_model_routes()
             .with_plugin_routes()
             .with_diagnostics_routes()
             .with_attachment_routes()
@@ -111,6 +112,13 @@ impl RouterBuilder {
         self
     }
 
+    /// `GET /v1/models` — provider model catalog.
+    #[must_use]
+    pub fn with_model_routes(mut self) -> Self {
+        self.inner = self.inner.routes(routes!(model::list));
+        self
+    }
+
     /// `GET /v1/plugin` + `GET /v1/plugin/:id/health`.
     #[must_use]
     pub fn with_plugin_routes(mut self) -> Self {
@@ -132,7 +140,7 @@ impl RouterBuilder {
     /// `POST /v1/sessions/:id/attachments` — multipart upload. Body is
     /// capped at 25MB via [`attachments::body_limit_layer`], a
     /// route-specific `RequestBodyLimitLayer` that disables the global
-    /// 2MB cap (closes F3.1).
+    /// 2MB cap.
     #[must_use]
     pub fn with_attachment_routes(mut self) -> Self {
         let layered = OpenApiRouter::with_openapi(ApiDoc::openapi())

@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -9,7 +10,7 @@ use super::session::{SessionId, SessionStatus};
 use crate::runtime::question_registry::QuestionId;
 
 /// Domain event published on the bus and (depending on `Persistence`)
-/// persisted to SQLite. Phase 5 wires the two-tier publisher (§G).
+/// persisted to SQLite via the two-tier publisher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
@@ -107,7 +108,7 @@ pub enum AgentEvent {
     /// `plan_mode.exited` — durable. Carries the model's final plan
     /// text so subscribers can render it without re-reading message
     /// history. Emitted even when the session was not in plan mode
-    /// (F2.6 — `ExitPlanMode` is a no-op-with-event so a naive model
+    /// (`ExitPlanMode` is a no-op-with-event so a naive model
     /// call still surfaces the plan to the operator).
     PlanModeExited {
         session_id: SessionId,
@@ -217,8 +218,8 @@ pub enum DeltaKind {
 /// Token + cost telemetry attached to `StepFinished` events.
 ///
 /// Fields cover the OpenAI-compat surface plus reasoning/cache breakdown
-/// (cross-check §2/§5: opencode `session.ts:378-441` charges reasoning at
-/// the output rate; OpenRouter returns `prompt_tokens_details.cached_tokens`
+/// (reasoning is charged at the output rate; OpenRouter returns
+/// `prompt_tokens_details.cached_tokens`
 /// separately, so we keep `cached_input_tokens` distinct from
 /// `input_tokens` to avoid double-counting on cost calc).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +245,14 @@ pub struct Usage {
     pub cache_creation_input_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
+    /// Authoritative turn cost in USD as reported by the gateway
+    /// (OpenRouter sends `usage.cost` when `stream_options.include_usage`
+    /// is set). `None` when the gateway omits it. Preferred over the
+    /// static pricing table so cost is correct for every model — incl.
+    /// ones with no local pricing row — and reflects real billing
+    /// (BYOK / discounts). Skipped on the wire when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<Decimal>,
 }
 
 /// Subscriber-side filter for `EventSink::subscribe`.

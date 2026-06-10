@@ -1,6 +1,6 @@
 //! `todo` tool — per-session checklist storage via the artifact store.
 //!
-//! Mirrors opencode's `todowrite`: full-list overwrite, statuses
+//! Full-list overwrite, statuses
 //! `pending|in_progress|completed|cancelled`, priority enum required.
 //! Storage key: `todos.json` under the session's artifact namespace.
 

@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn collision_custom_openrouter_model_does_not_route_to_anthropic() {
-        // F5.5 collision case: a custom OpenRouter model named
+        // Collision case: a custom OpenRouter model named
         // `claude-myprovider/foo` STARTS with `claude-` but isn't
         // Anthropic. Default routing sends it to Anthropic — that's
         // the documented behavior; integrators escape via overrides.

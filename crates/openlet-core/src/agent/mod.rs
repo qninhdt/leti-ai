@@ -4,10 +4,8 @@
 //! An `AgentDefinition` is a *behavior* registered by a plugin during
 //! `install`; an `AgentSpec` is an *identity* the runtime routes to.
 //!
-//! The split mirrors opencode's split between the agent registry (`agent.ts`
-//! built-ins) and the per-session principal (`message.agent: string`).
-//! claw-code has no agent abstraction, so the design comes entirely from
-//! opencode adjusted for our compile-time plugin model.
+//! The split separates the agent registry (built-in behaviors)
+//! from the per-session principal the runtime routes to.
 
 mod definition;
 mod registry;

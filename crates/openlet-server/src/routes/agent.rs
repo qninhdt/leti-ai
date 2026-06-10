@@ -16,10 +16,11 @@ use crate::app_state::AppState;
     )
 )]
 pub async fn list(State(state): State<AppState>) -> Json<Vec<AgentDto>> {
+    let model = state.config.default_model.as_str();
     let agents: Vec<AgentDto> = state
         .agents
         .values()
-        .map(|res| AgentDto::from(&res.spec))
+        .map(|res| AgentDto::from_spec_with_model(&res.spec, model))
         .collect();
     Json(agents)
 }

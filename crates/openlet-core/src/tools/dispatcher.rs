@@ -18,12 +18,13 @@ use futures::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use serde_json::Value;
 
-use crate::adapters::event_sink::EventSink;
+use crate::adapters::event_sink::{EventSink, Persistence};
 use crate::adapters::tool_executor::ToolCtx;
 use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::ToolError;
 use crate::hooks::io::{AfterToolCallCtx, BeforeToolCallCtx};
 use crate::tools::ToolRegistry;
+use crate::types::event::AgentEvent;
 use crate::types::permission::{Decision, PermissionCtx, PermissionRequest};
 use crate::types::session::SessionId;
 
@@ -221,6 +222,7 @@ async fn run_one(
         .get(&inv.name)
         .ok_or_else(|| ToolError::NotFound(inv.name.clone()))?;
     let req: PermissionRequest = tool.permission(&inv.args)?;
+    let req_for_event = req.clone();
     let decision = permission
         .check(perm_ctx, req)
         .await
@@ -233,6 +235,23 @@ async fn run_one(
             ));
         }
         Decision::Pending { ask_id } => {
+            // A pending decision is invisible to clients until the ask is
+            // announced — without this event no frontend can render a
+            // prompt, no human can reply, and the `deferred` below never
+            // resolves, parking the whole turn loop indefinitely. Publish
+            // BEFORE taking/awaiting the deferred so the prompt is on the
+            // wire even if the await is cancelled an instant later.
+            let _ = ctx
+                .events
+                .publish(
+                    AgentEvent::PermissionAsked {
+                        session_id: ctx.session_id,
+                        ask_id,
+                        request: req_for_event,
+                    },
+                    Persistence::Durable,
+                )
+                .await;
             // Take ownership of the deferred half from the manager. The
             // sender is held by the manager (resolved via reply / sweep
             // / accept_ask), and we await the receiver. Drop-resolves to

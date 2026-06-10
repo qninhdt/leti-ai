@@ -1,4 +1,4 @@
-//! Phase 3 — Network failure paths for `OpenAiCompatProvider`.
+//! Network failure paths for `OpenAiCompatProvider`.
 //!
 //! Drives the real provider against the in-process mock service +
 //! a hand-bound dropped TCP listener for connect-refused.

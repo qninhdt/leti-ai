@@ -1,6 +1,6 @@
 //! SSE resume test — verifies that disconnecting and reconnecting with
 //! a `Last-Event-ID` header replays missed durable events from the
-//! `events` table (per amendment §G/§I/§N).
+//! `events` table.
 
 use std::time::Duration;
 

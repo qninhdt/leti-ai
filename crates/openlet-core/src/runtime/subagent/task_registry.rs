@@ -194,7 +194,7 @@ impl TaskRegistry {
                 if s.is_terminal() {
                     let status = s.clone();
                     drop(s);
-                    // C1: read the snapshot straight from the ALREADY-CLONED
+                    // Read the snapshot straight from the ALREADY-CLONED
                     // `handle` rather than `self.poll_async(id)`. The driver's
                     // `finalize` may have removed the registry entry between
                     // `set_status(terminal)` and this read; the clone at the

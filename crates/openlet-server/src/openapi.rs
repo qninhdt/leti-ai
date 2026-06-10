@@ -5,8 +5,9 @@
 
 use openlet_protocol::{
     AbortAckDto, AgentDto, AttachmentKindDto, CreateMessageDto, CreateSessionDto, DeltaKindDto,
-    ErrorDto, EventDto, HealthDto, MessageDto, PartDto, PermissionReplyDto, PermissionReplyKind,
-    PermissionRequestDto, PromptAckDto, SessionDto, SetModeDto, UsageDto, dto::QuestionAnswerDto,
+    ErrorDto, EventDto, HealthDto, MessageDto, ModelDto, PartDto, PermissionReplyDto,
+    PermissionReplyKind, PermissionRequestDto, PromptAckDto, SessionDto, SetModeDto, UsageDto,
+    dto::QuestionAnswerDto,
 };
 use utoipa::OpenApi;
 
@@ -36,6 +37,7 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         EventDto,
         HealthDto,
         MessageDto,
+        ModelDto,
         PartDto,
         PermissionReplyDto,
         PermissionReplyKind,

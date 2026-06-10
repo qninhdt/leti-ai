@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn claude_without_hyphen_falls_through_to_default() {
-        // F5.5 / F1.10: custom OpenRouter forks must not collide with
+        // Custom OpenRouter forks must not collide with
         // the Anthropic overlay just because they share a substring.
         assert_eq!(select_provider_prompt("claudemyfork"), DEFAULT);
     }
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn future_o_series_falls_through_to_default() {
-        // F1.10: `o4-mini` is not in the o1/o3 prefix set today and
+        // `o4-mini` is not in the o1/o3 prefix set today and
         // must fall through. Integrator can override via OnChatMessages.
         assert_eq!(select_provider_prompt("o4-mini"), DEFAULT);
     }

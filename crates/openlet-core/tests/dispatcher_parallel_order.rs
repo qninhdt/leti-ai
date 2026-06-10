@@ -1,4 +1,4 @@
-//! Phase 2 — `dispatch_batch` order preservation + panic isolation.
+//! `dispatch_batch` order preservation + panic isolation.
 //!
 //! Two invariants under test:
 //!

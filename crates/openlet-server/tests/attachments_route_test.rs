@@ -1,6 +1,6 @@
 //! Integration tests for the multipart attachment upload route.
 //!
-//! Covers F3.1 (25MB body cap fires at the layer, not after read) and
+//! Covers the 25MB body cap (fires at the layer, not after read) and
 //! the happy-path JPEG round-trip.
 
 mod support;
@@ -13,10 +13,10 @@ use support::TestHarness;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-/// F3.1 — POSTing 30MB returns 413 BEFORE the handler reads the body.
+/// POSTing 30MB returns 413 BEFORE the handler reads the body.
 /// The `Content-Length` header is set explicitly so the
 /// `RequestBodyLimitLayer` short-circuits with 413 without ever
-/// invoking the multipart parser. Closes F3.1.
+/// invoking the multipart parser.
 #[tokio::test]
 async fn multipart_25mb_cap_returns_413_pre_body_read() {
     let harness = TestHarness::new().await;

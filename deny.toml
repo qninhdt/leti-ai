@@ -13,13 +13,13 @@ db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = [
-    # rsa 0.9.x — Marvin timing-sidechannel. No fixed upgrade available.
-    # Reaches us only via sqlx's bundled mysql backend, which we never instantiate
-    # (SQLite-only). Re-evaluate when rsa publishes a fix.
-    "RUSTSEC-2023-0071",
     # paste 1.x — unmaintained. Transitive via utoipa-axum's macros.
     # No security impact; expansion-only proc-macro. Drop when utoipa-axum migrates.
     "RUSTSEC-2024-0436",
+    # encoding 0.2.x — unmaintained. Transitive via pdf-extract's text decode.
+    # No security impact; charset-decode only on operator-supplied PDFs. Drop
+    # when pdf-extract migrates off it.
+    "RUSTSEC-2021-0153",
 ]
 
 [licenses]

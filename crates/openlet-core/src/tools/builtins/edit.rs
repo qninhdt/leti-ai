@@ -1,10 +1,10 @@
 //! `edit` tool — find/replace with read-before-write + unique-match gate.
 //!
 //! Single-replace mode requires the `find` text to appear exactly once
-//! (Anthropic str_replace semantics; tighter than opencode's
+//! (Anthropic str_replace semantics; tighter than a
 //! `first_index == last_index` shortcut). `replace_all` switches to
-//! verbatim `String::replace`. We diverge from claw-code's `replacen(.., 1)`
-//! because ambiguous matches silently corrupt files.
+//! verbatim `String::replace`. We reject ambiguous matches (rather than
+//! replacing the first) because they silently corrupt files.
 
 use std::path::PathBuf;
 

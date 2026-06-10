@@ -1,6 +1,6 @@
 //! OpenAI-compat / OpenRouter `ModelProvider` impl.
 //!
-//! Three-layer split per phase-03 §Architecture:
+//! Three-layer split:
 //!   1. `provider` — HTTP send + cancellation + status mapping
 //!   2. `wire`     — `ChatRequest` ↔ OpenAI JSON shape
 //!   3. `sse` + `chunk_decoder` — frame extraction + `ChatDelta` decode

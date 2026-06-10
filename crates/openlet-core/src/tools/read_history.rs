@@ -1,7 +1,7 @@
 //! Per-session record of paths the model has read this session.
 //!
 //! Used by `write` and `edit` tools to enforce read-before-write
-//! (Anthropic str_replace pattern; opencode/claw both rely on a
+//! (Anthropic str_replace pattern — relies on a
 //! diff-or-prior-read safety bar).
 
 use std::collections::HashSet;

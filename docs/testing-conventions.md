@@ -16,6 +16,31 @@ integration-test-suite phase 1 foundation.
 | Persistence | `SqliteMemoryStore` (`:memory:`) | Real adapter where the cost is cheap. |
 | Filesystem | `tempfile::TempDir` | Always — never write to fixed paths. |
 
+## Live E2E tiers
+
+End-to-end tiers drive a real server (real axum HTTP + SSE + provider
+stream). The LLM is either the in-process `mock-openai-service` (a real
+OpenAI-compat HTTP server, deterministic + network-free) or real
+OpenRouter. Storage / filesystem / permission layers are always real —
+never mocked — in these tiers.
+
+| Tier | File(s) | Gate | Run |
+|---|---|---|---|
+| Mock-LLM (default) | `live_e2e_server_core`, `live_e2e_plugin_agent`, `live_e2e_fs_write`, `live_e2e_session_persist` | none — runs on plain `cargo test` | `cargo test --workspace` |
+| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud` | `#[ignore]` + `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY` | `OPENLET_LIVE_E2E=1 cargo test -p openlet-server -- --ignored` |
+| TUI Node wire-double (default) | `tui/tests/e2e/tui-live-e2e.test.tsx` | none | `cd tui && npm test` |
+| TUI real-binary (gated) | `tui/tests/e2e/tui-real-binary-e2e.test.tsx` | `OPENLET_TUI_REAL_E2E=1` (+ `OPENLET_LIVE_E2E=1` + key for the OpenRouter sub-tier) | `cd tui && npm run test:e2e:real` |
+
+The TUI real-binary tier spawns the prebuilt `openlet-server` +
+`mock-openai-service`; build them first (`cargo build -p openlet-server
+-p openlet-test-mock-provider`). The deterministic FS proof is the
+single-`write` `fs_write_once` scenario (the stateless mock can't script
+multi-step CRUD); the full create→read→edit→delete sequence is proven by
+the gated real-OpenRouter `live_e2e_fs_agent_crud` tier, where a real
+model advances the steps. Both require the session in `danger` permission
+mode (set via `POST /v1/session/:id/mode`) so `write`/`bash` auto-approve
+instead of parking on an `Ask`.
+
 ## When to use what
 
 | Need | Use | Don't use |

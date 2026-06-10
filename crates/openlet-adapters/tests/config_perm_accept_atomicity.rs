@@ -1,4 +1,4 @@
-//! Phase 2 — `ConfigPermissionMgr::accept_ask` atomicity.
+//! `ConfigPermissionMgr::accept_ask` atomicity.
 //!
 //! Two invariants under test:
 //!
@@ -98,7 +98,7 @@ async fn accept_ask_restores_pending_on_persist_failure() {
     );
 }
 
-/// C2 (verify-only) — crash AFTER `repo.record` succeeds but BEFORE the
+/// Verify-only — crash AFTER `repo.record` succeeds but BEFORE the
 /// in-memory `inner.push`. The persisted rule is orphaned in-memory for the
 /// remainder of that process, but the durability contract says it MUST be
 /// recovered on the next boot via the load path (`hydrate`). This test

@@ -1,6 +1,6 @@
 //! Error types for the six adapter traits + a top-level `CoreError`.
 //!
-//! Per amendment §S, no `Other(String)` variants. Where wrapping is needed
+//! No `Other(String)` variants. Where wrapping is needed
 //! we use `class: &'static str` so failure-class taxonomy stays closed.
 
 use thiserror::Error;
@@ -35,8 +35,7 @@ pub enum CoreError {
 
 impl CoreError {
     /// Closed-set failure class for telemetry + structured error responses.
-    /// Mirrors claw-code's `safe_failure_class()`. Adding a class requires
-    /// editing this match — no free-form strings (§S).
+    /// Adding a class requires editing this match — no free-form strings.
     #[must_use]
     pub fn class(&self) -> FailureClass {
         match self {
@@ -75,7 +74,7 @@ pub enum ProviderError {
     ContextWindowExceeded { used: u64, limit: u64 },
     #[error("provider request cancelled")]
     Cancelled,
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 
@@ -102,7 +101,7 @@ pub enum MemoryError {
     MessageNotFound,
     #[error("storage io: {0}")]
     Io(String),
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 
@@ -112,7 +111,7 @@ pub enum ArtifactError {
     NotFound(String),
     #[error("artifact io: {0}")]
     Io(String),
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 
@@ -147,7 +146,7 @@ pub enum ToolError {
     /// pivot to an allowed tool without seeing a permission failure.
     #[error("tool '{tool}' not allowed in agent '{agent}'")]
     NotAllowedInAgent { tool: String, agent: String },
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 
@@ -220,7 +219,7 @@ pub enum EventError {
     },
     #[error("storage io: {0}")]
     Io(String),
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 
@@ -236,7 +235,7 @@ pub enum PermissionError {
     Unsupported(String),
     #[error("storage io: {0}")]
     Io(String),
-    #[error("not implemented (Phase 1 stub)")]
+    #[error("not implemented")]
     Unimplemented,
 }
 

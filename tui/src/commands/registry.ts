@@ -1,6 +1,5 @@
 // Slash command registry — single source of truth for /help.
-// Per amendment §C `/danger` toggles permission mode; per plugin §6
-// `/plugins` lists installed plugins.
+// `/danger` toggles permission mode; `/plugins` lists installed plugins.
 
 import { planCommand } from "./builtins/plan.js";
 

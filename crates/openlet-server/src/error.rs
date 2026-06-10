@@ -2,7 +2,7 @@
 //! `&'static str` slug + a status code; routes return `AppError` and
 //! axum converts via `IntoResponse`.
 //!
-//! Per amendment §S no `Other` variants — every error must be a typed
+//! No `Other` variants — every error must be a typed
 //! variant with a closed-set slug.
 
 use axum::Json;
@@ -154,7 +154,7 @@ impl From<ConfigError> for AppError {
 
 impl From<ProviderError> for AppError {
     fn from(e: ProviderError) -> Self {
-        // HIGH-F9: provider response bodies may echo the request payload
+        // Provider response bodies may echo the request payload
         // (some upstreams do for 400s) including conversation context +
         // partially-substituted secrets. Log internally; return only a
         // fixed message to the client.

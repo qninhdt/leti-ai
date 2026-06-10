@@ -1,5 +1,5 @@
 //! Append-only writer for the `events` table. Returns the autoincrement
-//! `id` so phase-05's SSE channel can use it as Last-Event-ID.
+//! `id` so the SSE channel can use it as Last-Event-ID.
 
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -29,16 +29,14 @@ impl SqliteEventRepo {
 
     /// DEPRECATED — SQLite-`AUTOINCREMENT` id assignment. Superseded by
     /// [`Self::append_with_id`], which lets `BroadcastBus` own monotonic
-    /// id allocation + ordering (H1). Do NOT call this alongside
+    /// id allocation + ordering. Do NOT call this alongside
     /// `append_with_id`: a row inserted here is invisible to the bus's
     /// in-memory counter, so the next bus-allocated id would collide on
     /// the PK (the bus seeds from `MAX(id)` only once at first publish).
     /// Retained only so the AUTOINCREMENT path stays available for any
     /// future non-bus writer; currently has no callers.
-    #[deprecated(
-        note = "use append_with_id; BroadcastBus owns event_id allocation (H1). \
-                Mixing this with append_with_id drifts the bus counter and risks PK collision."
-    )]
+    #[deprecated(note = "use append_with_id; BroadcastBus owns event_id allocation. \
+                Mixing this with append_with_id drifts the bus counter and risks PK collision.")]
     pub async fn append(
         &self,
         session_id: Option<SessionId>,

@@ -1,4 +1,4 @@
-//! Phase 5 — `MultiProvider` routing under concurrent dispatch.
+//! `MultiProvider` routing under concurrent dispatch.
 //!
 //! Three scripted backends record every call; the test fires N
 //! concurrent `chat_stream`s mixing all three model families plus a

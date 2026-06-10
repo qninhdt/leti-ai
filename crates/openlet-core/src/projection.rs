@@ -1,6 +1,6 @@
 //! Deterministic projection: domain `Message`+`Part` -> LLM-shape messages.
 //!
-//! Centralized so phase-03's loop and phase-07's compaction share one rule
+//! Centralized so the turn loop and compaction share one rule
 //! set. Pure function over a snapshot of messages and parts; appending a
 //! part to the source never invalidates a prior projection's prefix.
 
@@ -135,9 +135,9 @@ fn project_user(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>)
 
 /// Gather a text fallback for `Part::Image` / `Part::Document` parts.
 ///
-/// Phase-3 projection emits image / document attachments as inline
+/// Projection emits image / document attachments as inline
 /// text placeholders (with extracted PDF text inlined when available).
-/// Phase 5+ will fork on `ProjectionCaps` to emit native multipart
+/// A future revision will fork on `ProjectionCaps` to emit native multipart
 /// content for vision-capable providers; today both code paths share
 /// the text fallback so the model still sees *something* about the
 /// attachment.

@@ -1,9 +1,9 @@
 //! Conversation runtime — orchestrator + pure-logic helpers.
 //!
-//! Phase 3 slice 1 landed the pure helpers (`processor`, `doom_guard`,
-//! `cost`). Slice 2 adds the `ConversationRuntime` orchestrator
-//! (`conversation`) and the streaming-id bookkeeping (`turn_stream`)
-//! that bridges `Processor` to `MemoryStore` + `EventSink`.
+//! The pure helpers (`processor`, `doom_guard`, `cost`) sit alongside
+//! the `ConversationRuntime` orchestrator (`conversation`) and the
+//! streaming-id bookkeeping (`turn_stream`) that bridges `Processor`
+//! to `MemoryStore` + `EventSink`.
 
 pub mod agent_allowlist;
 pub mod attachments;

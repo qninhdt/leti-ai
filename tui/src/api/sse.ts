@@ -1,5 +1,5 @@
-// SSE wrapper around eventsource@3 — header-only Last-Event-ID resume per
-// amendments-after-red-team §C, exponential reconnect backoff, single
+// SSE wrapper around eventsource@3 — header-only Last-Event-ID resume,
+// exponential reconnect backoff, single
 // applyEvent dispatch on every frame. The dotted event names from
 // `event_kind()` in routes/event.rs translate to snake_case on the
 // EventDto wire shape (see api/types.ts).
@@ -95,7 +95,7 @@ export function connectSse(config: SseConfig): SseHandle {
           }
           config.onEvent(ev);
         } catch {
-          // Skip malformed frames; phase-06 requires zero crash on bad SSE.
+          // Skip malformed frames; bad SSE must never crash the client.
         }
       });
     }

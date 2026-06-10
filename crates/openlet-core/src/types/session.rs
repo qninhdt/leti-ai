@@ -116,7 +116,7 @@ pub struct SessionCapabilities {
     pub user_questions: bool,
 }
 
-/// Filter for `MemoryStore::list_sessions` (added in §A).
+/// Filter for `MemoryStore::list_sessions`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionFilter {
     pub status: Option<SessionStatus>,

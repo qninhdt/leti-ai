@@ -3,8 +3,7 @@
 //! A rule is `{ permission, pattern, action }`. `permission` is the
 //! `<verb>:<target>` string the tool emits (e.g. `read:src/main.rs`,
 //! `bash:rm -rf /`); `pattern` is a glob applied via `globset` against
-//! that string; `action` is `allow|ask|deny`. Last-match-wins per
-//! brainstorm — we explicitly diverge from claw-code's first-match.
+//! that string; `action` is `allow|ask|deny`. Last-match-wins.
 
 use globset::{Glob, GlobMatcher};
 use openlet_core::types::permission::{
@@ -62,7 +61,7 @@ impl CompiledRule {
     }
 }
 
-/// A compiled ruleset — last-match-wins. Layered per amendment §E
+/// A compiled ruleset — last-match-wins. Layered
 /// (defaults ++ agent ++ workspace ++ session) by concatenating
 /// `CompiledRuleset`s before evaluation.
 #[derive(Debug, Default, Clone)]

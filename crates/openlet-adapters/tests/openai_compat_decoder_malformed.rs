@@ -1,4 +1,4 @@
-//! Phase 4 — `chunk_decoder::decode_chunk` malformed input handling.
+//! `chunk_decoder::decode_chunk` malformed input handling.
 //!
 //! Cases:
 //! 1. Envelope-level garbage → `Decode("chunk envelope: ...")`

@@ -19,7 +19,7 @@ pub struct DynamicSegmentInput {
 }
 
 /// Two-part prompt: `cacheable` is hashed for the prompt-cache lock
-/// (amendment §R) and placed FIRST in the system message so Anthropic
+/// and placed FIRST in the system message so Anthropic
 /// prompt cache hits. `dynamic` runs each turn and is appended after.
 #[derive(Clone)]
 pub struct PromptSegments {
@@ -68,7 +68,7 @@ impl AgentDefinition {
             .unwrap_or_default()
     }
 
-    /// M4 — validate numeric invariants the runtime relies on. Call this at
+    /// Validate numeric invariants the runtime relies on. Call this at
     /// load time (builder / future from-toml path) so a malformed
     /// `compaction_threshold` is rejected up front rather than silently
     /// producing a degenerate compaction limit (a negative or NaN threshold
@@ -105,7 +105,7 @@ impl Default for PromptSegments {
 
 #[cfg(test)]
 mod validate_tests {
-    //! M4 — `compaction_threshold` must be a real number in `(0.0, 1.0]`.
+    //! `compaction_threshold` must be a real number in `(0.0, 1.0]`.
     use super::*;
 
     fn agent_with_threshold(t: f32) -> AgentDefinition {
@@ -127,7 +127,10 @@ mod validate_tests {
     #[test]
     fn accepts_valid_threshold() {
         assert!(agent_with_threshold(0.8).validate().is_ok());
-        assert!(agent_with_threshold(1.0).validate().is_ok(), "1.0 inclusive");
+        assert!(
+            agent_with_threshold(1.0).validate().is_ok(),
+            "1.0 inclusive"
+        );
         assert!(
             agent_with_threshold(f32::MIN_POSITIVE).validate().is_ok(),
             "smallest positive is valid"

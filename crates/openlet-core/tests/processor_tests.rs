@@ -1,5 +1,5 @@
 //! Table-driven processor tests covering each `ChatDelta` variant +
-//! interleavings (phase-03 step 6 + step 13). Pure logic, no IO.
+//! interleavings. Pure logic, no IO.
 
 use openlet_core::adapters::model_provider::{ChatDelta, FinishReason};
 use openlet_core::error::ProviderError;

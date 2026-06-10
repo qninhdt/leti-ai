@@ -6,6 +6,27 @@ Standalone Rust agent runtime exposing REST + SSE, paired with an Ink/React TUI 
 
 ## Quickstart
 
+One command boots the server, waits for health, builds the TUI if needed,
+and drops you into the live terminal app — then tears the server down on exit.
+
+```bash
+cp .env.example .env   # then fill OPENROUTER_API_KEY
+./openlet-ai           # real OpenRouter
+```
+
+No key, no network? The in-process mock LLM runs the full pipeline:
+
+```bash
+./openlet-ai --mock    # network-free; no key required
+```
+
+Other flags: `--clean` (kill a straggler on the bind port + clear run state),
+`--rebuild` (force a TUI rebuild), `RELEASE=1 ./openlet-ai` (release profile).
+
+### Manual / advanced
+
+If you'd rather drive each piece by hand:
+
 ```bash
 # 1. Build everything (~90s clean).
 cargo build --workspace
@@ -18,11 +39,13 @@ cd tui && npm install && npm run build && npm install -g .
 openlet
 ```
 
-For a network-free dry run, point the server at the in-process mock provider:
+For a network-free dry run, point the server at the in-process mock provider.
+`OPENLET_MODEL_BASE_URL` is honored on the serve path (no source edit needed):
 
 ```bash
 cargo run -p openlet-test-mock-provider --bin mock-openai-service
-# then start the server with OPENLET_MODEL_BASE_URL=http://127.0.0.1:<port>/v1
+# then start the server with OPENLET_MODEL_BASE_URL=<printed base_url, verbatim>
+# (the printed URL already ends in /v1 — do not append another)
 ```
 
 ## Configuration
@@ -34,6 +57,7 @@ All config is environment-driven. See [`docs/deployment.md`](docs/deployment.md)
 | `OPENLET_BIND` | `127.0.0.1:8787` | TCP bind address. Loopback-only by default. |
 | `OPENLET_DATA_DIR` | `~/.openlet` | Sqlite, artifact, and session-log root. |
 | `OPENROUTER_API_KEY` | _(unset)_ | OpenRouter / OpenAI-compat credentials. |
+| `OPENLET_MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Model API base URL. Point at a self-hosted gateway or the in-process mock (`./openlet-ai --mock` sets it). |
 | `OPENLET_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | Default chat model. |
 | `OPENLET_LOG_FORMAT` | `json` | `json` or `pretty`. |
 | `OPENLET_ENABLE_DOCS` | `1` | Set `0` to remove the `/doc` Swagger UI in cloud builds. |

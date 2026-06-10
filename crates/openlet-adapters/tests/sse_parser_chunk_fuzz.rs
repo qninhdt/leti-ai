@@ -1,4 +1,4 @@
-//! Phase 3 — SSE parser chunk-boundary fuzz.
+//! SSE parser chunk-boundary fuzz.
 //!
 //! Three properties under test:
 //!

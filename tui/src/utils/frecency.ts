@@ -1,4 +1,4 @@
-// Frecency ranking — ported from opencode autocomplete.tsx:9-14.
+// Frecency ranking.
 // score = frequency * (1 / (1 + daysSinceLastOpen)).
 // Sources persist as JSONL append-only at the OS state dir; on load,
 // duplicates are de-duped by path (latest wins). Cap 1000.

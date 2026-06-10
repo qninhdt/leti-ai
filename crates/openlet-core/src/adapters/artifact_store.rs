@@ -14,8 +14,8 @@ pub struct ArtifactRef {
     pub mime: Option<String>,
 }
 
-/// Stores per-session artifacts. Phase 2 implements `LocalFsArtifactStore`
-/// rooted at `<data_dir>/artifacts/<session_id>/<key>`.
+/// Stores per-session artifacts, rooted at
+/// `<data_dir>/artifacts/<session_id>/<key>`.
 #[async_trait]
 pub trait ArtifactStore: Send + Sync + 'static {
     async fn put(

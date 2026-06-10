@@ -45,7 +45,7 @@ export function ChatView(props: ChatViewProps): React.ReactElement {
       <StatusBar
         conn={props.conn}
         sessionId={props.session?.id ?? null}
-        agentName={props.agent?.name}
+        agentName={props.agent?.display_name}
         modelName={props.agent?.model ?? undefined}
         cost={props.session?.cost_decimal_str}
         permissionMode={props.session?.permission_mode}

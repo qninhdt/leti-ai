@@ -1,4 +1,4 @@
-//! Phase 2 — Hook chain runner: panic isolation + timeout synthesis.
+//! Hook chain runner: panic isolation + timeout synthesis.
 //!
 //! `dispatch.rs::runner::dispatch` wraps every hook future in a panic
 //! catcher + 5 s timeout. Two cases under test:

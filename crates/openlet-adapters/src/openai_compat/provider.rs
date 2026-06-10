@@ -1,7 +1,7 @@
 //! `OpenAiCompatProvider` — `ModelProvider` impl streaming OpenRouter via
 //! `POST /v1/chat/completions` with `stream: true`.
 //!
-//! Three-layer split (per phase-03 §Architecture):
+//! Three-layer split:
 //!  1. This file — HTTP send + cancellation + 4xx/5xx mapping. No domain.
 //!  2. `wire.rs` — `ChatRequest` ↔ OpenAI JSON request shape.
 //!  3. `sse.rs` + `chunk_decoder.rs` — frame extraction + `ChatDelta` decode.
@@ -16,9 +16,10 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio_util::sync::CancellationToken;
 
 use openlet_core::adapters::model_provider::{
-    ChatRequest, ChatStream, ModelPricing, ModelProvider, ProviderCapabilities,
+    ChatRequest, ChatStream, ModelInfo, ModelPricing, ModelProvider, ProviderCapabilities,
 };
 use openlet_core::error::ProviderError;
+use serde::Deserialize;
 
 use super::prefix_shaping::{apply_request_shaping, detect_quirks};
 use super::pricing::pricing_for;
@@ -119,8 +120,7 @@ impl ModelProvider for OpenAiCompatProvider {
 
         // Merge plugin-injected headers from `OnChatHeaders`. Reserved
         // headers (auth-bearing) are filtered structurally so a buggy
-        // or malicious plugin cannot hijack upstream credentials. Closes
-        // SA-F3 (plugin Authorization hijack via doc-only protection).
+        // or malicious plugin cannot hijack upstream credentials.
         for (k, v) in &req.headers {
             let lk = k.to_ascii_lowercase();
             if RESERVED_HEADERS.contains(&lk.as_str()) {
@@ -163,6 +163,38 @@ impl ModelProvider for OpenAiCompatProvider {
         pricing_for(model)
     }
 
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let url = format!("{}/models", self.inner.base_url);
+        let mut req = self.inner.http.get(&url);
+        if let Some(key) = self.inner.api_key.as_ref() {
+            // GET /models is free on OpenRouter; the key is sent only so
+            // gated catalogs resolve. Mark sensitive so it never lands in
+            // a debug log of the request.
+            let auth_val = format!("Bearer {}", key.expose_secret());
+            let mut auth = HeaderValue::from_str(&auth_val)
+                .map_err(|e| ProviderError::Auth(format!("invalid api key header: {e}")))?;
+            auth.set_sensitive(true);
+            let mut headers = HeaderMap::new();
+            headers.insert(AUTHORIZATION, auth);
+            req = req.headers(headers);
+        }
+
+        let response = req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Network(e.to_string()))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(map_http_error(status, response).await);
+        }
+
+        let body = response
+            .json::<ModelsResponse>()
+            .await
+            .map_err(|e| ProviderError::Network(format!("models decode: {e}")))?;
+        Ok(body.data.into_iter().map(ModelInfo::from).collect())
+    }
+
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
         // Capabilities mirror the prefix-shaper detection so callers
         // (router, projector, request builder) get a single source of
@@ -176,7 +208,7 @@ impl ModelProvider for OpenAiCompatProvider {
 /// Reserved header names plugins cannot set via `OnChatHeaders`. Lower-
 /// case for case-insensitive comparison. The adapter filters these out
 /// structurally so a buggy or hostile plugin cannot hijack upstream
-/// credentials by setting `Authorization`. Closes SA-F3.
+/// credentials by setting `Authorization`.
 const RESERVED_HEADERS: &[&str] = &[
     "authorization",
     "x-api-key",
@@ -244,4 +276,35 @@ fn truncate(s: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}…", &s[..end])
+}
+
+/// OpenRouter / OpenAI `GET /models` envelope: `{ "data": [ {...}, ... ] }`.
+#[derive(Debug, Deserialize)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+/// One catalog row. Only `id` is required; everything else is best-effort
+/// and tolerant of the field being absent or a different shape. OpenRouter
+/// nests context length under `context_length`; some gateways use
+/// `top_provider.context_length` — we read the flat field and fall back to
+/// `None` rather than failing the whole catalog parse.
+#[derive(Debug, Deserialize)]
+struct ModelEntry {
+    id: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    context_length: Option<u32>,
+}
+
+impl From<ModelEntry> for ModelInfo {
+    fn from(e: ModelEntry) -> Self {
+        Self {
+            id: e.id,
+            display_name: e.name,
+            context_length: e.context_length,
+        }
+    }
 }

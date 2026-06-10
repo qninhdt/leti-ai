@@ -1,5 +1,5 @@
 // /plan slash command — submits a synthetic EnterPlanMode tool call so
-// the model treats the next turn as a plan-mode entry. F8 strict: this
+// the model treats the next turn as a plan-mode entry. This
 // only ENTERS plan mode; exit is the model's job via ExitPlanMode.
 
 import type { Command, CommandContext } from "../registry.js";

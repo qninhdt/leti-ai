@@ -40,8 +40,17 @@ use tracing_subscriber::util::SubscriberInitExt;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // Load `.env` from CWD (walking up to the repo root) before reading
+    // config. Existing process-env vars win — dotenvy does not override
+    // already-set keys, so an explicit `OPENROUTER_API_KEY=… cargo run`
+    // still takes precedence over the file.
+    let dotenv_path = dotenvy::dotenv().ok();
     let mut config = Config::load().context("loading config")?;
     init_tracing(config.log_format);
+    if let Some(path) = dotenv_path {
+        // Never log the values — only that a file was found and which one.
+        info!(dotenv = %path.display(), "loaded .env");
+    }
 
     match cli.resolved_command() {
         Command::Serve(args) => {
@@ -91,10 +100,9 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("create session log dir {}", session_log_root.display()))?;
 
-    let provider = OpenAiCompatProvider::new(
-        openlet_adapters::openai_compat::DEFAULT_BASE_URL,
-        config.openrouter_api_key.clone(),
-    );
+    let base_url = resolve_model_base_url();
+    info!(model_base_url = %base_url, "model backend endpoint");
+    let provider = OpenAiCompatProvider::new(base_url, config.openrouter_api_key.clone());
 
     let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(provider);
     let inner_memory: Arc<dyn openlet_core::adapters::MemoryStore> =
@@ -161,7 +169,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         hook_chains.clone(),
     ));
 
-    // §I: crash recovery — mark any leftover Running sessions as Errored.
+    // Crash recovery — mark any leftover Running sessions as Errored.
     let stale = memory
         .list_sessions(openlet_core::types::session::SessionFilter {
             status: Some(openlet_core::types::session::SessionStatus::Running),
@@ -220,6 +228,14 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             .context("inserting plugin-drained agent definition")?;
     }
 
+    // Materialize the plugin registry that backs `/v1/plugin*`. The
+    // handles are `Arc`, so cloning into the registry leaves
+    // `installed.plugins` intact for the shutdown loop below.
+    let mut plugin_registry = openlet_plugin_registry::PluginRegistry::new();
+    for plugin in &installed.plugins {
+        plugin_registry.push(plugin.clone());
+    }
+
     let state = AppStateBuilder::new()
         .provider(provider)
         .memory(memory)
@@ -235,6 +251,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         ))
         .config(Arc::new(config.clone()))
         .hook_chains(hook_chains.clone())
+        .plugin_registry(Arc::new(plugin_registry))
         .runtime(runtime)
         .agents(agents)
         .default_agent_id(default_agent_id)
@@ -348,7 +365,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // resources (sockets, billing-flush state, audit handles) get a
     // chance to drain before the process exits. Per-plugin shutdown is
     // panic-isolated so a buggy plugin can't strand the others.
-    // Phase 9 (FMA-F5 ACCEPT): run shutdowns in parallel under a single
+    // Run shutdowns in parallel under a single
     // 5s timeout so total wall time stays bounded by ONE timeout window
     // (not 5s × N plugins). Fits k8s default terminationGracePeriodSeconds=30.
     let shutdowns = installed.plugins.iter().map(|plugin| {
@@ -410,6 +427,19 @@ fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
     std::env::var("OPENLET_WORKSPACE")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| config.data_dir.join("workspace"))
+}
+
+/// Resolve the model API base URL: `OPENLET_MODEL_BASE_URL` if set, else
+/// the OpenAI-compat default (OpenRouter). Lets one binary target real
+/// OpenRouter, a self-hosted gateway, or the in-process mock without code
+/// edits. A single trailing `/` is trimmed so callers can pass `…/v1` or
+/// `…/v1/` interchangeably without producing `//chat/completions`. The
+/// env-var name is owned by the doctor probe and imported here so the
+/// serve path and the diagnostics path can never disagree.
+fn resolve_model_base_url() -> String {
+    let raw = std::env::var(openlet_server::diagnostics::MODEL_BASE_URL_ENV)
+        .unwrap_or_else(|_| openlet_adapters::openai_compat::DEFAULT_BASE_URL.to_string());
+    raw.strip_suffix('/').unwrap_or(&raw).to_string()
 }
 
 /// Build the tool registry from plugin-drained handles. Shared by the
@@ -534,11 +564,9 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
 
     tokio::fs::create_dir_all(&artifact_root).await.ok();
 
-    let provider: Arc<dyn openlet_core::adapters::ModelProvider> =
-        Arc::new(OpenAiCompatProvider::new(
-            openlet_adapters::openai_compat::DEFAULT_BASE_URL,
-            config.openrouter_api_key.clone(),
-        ));
+    let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(
+        OpenAiCompatProvider::new(resolve_model_base_url(), config.openrouter_api_key.clone()),
+    );
     let memory: Arc<dyn openlet_core::adapters::MemoryStore> =
         Arc::new(SqliteMemoryStore::new(pool.clone()));
     let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());

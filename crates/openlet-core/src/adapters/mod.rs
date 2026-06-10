@@ -1,7 +1,6 @@
 //! Six adapter trait modules — the contracts implementations plug into.
 //!
-//! Phase 1 locks the surface; impls live in `openlet-adapters` (stubs only
-//! this phase, real impls land in Phase 2-4).
+//! These traits lock the surface; impls live in `openlet-adapters`.
 
 pub mod artifact_store;
 pub mod event_sink;
@@ -20,7 +19,7 @@ pub use filesystem::{
     GrepArgs as FsGrepArgs, GrepHit as FsGrepHit, WriteOpts,
 };
 pub use memory_store::MemoryStore;
-pub use model_provider::{ChatDelta, ChatRequest, ModelPricing, ModelProvider};
+pub use model_provider::{ChatDelta, ChatRequest, ModelInfo, ModelPricing, ModelProvider};
 pub use permission_manager::PermissionManager;
 pub use tool_executor::{
     BashCommand, BashOutput, DirEntry, FileBlob, GrepArgs, GrepHit, ToolCtx, ToolExecutor,

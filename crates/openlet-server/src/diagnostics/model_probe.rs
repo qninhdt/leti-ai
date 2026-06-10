@@ -12,7 +12,10 @@ use tokio::time::timeout;
 use super::{CheckResult, PER_CHECK_BUDGET, Status, finish};
 use crate::app_state::AppState;
 
-const BASE_URL_ENV: &str = "OPENLET_MODEL_BASE_URL";
+/// Canonical env-var name for the model API base URL. Single source of
+/// truth — the serve path (`main.rs`) imports this so the doctor probe and
+/// the live provider always agree on which variable selects the backend.
+pub const BASE_URL_ENV: &str = "OPENLET_MODEL_BASE_URL";
 
 pub(super) async fn check_model_reachable(state: &AppState) -> CheckResult {
     let start = Instant::now();

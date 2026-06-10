@@ -4,8 +4,8 @@
 //! mentions are intentionally ignored: a user typing
 //! "ask the @planner to..." should NOT silently trigger a subagent;
 //! they have to start the line with `@planner`. Using `\w` would let
-//! Unicode confusables (Cyrillic `а`, Greek `α`) match — closes F4.5 by
-//! restricting the slug class to ASCII alphanumerics + `-` and `_`.
+//! Unicode confusables (Cyrillic `а`, Greek `α`) match — so the slug class
+//! is restricted to ASCII alphanumerics + `-` and `_`.
 
 use crate::agent::{AgentRegistry, AgentSlug};
 use regex::Regex;

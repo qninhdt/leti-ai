@@ -108,3 +108,10 @@ temp
 # Local-only working files
 drafts/
 release-manifest.json
+
+# Launcher runtime state (server/mock logs, pids)
+.openlet-run/
+# Code-intelligence index (local tooling artifact)
+.codegraph/
+# Acceptance test evidence (may contain scrubbed real-LLM transcripts)
+plans/**/evidence/

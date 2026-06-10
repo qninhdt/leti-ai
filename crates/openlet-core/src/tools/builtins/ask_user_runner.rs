@@ -35,7 +35,7 @@ pub(super) async fn run(
 ) -> Result<AskUserOutput, ToolError> {
     validate_input(&input)?;
 
-    // F1.1: capability gate. Headless sessions never block.
+    // Capability gate. Headless sessions never block.
     let meta = ctx
         .memory
         .get_session(ctx.session_id)
@@ -46,7 +46,7 @@ pub(super) async fn run(
         return Err(ToolError::InvalidInput(ERR_UNAVAILABLE.to_string()));
     }
 
-    // F1.4: per-session 1-pending cap.
+    // Per-session 1-pending cap.
     if !ctx.questions.try_claim_session_slot(ctx.session_id) {
         return Err(ToolError::InvalidInput(ERR_ALREADY_PENDING.to_string()));
     }
@@ -130,7 +130,7 @@ async fn await_reply(
     qid: QuestionId,
     mut rx: oneshot::Receiver<Vec<usize>>,
 ) -> Result<Vec<usize>, ToolError> {
-    // H6 — honor an ALREADY-DELIVERED answer first. If the user's reply
+    // Honor an ALREADY-DELIVERED answer first. If the user's reply
     // landed on the oneshot BEFORE we reach the select, drain it and
     // return it. Without this, a `cancel` that fires in the same scheduler
     // tick would preempt a reply the user already gave (the biased select
@@ -166,7 +166,7 @@ async fn await_reply(
     }
 }
 
-/// H6 — non-blocking drain of an already-delivered answer.
+/// Non-blocking drain of an already-delivered answer.
 ///
 /// Returns:
 /// - `Some(Ok(selected))` when an answer is already buffered on the oneshot
@@ -205,7 +205,7 @@ impl Drop for SessionSlotGuard<'_> {
 
 #[cfg(test)]
 mod h6_buffered_answer_tests {
-    //! H6 — an answer that has ALREADY been delivered before a cancel must
+    //! An answer that has ALREADY been delivered before a cancel must
     //! be honored, not dropped by the cancel-biased select. The drain helper
     //! is the deterministic core of that guarantee.
     use super::*;

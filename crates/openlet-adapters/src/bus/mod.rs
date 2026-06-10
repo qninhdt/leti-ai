@@ -1,4 +1,4 @@
-//! Tokio broadcast `EventSink` impl with two-tier publish (§G).
+//! Tokio broadcast `EventSink` impl with two-tier publish.
 //!
 //! `Persistence::Durable` events are written to the `events` table FIRST
 //! (so Last-Event-ID exists for SSE resume), then broadcast. The DB write
@@ -31,7 +31,7 @@ pub struct BroadcastBus {
     /// event_id (`None` until the first durable publish lazily seeds it from
     /// `SELECT MAX(id)`).
     ///
-    /// WHY all three under one lock (H1): the id MUST be allocated in the
+    /// WHY all three under one lock: the id MUST be allocated in the
     /// same order it is inserted and sent. If the id were allocated lock-free
     /// before acquiring a send-only lock, a task holding id=N could lose the
     /// race to a task holding id=N+1, inserting/broadcasting N+1 before N —
@@ -42,7 +42,7 @@ pub struct BroadcastBus {
     /// write inside the lock trades a little publish concurrency (SQLite
     /// serializes writers anyway) for a hard zero-drop ordering guarantee.
     ///
-    /// SEED (H1): the counter is seeded from the persisted `MAX(id)` (not 0)
+    /// SEED: the counter is seeded from the persisted `MAX(id)` (not 0)
     /// because the `events` table survives restarts. A process-local counter
     /// starting at 0 each boot would re-issue ids 1.. and collide with
     /// surviving rows on the explicit-PK insert → `UNIQUE` violation.
@@ -93,7 +93,7 @@ impl Default for BroadcastBus {
 
 #[async_trait]
 impl EventSink for BroadcastBus {
-    /// Two-tier publish per amendment §G:
+    /// Two-tier publish:
     ///   - `Durable` → allocate event_id (monotonic, seeded from MAX(id)),
     ///     persist via `append_with_id`, then broadcast — all in event_id order
     ///   - `Transient` → broadcast only

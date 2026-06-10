@@ -6,18 +6,16 @@
 //!   - emits the SAME tool-call signature set OR a strict subset of the
 //!     prior turn's set (handles agents narrowing tool calls each turn)
 //!
-//! Signature = `(tool_name, blake3(canonical_json(args)))`. Cross-check §4
-//! confirms blake3-of-canonical-JSON over JSON.stringify (opencode), which
-//! is order-sensitive and brittle.
+//! Signature = `(tool_name, blake3(canonical_json(args)))`. This is
+//! order-sensitive and brittle.
 //!
-//! Threshold = 3 (cross-check §4: matches opencode `processor.ts:32`).
+//! Threshold = 3.
 
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-/// Threshold of consecutive matching turns required to abort. Mirrors
-/// opencode `DOOM_LOOP_THRESHOLD = 3`.
+/// Threshold of consecutive matching turns required to abort.
 pub const DEFAULT_THRESHOLD: usize = 3;
 
 /// One tool-call signature in a turn. `arg_hash` is `blake3(canonical_json)`

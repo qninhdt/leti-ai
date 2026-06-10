@@ -2,7 +2,7 @@
 //! `ignore::WalkBuilder`.
 //!
 //! Workspace boundary is enforced via deepest-existing-ancestor
-//! canonicalize (amendment §L) so writes/edits to non-existing targets
+//! canonicalize so writes/edits to non-existing targets
 //! still resolve safely. Symlink TOCTOU is mitigated by lexical
 //! normalize-then-canonicalize. Glob/grep honor `.gitignore` by
 //! default (cloud impls fall back to their server-side index view —

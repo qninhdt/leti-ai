@@ -17,7 +17,7 @@
 //! impls expose an `invalidate(workspace_id)` method or use a
 //! short-TTL cache.
 //!
-//! ## Per-workspace isolation contract (F5.2)
+//! ## Per-workspace isolation contract
 //!
 //! Per-workspace SQLite databases MUST live in distinct subdirectories
 //! so a path-traversal bug in workspace id parsing cannot leak data
@@ -81,7 +81,7 @@ impl WorkspaceResolver for StaticWorkspaceResolver {
 
 /// Per-workspace data root — `{base}/workspaces/{ws_id}/`. Validates
 /// `ws_id` rejects path separators and `..` so a malicious caller
-/// cannot land outside the workspaces directory. F5.2 isolation gate.
+/// cannot land outside the workspaces directory. Isolation gate.
 ///
 /// Returns `WorkspaceError::Invalid` for ids that contain `/`, `\`,
 /// `..`, NUL, control characters, or are empty.

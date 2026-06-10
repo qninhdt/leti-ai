@@ -1,7 +1,6 @@
-// Throttled render hook. Mirrors claw-code's "block-safe boundary" idea
-// from render.rs but operates time-boundedly so React reconciliation
-// budget is hit at most once per FRAME_MS. Vitest perf gate (amendment
-// §U) feeds 200 deltas through this with virtual timers and asserts
+// Throttled render hook. Operates time-boundedly so React reconciliation
+// budget is hit at most once per FRAME_MS. Vitest perf gate
+// feeds 200 deltas through this with virtual timers and asserts
 // setState count <= ceil(200ms/33ms) = 7.
 
 import { useEffect, useRef, useState } from "react";

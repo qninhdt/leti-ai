@@ -48,7 +48,7 @@ pub(crate) fn build(bp: AgentBlueprint) -> AgentDefinition {
         compaction_summary_cap_tokens: COMPACTION_SUMMARY_CAP_TOKENS,
         hidden: false,
     };
-    // M4 — reject malformed numeric tuning at load time. The shared
+    // Reject malformed numeric tuning at load time. The shared
     // constants above are valid, so this only fires if a future edit breaks
     // the invariant — fail loudly at boot rather than silently mis-compacting.
     def.validate().expect("built-in agent definition invalid");

@@ -3,10 +3,10 @@
 //! Pipeline:
 //!   1. Body limit layer (`RequestBodyLimitLayer::new(25MB)`) — applied
 //!      to this route specifically because axum's `DefaultBodyLimit`
-//!      caps at 2MB (closes F3.1).
+//!      caps at 2MB.
 //!   2. `axum::extract::Multipart` reads the `file` field.
 //!   3. `infer` content-sniffs the bytes. Reject when no MIME or when
-//!      magic bytes claim two formats (closes F3.5 polyglot).
+//!      magic bytes claim two formats (polyglot).
 //!   4. Image path → `process_image` (resize + JPEG re-encode).
 //!      PDF path → `process_pdf` (extract text, panic-safe).
 //!   5. Persist to `ArtifactStore`. Append `Part::Image` or
@@ -43,7 +43,7 @@ use self::pdf::process_and_persist_pdf;
 use self::sniff::{DetectedKind, sniff_content_type};
 
 /// Hard cap on the multipart body. Larger uploads are short-circuited
-/// at the tower layer and never reach this handler — F3.1.
+/// at the tower layer and never reach this handler.
 pub const MAX_UPLOAD_BYTES: usize = 25 * 1024 * 1024;
 
 /// Response body for a successful upload.
@@ -94,7 +94,7 @@ pub async fn upload(
         ));
     }
 
-    // F3.5 — content-sniff before processing. The multipart
+    // Content-sniff before processing. The multipart
     // `Content-Type` claim is treated as a hint only; `infer` walks
     // the magic bytes.
     let detected = sniff_content_type(&file_bytes)?;
@@ -157,7 +157,7 @@ pub async fn upload(
 /// Layer-applicable body-size limit for the attachments route. The
 /// caller composes `RequestBodyLimitLayer::new(MAX_UPLOAD_BYTES)`
 /// alongside `DefaultBodyLimit::disable()` so the global 2MB cap from
-/// `RouterBuilder::build` doesn't fire first. Closes F3.1.
+/// `RouterBuilder::build` doesn't fire first.
 #[must_use]
 pub fn body_limit_layer() -> tower::layer::util::Stack<
     tower_http::limit::RequestBodyLimitLayer,

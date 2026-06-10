@@ -1,9 +1,9 @@
 //! Conversation runtime — drives one provider call end-to-end.
 //!
-//! Slice-2 scope: a single LLM stream → `Processor` → storage + bus.
-//! Tool dispatch and the multi-step outer loop (claw `run_turn` /
-//! opencode `runLoop`) land in Phase 4. Cost is tracked per-session
-//! across turn calls, so the future loop can enforce `max_cost_per_session`.
+//! Scope: a single LLM stream → `Processor` → storage + bus.
+//! Tool dispatch and the multi-step outer loop are handled by the
+//! turn loop. Cost is tracked per-session
+//! across turn calls, so the loop can enforce `max_cost_per_session`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -305,6 +305,14 @@ impl ConversationRuntime {
 
     fn turn_cost(&self, model: &str, usage: Option<&Usage>) -> Option<Decimal> {
         let usage = usage?;
+        // Prefer the gateway's authoritative cost (OpenRouter `usage.cost`):
+        // it is correct for every model — including ones absent from the
+        // static pricing table — and reflects real billing (BYOK/discounts).
+        // The local pricing table is only an offline fallback for gateways
+        // that omit a cost.
+        if let Some(c) = usage.cost_usd {
+            return Some(c);
+        }
         let pricing = self.provider.pricing(model)?;
         Some(compute_cost(usage, &pricing))
     }

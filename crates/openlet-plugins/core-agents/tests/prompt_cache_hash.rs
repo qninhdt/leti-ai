@@ -1,4 +1,4 @@
-//! Prompt cache hash lock per amendment §R.
+//! Prompt cache hash lock.
 //!
 //! Silently editing the cacheable segment invalidates the Anthropic prompt
 //! cache for every active session. This test makes such an edit a

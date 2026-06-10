@@ -1,5 +1,5 @@
 //! `core-agents` plugin — ships the general assistant + indexer reference
-//! agent. Per amendment §6 (Phase 7), built-in agents register through the
+//! agent. Built-in agents register through the
 //! plugin surface so external Cloud agents can extend or replace them
 //! without forking core.
 

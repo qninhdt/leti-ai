@@ -230,7 +230,7 @@ async fn slow_subscriber_lags_rather_than_blocking_publisher() {
     );
 }
 
-/// H1 — the monotonic event-id counter MUST be seeded from the persisted
+/// The monotonic event-id counter MUST be seeded from the persisted
 /// `MAX(id)` on first durable publish, NOT from 0. The `events` table is
 /// durable across restarts; a counter that restarts at 0 each boot would
 /// re-issue ids 1.. and collide with surviving rows on the explicit-PK
@@ -278,7 +278,7 @@ async fn durable_publish_after_restart_seeds_counter_from_max_id() {
     }
 }
 
-/// H1 — under concurrent durable publishes, event_ids must be assigned,
+/// Under concurrent durable publishes, event_ids must be assigned,
 /// persisted, AND broadcast in the same strictly-increasing order so a
 /// `Last-Event-ID`-tracking SSE subscriber never observes a gap. This
 /// guards the replay-seam contract: arrival order on the live channel must

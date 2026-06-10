@@ -1,6 +1,6 @@
 //! `POST /v1/session/:id/abort` — cancel the active turn.
 //!
-//! Per amendment §N: ack returns within 50ms, full teardown <500ms p95.
+//! Ack returns within 50ms, full teardown <500ms p95.
 //! 1. Cancel the session token (synchronous).
 //! 2. Spawn cleanup: mark status `Cancelling`. Loop finalizer emits the
 //!    eventual `Cancelled` once teardown lands.
@@ -33,7 +33,7 @@ pub async fn abort(
     let _ = state.require_session(sid).await?;
 
     // Don't remove the slot here — let the driving task remove its own
-    // handle on exit (closes C1-server stale-finalizer race). The shared
+    // handle on exit (closes stale-finalizer race). The shared
     // `try_cancel_active_turn` helper trips the cancel token via the CAS
     // gate AND publishes the `Cancelling` event so concurrent abort +
     // DELETE + cancel_session emit exactly one event.

@@ -1,10 +1,9 @@
 //! Config-driven `PermissionManager` impl.
 //!
-//! Last-match-wins ruleset (we diverge from claw-code's first-match)
-//! plus a pending-ask map keyed by `AskId`. Layered ruleset (defaults
-//! ++ agent ++ workspace ++ session) per amendment §E lands when phase 4
-//! plumbs agent definitions; phase 4A ships a single layer + the
-//! interactive-ask flow.
+//! Last-match-wins ruleset plus a pending-ask map keyed by `AskId`.
+//! Layered ruleset (defaults ++ agent ++ workspace ++ session) lands when
+//! agent definitions are plumbed; the current layer ships a single layer +
+//! the interactive-ask flow.
 
 mod manager;
 #[cfg(test)]

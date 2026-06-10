@@ -1,4 +1,4 @@
-//! Phase 3 — `LocalShellExecutor` SIGKILLs grandchildren on timeout.
+//! `LocalShellExecutor` SIGKILLs grandchildren on timeout.
 //!
 //! Without process-group kill, a malicious LLM could spawn
 //! `(sleep 30 &)` to survive turn cancellation. The executor calls

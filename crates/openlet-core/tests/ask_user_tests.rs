@@ -123,10 +123,10 @@ async fn returns_timeout_when_no_reply_arrives() {
     assert_eq!(questions.pending_len(), 0);
 }
 
-/// H6 — when NO answer has arrived, a pre-cancelled token (operator kill /
+/// When NO answer has arrived, a pre-cancelled token (operator kill /
 /// consent revocation = `CancelReason::SessionEnding`) MUST win: the tool
 /// returns the cancelled error, never serving an answer for a session the
-/// operator aborted. This is the consent-preserving half of the H6 fix;
+/// operator aborted. This is the consent-preserving half of the behavior;
 /// the already-delivered-answer half is unit-tested in `ask_user_runner`.
 #[tokio::test]
 async fn cancel_wins_when_no_answer_pending() {

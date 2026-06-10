@@ -1,9 +1,8 @@
 //! Parity test: drive the real `OpenAiCompatProvider` against the in-process
 //! mock service, assert the streamed `ChatDelta`s match the expected shape.
 //!
-//! Pattern ported from claw-code's `mock_parity_harness.rs`. The token
-//! `PARITY_SCENARIO:<name>` embedded in the user message picks the canned
-//! response — no live network, no API key.
+//! The token `PARITY_SCENARIO:<name>` embedded in the user message picks the
+//! canned response — no live network, no API key.
 
 use futures::StreamExt;
 use openlet_adapters::openai_compat::OpenAiCompatProvider;
@@ -122,7 +121,7 @@ async fn parity_with_tool_call() {
             _ => None,
         })
         .collect();
-    assert_eq!(args, r#"{"cmd":"echo hi"}"#);
+    assert_eq!(args, r#"{"command":"echo hi"}"#);
 
     // Finish reason maps to ToolUse.
     assert!(matches!(

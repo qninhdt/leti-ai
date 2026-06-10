@@ -1,4 +1,4 @@
-// Markdown stream buffer port from claw-code render.rs:638-845.
+// Markdown stream buffer.
 // Splits an incrementally-growing buffer into "stable" chunks (safe to
 // finalize-render with marked) and a "tail" (still growing). Boundary =
 // blank line outside a fenced block, OR matching closing fence.
@@ -74,7 +74,7 @@ export function splitBuffer(buf: string): BufferSplit {
 // Pre-pass to upgrade outer-fence backtick count when inner content has
 // fences of equal-or-greater length. Critical for LLM output that
 // embeds code blocks containing code blocks.
-// Port of claw-code render.rs:638-814 normalize_nested_fences.
+// Normalizes nested fences.
 export function normalizeNestedFences(md: string): string {
   // Minimal port: detect outermost fence; if inner contains fences of
   // equal length, bump outer to len+1. We iterate until stable.

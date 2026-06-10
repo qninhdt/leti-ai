@@ -1,4 +1,4 @@
-//! Phase 4 — `LocalFilesystem` path traversal coverage.
+//! `LocalFilesystem` path traversal coverage.
 //!
 //! Cases:
 //! - `read("../../etc/passwd")` → `FsError::OutsideWorkspace`

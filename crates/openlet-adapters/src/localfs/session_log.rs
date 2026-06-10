@@ -1,7 +1,7 @@
 //! Per-session JSONL mirror — append-only log of every event for replay/audit.
 //!
 //! Path: `<root>/<session_id>.jsonl`. Writes are line-buffered + flushed.
-//! Secrets are redacted before serialization (regex per amendment §M plus
+//! Secrets are redacted before serialization (regex plus
 //! a key-name allowlist). Files rotate at 64MB (`.jsonl` -> `.jsonl.1`).
 
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ pub struct SecretRedactor {
 
 impl Default for SecretRedactor {
     fn default() -> Self {
-        // Token-prefix denylist (HIGH-F2). Each pattern matches the
+        // Token-prefix denylist. Each pattern matches the
         // common form of a credential a model could exfiltrate via tool
         // output. Whole-name match for sensitive keys (no substring) so
         // legitimate names like `tokenizer` aren't false-positively
@@ -167,7 +167,7 @@ impl Default for SecretRedactor {
 impl SecretRedactor {
     fn is_sensitive_key(&self, k: &str) -> bool {
         // Whole-name match (case-insensitive) so `tokenizer` doesn't
-        // false-positively trigger on `token`. Closes SA-F5.
+        // false-positively trigger on `token`.
         let lk = k.to_lowercase();
         self.sensitive.contains(&lk)
     }

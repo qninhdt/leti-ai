@@ -6,8 +6,8 @@ use crate::manifest::PluginManifest;
 
 /// The single trait every plugin implements.
 ///
-/// `install` is the analog of opencode's `(input) => Promise<Hooks>` — it
-/// registers handlers via `ctx.on_*`. Plugin authors use only this crate.
+/// `install` registers handlers via `ctx.on_*`. Plugin authors use only
+/// this crate.
 #[async_trait]
 pub trait Plugin: Send + Sync + 'static {
     fn manifest(&self) -> &PluginManifest;

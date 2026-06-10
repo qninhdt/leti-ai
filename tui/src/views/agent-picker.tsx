@@ -26,7 +26,7 @@ export function AgentPicker(props: AgentPickerProps): React.ReactElement {
       {props.agents.map((a, i) => (
         <Box key={a.id}>
           <Text color={i === index ? theme.permission.selected : theme.text.primary}>
-            {i === index ? "▸ " : "  "}{a.name}
+            {i === index ? "▸ " : "  "}{a.display_name}
           </Text>
           {a.description && (
             <Text color={theme.text.muted}> — {a.description}</Text>

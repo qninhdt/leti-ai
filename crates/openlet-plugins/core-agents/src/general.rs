@@ -7,7 +7,7 @@ use openlet_core::agent::{AgentDefinition, DynamicSegmentInput};
 use crate::builder::{AgentBlueprint, build};
 
 /// Cacheable system prompt for the general agent. Hashed in
-/// `tests/prompt_cache_hash.rs` (amendment §R) — silently editing this
+/// `tests/prompt_cache_hash.rs` — silently editing this
 /// file invalidates the prompt cache for every active session, so the
 /// `# version: N` header must increment alongside changes.
 pub const GENERAL_CACHEABLE: &str = include_str!("general_cacheable.md");

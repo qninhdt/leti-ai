@@ -1,5 +1,5 @@
 // Prompt history persisted as JSONL append-only at the OS state dir.
-// Cap 200 entries (phase-06 §Functional). Mirror opencode prompt/history.tsx.
+// Cap 200 entries.
 
 import { existsSync, mkdirSync, readFileSync, appendFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";

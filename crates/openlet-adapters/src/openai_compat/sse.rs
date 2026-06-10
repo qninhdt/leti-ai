@@ -1,9 +1,7 @@
 //! Byte-stream SSE frame parser.
 //!
-//! Ported from `claw-code/rust/crates/api/src/sse.rs` with the Anthropic
-//! streaming wire shape replaced by raw frame extraction. The parser yields
-//! payload strings (the `data:` body of each frame); decoding into the
-//! provider-specific JSON shape lives in `wire.rs`.
+//! The parser yields payload strings (the `data:` body of each frame);
+//! decoding into the provider-specific JSON shape lives in `wire.rs`.
 //!
 //! Frame model (per WHATWG EventSource spec):
 //! - frames separated by blank line (`\n\n` or `\r\n\r\n`)

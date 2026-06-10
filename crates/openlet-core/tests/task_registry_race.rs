@@ -1,4 +1,4 @@
-//! Phase 2 — `TaskRegistry::admit` quota under concurrent admits +
+//! `TaskRegistry::admit` quota under concurrent admits +
 //! explicit-finalize coverage + an `#[ignore]`'d panic-leak regression.
 //!
 //! The registry uses `AtomicUsize::fetch_add(AcqRel)` to claim a quota
@@ -158,7 +158,7 @@ async fn release_quota_rolls_back_admit_when_handle_install_skipped() {
     registry.finalize(id2);
 }
 
-/// C1 — `await_completion` must NOT return "task vanished" (`None`) when the
+/// `await_completion` must NOT return "task vanished" (`None`) when the
 /// driver finalizes (removes the registry entry + releases quota) immediately
 /// after flipping status to terminal. The fix reads the snapshot from the
 /// already-cloned handle instead of re-looking-up the (now-removed) entry.
@@ -205,7 +205,9 @@ async fn await_completion_returns_output_when_finalize_races_set_status() {
         assert!(snapshot.finished);
 
         // Quota released by finalize — a fresh spawn on the same root succeeds.
-        let id2 = registry.admit(root).expect("quota released; second admit ok");
+        let id2 = registry
+            .admit(root)
+            .expect("quota released; second admit ok");
         registry.insert(id2, make_handle(root));
         registry.finalize(id2);
     }

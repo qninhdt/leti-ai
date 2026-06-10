@@ -2,8 +2,8 @@
 //!
 //! Tools declare a typed `Input`/`Output` pair and a `permission(input)`
 //! mapping; the runtime erases each registered tool to `dyn ErasedTool`
-//! and dispatches via `ToolRegistry::run(name, ctx, json)`. Phase 4
-//! plan §17 (no inventory/macro magic, manual `register_tools()`).
+//! and dispatches via `ToolRegistry::run(name, ctx, json)`. No
+//! inventory/macro magic — registration is a manual `register_tools()`.
 
 pub mod builtins;
 pub mod dispatcher;

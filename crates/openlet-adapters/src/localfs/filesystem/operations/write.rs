@@ -50,7 +50,7 @@ pub(crate) async fn write(
     } else if opts.create_new {
         // Non-atomic + create_new: use OpenOptions::create_new(true) so
         // the kernel atomically rejects pre-existing targets — no TOCTOU
-        // window between metadata-check and open. Closes VULN-F7.
+        // window between metadata-check and open.
         let mut file = fs::OpenOptions::new()
             .create_new(true)
             .write(true)

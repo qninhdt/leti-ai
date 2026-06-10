@@ -104,7 +104,7 @@ pub async fn delete(
     let sid = SessionId::from(id);
     // Cancel any in-flight turn BEFORE marking the session terminal so
     // the LLM can't keep streaming on a session the client thinks is
-    // gone (closes C5-server). Idempotent via CAS gate.
+    // gone. Idempotent via CAS gate.
     let exit_notify = state.active_turns.get(&sid).map(|h| h.exited.clone());
     let _ = state.try_cancel_active_turn(sid).await;
     if let Some(exited) = exit_notify {

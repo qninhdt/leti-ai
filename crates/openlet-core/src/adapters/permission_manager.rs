@@ -10,8 +10,8 @@ use crate::types::session::SessionId;
 
 /// Permission gate consulted before any sensitive tool call.
 ///
-/// Phase 4 implements `ConfigPermissionMgr` with the layered ruleset
-/// from amendment §E (defaults ++ agent ++ workspace ++ session, last-match-wins).
+/// Backed by a layered ruleset
+/// (defaults ++ agent ++ workspace ++ session, last-match-wins).
 #[async_trait]
 pub trait PermissionManager: Send + Sync + 'static {
     async fn check(
@@ -23,10 +23,10 @@ pub trait PermissionManager: Send + Sync + 'static {
     /// Reply to an outstanding ask (e.g. user clicked Allow in TUI).
     async fn reply(&self, ask_id: AskId, decision: Decision) -> Result<(), PermissionError>;
 
-    /// Cancel a pending ask (used by §E timeout path).
+    /// Cancel a pending ask (used by the timeout path).
     async fn cancel_ask(&self, ask_id: AskId) -> Result<(), PermissionError>;
 
-    /// Persist an "always" decision at the requested scope (§A new method).
+    /// Persist an "always" decision at the requested scope.
     async fn record_always(
         &self,
         scope: AlwaysScope,

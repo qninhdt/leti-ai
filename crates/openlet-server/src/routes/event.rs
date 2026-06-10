@@ -2,13 +2,13 @@
 //!
 //! Frame format: `id:<events.id>\nevent:<kind>\ndata:<json>\n\n`. Transient
 //! events (`part.delta`, `heartbeat`) skip the `id:` line because no
-//! durable autoincrement exists for them. `Last-Event-ID` header (per
-//! amendment §C — header-only, no query alias) drives replay; we read
+//! durable autoincrement exists for them. `Last-Event-ID` header
+//! (header-only, no query alias) drives replay; we read
 //! durable rows with `id > last_event_id` and prepend before falling
 //! through to the live broadcast subscription.
 //!
 //! Heartbeat is wired through `axum::response::sse::KeepAlive`; we keep
-//! the cadence at 15s (cross-check phase-05).
+//! the cadence at 15s.
 
 use std::convert::Infallible;
 use std::time::Duration;

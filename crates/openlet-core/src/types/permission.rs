@@ -9,8 +9,8 @@ use super::session::SessionId;
 
 /// Permission mode (per-session, mutable via `POST /v1/session/:id/mode`).
 ///
-/// Coarse enum — the full ruleset lives in `permissions.toml`. Plan
-/// amendment §A makes this a session-level column.
+/// Coarse enum — the full ruleset lives in `permissions.toml`. This is
+/// a session-level column.
 ///
 /// Ordering: `ReadOnly < WorkspaceWrite < Danger`. `mode.permits(required)`
 /// returns `true` iff the active mode is at least as permissive as `required`.
@@ -120,7 +120,7 @@ pub struct PermissionCtx {
     pub mode: PermissionMode,
 }
 
-/// Scope at which an "always" rule is recorded (§A new method).
+/// Scope at which an "always" rule is recorded.
 ///
 /// `Global` rules apply to every session in the host. The other variants
 /// narrow the rule to a single workspace, agent, or session — the manager

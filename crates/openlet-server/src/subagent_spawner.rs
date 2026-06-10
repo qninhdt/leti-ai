@@ -6,7 +6,7 @@
 //! `subagent_task` with a handle), then late-bound via [`set_state`]
 //! once `AppState` is built.
 //!
-//! Cost rollup (F4.4): every turn the child runtime bills is added
+//! Cost rollup: every turn the child runtime bills is added
 //! both to the child task's `cost_usd` and to the PARENT session's
 //! cumulative cost via `ConversationRuntime::add_session_cost_external`.
 //! That keeps the parent's `session_cost` query consistent with the
@@ -76,7 +76,7 @@ impl RuntimeSubagentSpawner {
     /// session with `parent_session_id = None`. Caps at depth+2 walks to
     /// keep the lookup bounded even on a corrupt chain.
     ///
-    /// H3 — a DB error from `get_session` is PROPAGATED, not swallowed.
+    /// A DB error from `get_session` is PROPAGATED, not swallowed.
     /// Silently returning `current` on a transient memory error would
     /// resolve the WRONG root and admit the subagent against the wrong
     /// quota bucket (a quota-bypass / accounting-corruption vector). A
@@ -141,7 +141,11 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         // on — and set the correct `depth` for the grandchild depth guard.
         // create_session would mint a *fresh* id and reset depth to 0,
         // orphaning the seed messages under FK enforcement.
-        if let Err(e) = state.memory.create_session_with_meta(plan.child.clone()).await {
+        if let Err(e) = state
+            .memory
+            .create_session_with_meta(plan.child.clone())
+            .await
+        {
             state.task_registry.finalize(plan.task_id);
             return Err(SpawnError::Internal(format!("create child session: {e}")));
         }
@@ -302,14 +306,18 @@ async fn drive_subagent(
         .await;
 
     // Collect the final assistant text into the task output buffer.
-    // H4 — `final_assistant_message_id` is now `Option`: `None` means no
+    // `final_assistant_message_id` is now `Option`: `None` means no
     // model turn produced an assistant message (e.g. a before_turn hook
     // halted turn 0). Skip `list_parts` entirely in that case — the
     // subagent output is correctly empty, NOT the nil-UUID's (empty) part
     // list masquerading as a real lookup.
     if let Ok(o) = &outcome {
         if let Some(final_msg_id) = o.final_assistant_message_id {
-            if let Ok(parts) = state.memory.list_parts(child_session_id, final_msg_id).await {
+            if let Ok(parts) = state
+                .memory
+                .list_parts(child_session_id, final_msg_id)
+                .await
+            {
                 let mut buf = String::new();
                 for p in parts {
                     if let Part::Text { text, .. } = p {

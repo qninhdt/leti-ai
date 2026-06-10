@@ -6,8 +6,7 @@
 //! 3. Bump `pricing_table_version()` when adding/removing rows.
 //!
 //! A config file would invite stale values nobody owns. A manual PR is the
-//! cheapest authoritative path for an MVP-scale pricing surface (per phase-03
-//! step 5).
+//! cheapest authoritative path for an MVP-scale pricing surface.
 
 use std::collections::HashMap;
 use std::str::FromStr;

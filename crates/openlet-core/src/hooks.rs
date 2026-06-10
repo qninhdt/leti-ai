@@ -71,7 +71,7 @@ impl HookKind {
     }
 }
 
-/// Outcome of a hook invocation. Fixes opencode's mutate-in-place footgun:
+/// Outcome of a hook invocation. Avoids a mutate-in-place footgun:
 /// hooks must be explicit about whether they short-circuit, override, or
 /// merely observe.
 ///

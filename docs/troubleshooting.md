@@ -64,6 +64,31 @@ provider has a 60s no-bytes timeout — if your model genuinely takes
 longer between tokens, raise `STREAM_IDLE_TIMEOUT_MS` in
 `openai_compat/provider.rs`.
 
+### Turn hangs forever (session stuck `running`, re-prompt 409s)
+
+A tool call whose permission falls through to `Ask` produces a
+`Decision::Pending` that the dispatcher must announce as a
+`permission.asked` event before parking on the reply. If the TUI never
+shows a permission prompt and the turn never completes, the ask was not
+delivered to the frontend. Confirm the session SSE stream
+(`GET /v1/event?session=<id>`) actually carried a `permission.asked`
+frame; if it did, reply to it (approve/deny in the TUI). If you are on
+the default `WorkspaceWrite` mode and don't want per-call prompts, set
+the session to `danger` mode (`POST /v1/session/:id/mode {"mode":"danger"}`,
+or `/danger` in the TUI) to auto-approve workspace tools.
+
+### Model unreachable / wrong base URL
+
+If turns fail immediately with a connect error, the serving provider's
+base URL is likely wrong. `openlet-server` resolves it from
+`OPENLET_MODEL_BASE_URL` (unset → `https://openrouter.ai/api/v1`); the
+boot log prints the resolved value as `model backend endpoint`. Run
+`openlet-server doctor` — its `model_reachable` check GETs `<base>/models`
+(no chat spend) and reports the failure. Common mistake: appending an
+extra `/v1` to the mock's printed `base_url` (it already ends in `/v1`),
+which yields `…/v1/v1/chat/completions` — a 404 on real OpenRouter. Use
+the printed value verbatim.
+
 ## Tool failures
 
 ### `tool_path_outside_workspace`
@@ -106,6 +131,29 @@ modal UI still works, gradients won't.
 ### Windows
 
 Best-effort in MVP. Linux + macOS are tested.
+
+## Launcher (`./openlet-ai`)
+
+### "port … already answering /v1/health — another server is running"
+
+The launcher refuses to start a second server on a bind port that already
+answers health, so it never polls a foreign process by mistake. Stop the
+existing server, or run `./openlet-ai --clean` to kill the straggler on
+the bind port and clear `.openlet-run/`, then retry.
+
+### "OPENROUTER_API_KEY is missing or empty"
+
+Real mode fails fast via the binary's own `doctor` preflight (it keys off
+the `api_key_set` check, which reads `OPENROUTER_API_KEY`). Fill the key in
+`.env` (copy `.env.example` if absent), or run network-free with
+`./openlet-ai --mock` — the mock backend needs no key.
+
+### TUI launches stale after a code change
+
+The launcher builds the TUI only when `tui/dist/cli.mjs` is absent
+(presence check, not an mtime heuristic — an mtime compare can silently
+skip a needed rebuild after a branch switch). Force a fresh build with
+`./openlet-ai --rebuild`.
 
 ## Audit / forensics
 

@@ -10,10 +10,6 @@ use crate::types::permission::PermissionMode;
 use crate::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
 
 /// Persists sessions, messages, parts, and read history.
-///
-/// Phase 2 implements `SqliteMemoryStore`. Trait surface includes §A
-/// additions: `list_sessions`, `delete_session` (soft), `upsert_part` (for
-/// streaming text appends), `record_read` (read-history table).
 #[async_trait]
 pub trait MemoryStore: Send + Sync + 'static {
     async fn create_session(
@@ -35,10 +31,7 @@ pub trait MemoryStore: Send + Sync + 'static {
     /// Default impl delegates to [`Self::create_session`] for stores that
     /// don't model `depth`/verbatim ids (e.g. test doubles); production
     /// stores override to insert the row as-is and return `meta.id`.
-    async fn create_session_with_meta(
-        &self,
-        meta: SessionMeta,
-    ) -> Result<SessionId, MemoryError> {
+    async fn create_session_with_meta(&self, meta: SessionMeta) -> Result<SessionId, MemoryError> {
         self.create_session(meta.agent_id, meta.parent_session_id)
             .await
     }
@@ -54,7 +47,7 @@ pub trait MemoryStore: Send + Sync + 'static {
         reason: &str,
     ) -> Result<(), MemoryError>;
 
-    /// Updates the per-session `permission_mode` (§A F27). Returns
+    /// Updates the per-session `permission_mode`. Returns
     /// `SessionNotFound` if the session does not exist or is soft-deleted.
     async fn update_permission_mode(
         &self,
@@ -113,6 +106,6 @@ pub trait MemoryStore: Send + Sync + 'static {
     ) -> Result<Vec<Part>, MemoryError>;
 
     /// Records that the agent read a path during this session.
-    /// Persisted to `session_reads` (Phase 2 schema, §F).
+    /// Persisted to `session_reads`.
     async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError>;
 }

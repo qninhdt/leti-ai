@@ -1,4 +1,4 @@
-//! Workspace routing middleware tests — F5.1 cross-tenant isolation.
+//! Workspace routing middleware tests — cross-tenant isolation.
 //!
 //! Three scenarios lock the auth-ordering contract:
 //!  1. Mounted without injected `AuthPrincipal` → 401

@@ -7,15 +7,12 @@
 //! projection layer substitutes it for the listed `compacted_message_ids`.
 //!
 //! Design notes (from cross-check):
-//! - opencode triggers via `isOverflow` after each step (`overflow.ts:6-32`)
-//!   — same idea, expressed here as a precondition to the next turn rather
+//! - Overflow is detected as a precondition to the next turn rather
 //!   than a flag set on the previous one.
-//! - claw-code uses a mechanical (no-LLM) summary fallback at
-//!   `compact.rs:195-280`. We use the LLM by default; the mechanical path
-//!   is a phase-08 robustness add-on.
-//! - opencode preserves last 2 user turns; we keep `PRESERVE_RECENT = 4`
-//!   total messages per the phase-07 spec. Diverges intentionally to keep
-//!   compaction conservative for short multi-tool turns.
+//! - A mechanical (no-LLM) summary fallback is available. We use the LLM
+//!   by default; the mechanical path is a robustness add-on.
+//! - We keep `PRESERVE_RECENT = 4` total messages. Conservative for short
+//!   multi-tool turns.
 
 use std::sync::Arc;
 
@@ -35,7 +32,7 @@ pub const PRESERVE_RECENT: usize = 4;
 
 /// Synthetic user prompt asking the model to summarize older messages.
 /// Phrased to preserve goal/decisions/files while dropping tool-output
-/// bodies. Mirrors phase-07 §Architecture.
+/// bodies.
 pub const COMPACTION_REQUEST: &str = "Summarize the conversation history above. Preserve:\n\
 - The user's overall goal\n\
 - Key decisions and constraints established\n\
@@ -68,7 +65,7 @@ pub fn should_compact(
     provider_actual: Option<usize>,
 ) -> CompactDecision {
     let total = provider_actual.unwrap_or_else(|| estimate_conversation_tokens(msgs));
-    // M4 — defense in depth. `AgentDefinition::validate` rejects an invalid
+    // Defense in depth. `AgentDefinition::validate` rejects an invalid
     // threshold at load time; this guard keeps the runtime safe even if an
     // unvalidated definition reaches here. NaN or a non-positive threshold
     // must NOT silently compact-every-turn (a <= 0.0 threshold yields

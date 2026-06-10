@@ -1,6 +1,6 @@
 //! Smoke test — exercises every mock in `tests/common/` to confirm they
 //! all compile and round-trip a trivial value. If this test breaks
-//! after a refactor, every Phase 2-5 test will too.
+//! after a refactor, the dependent integration tests will too.
 
 mod common;
 
