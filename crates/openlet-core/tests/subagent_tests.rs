@@ -97,6 +97,7 @@ fn make_session(depth: u8) -> SessionMeta {
         current_agent_slug: None,
         previous_agent_slug: None,
         depth,
+        model: None,
     }
 }
 

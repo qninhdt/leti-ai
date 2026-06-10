@@ -155,6 +155,7 @@ async fn create_session_with_meta_persists_verbatim_and_accepts_children() {
         current_agent_slug: Some("indexer".into()),
         previous_agent_slug: None,
         depth: 2,
+        model: None,
     };
 
     let returned = store.create_session_with_meta(child.clone()).await.unwrap();
@@ -182,4 +183,55 @@ async fn create_session_with_meta_persists_verbatim_and_accepts_children() {
         .append_message(child_id, msg)
         .await
         .expect("append against persisted child session must succeed");
+}
+
+#[tokio::test]
+async fn session_model_round_trips() {
+    use openlet_core::types::permission::PermissionMode;
+    use openlet_core::types::session::{SessionId, SessionMeta};
+
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+
+    let agent = AgentId::new();
+    let id = SessionId::new();
+    let now = Utc::now();
+    let meta = SessionMeta {
+        id,
+        agent_id: agent,
+        status: SessionStatus::Idle,
+        permission_mode: PermissionMode::default(),
+        parent_session_id: None,
+        created_at: now,
+        updated_at: now,
+        deleted_at: None,
+        version: "0.1.0".into(),
+        extensions: serde_json::Value::Null,
+        capabilities: Default::default(),
+        current_agent_slug: None,
+        previous_agent_slug: None,
+        depth: 0,
+        model: Some("anthropic/claude-opus-4-8".into()),
+    };
+    store.create_session_with_meta(meta).await.unwrap();
+
+    let got = store.get_session(id).await.unwrap().expect("present");
+    assert_eq!(got.model.as_deref(), Some("anthropic/claude-opus-4-8"));
+}
+
+#[tokio::test]
+async fn old_format_session_loads_model_as_none() {
+    // M11: a row written before the `model` column existed (here: a row
+    // created via `create_session`, which leaves model NULL) must load
+    // with `model = None` rather than failing the decode.
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+
+    let agent = AgentId::new();
+    let id = store.create_session(agent, None).await.expect("create");
+    let got = store.get_session(id).await.unwrap().expect("present");
+    assert!(
+        got.model.is_none(),
+        "a session created without a model override must load as None"
+    );
 }

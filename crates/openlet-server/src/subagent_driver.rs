@@ -48,6 +48,9 @@ pub(crate) async fn drive_subagent(
 
     let agent_def = state.agent_registry.get(&agent_slug).cloned().map(Arc::new);
 
+    let child_meta = state.memory.get_session(child_session_id).await?;
+    let child_model = child_meta.as_ref().and_then(|m| m.model.clone());
+
     let loop_ctx = LoopContext {
         agent_id: agent_resources.spec.id,
         fs: agent_resources.fs.clone(),
@@ -56,12 +59,7 @@ pub(crate) async fn drive_subagent(
         artifacts: state.artifacts.clone(),
         registry: state.tool_registry.clone(),
         read_history,
-        mode: state
-            .memory
-            .get_session(child_session_id)
-            .await?
-            .map(|m| m.permission_mode)
-            .unwrap_or_default(),
+        mode: child_meta.map(|m| m.permission_mode).unwrap_or_default(),
         max_steps: crate::turn_driver::MAX_TURN_STEPS,
         agent: agent_def,
         hook_chains: state.hook_chains.clone(),
@@ -71,7 +69,8 @@ pub(crate) async fn drive_subagent(
         agent_registry: state.agent_registry.clone(),
     };
 
-    let input = crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools);
+    let input =
+        crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools, child_model);
 
     let memory = crate::turn_driver::memory_arc(&state);
     let outcome = state

@@ -7,9 +7,10 @@
 //! transient), and replaces with the finalized body when the processor
 //! flushes terminal parts (`PartUpdated` durable).
 //!
-//! Tool-call argument deltas are not pushed onto the bus in slice 2 —
-//! the processor reports them without `(part_id, call_id)` mapping, so
-//! we only persist the final `ToolCall` part on `Finish`.
+//! Tool-call argument deltas stream as transient `part.delta` events for
+//! a live "args building" view, keyed by a per-turn transient `PartId`
+//! that is never persisted — the final `ToolCall` part (flushed on
+//! `Finish`) remains the durable source of truth.
 
 use std::sync::Arc;
 
@@ -28,6 +29,13 @@ use crate::types::session::SessionId;
 pub(crate) struct StreamingPartTracker {
     pub text_part: Option<PartId>,
     pub reasoning_part: Option<PartId>,
+    /// Transient id for the live tool-args stream. Lazily allocated on the
+    /// first `ToolArgs` delta and reused for the rest of the turn. NOT
+    /// persisted — unlike text/reasoning there is no durable shell; the
+    /// final `ToolCall` part (flushed at `Finish`) is the source of truth.
+    /// This id exists only to give the transient `PartDelta` events a
+    /// stable handle so a frontend can render args building live.
+    pub tool_args_part: Option<PartId>,
 }
 
 impl StreamingPartTracker {
@@ -64,8 +72,12 @@ impl StreamingPartTracker {
                         )
                         .await?
                     }
-                    // Slice-2: tool args have no part_id mapping yet.
-                    DeltaKind::ToolArgs => return Ok(()),
+                    // Tool args stream live but have no durable shell: the
+                    // final `ToolCall` part (flushed at Finish) is the
+                    // source of truth. Allocate a transient id once so the
+                    // frontend can render args building, then emit
+                    // transient-only (never persisted, no PartCreated).
+                    DeltaKind::ToolArgs => *self.tool_args_part.get_or_insert_with(PartId::new),
                 };
                 events
                     .publish(

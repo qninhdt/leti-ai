@@ -221,11 +221,18 @@ async fn drive_loop(
         ))?
         .clone();
 
-    // Resolve provider capabilities by model so vision-capable
-    // sessions don't degrade attachments to text. Uses the workspace's
-    // configured default model — per-session model overrides are wired
-    // through SessionMeta.
-    let model = state.config.default_model.clone();
+    let session_meta = state.memory.get_session(session_id).await?.ok_or(
+        openlet_core::error::CoreError::Memory(openlet_core::error::MemoryError::SessionNotFound),
+    )?;
+
+    // Resolve provider capabilities for the model the turn will actually
+    // use — the session's pinned model if set, else the workspace default
+    // — so vision/quirk detection matches the model the request targets
+    // rather than misdetecting against the default.
+    let model = session_meta
+        .model
+        .clone()
+        .unwrap_or_else(|| state.config.default_model.clone());
     let provider_caps = state.provider.capabilities(&model);
     let projection_caps = ProjectionCaps {
         supports_reasoning_replay: false,
@@ -236,10 +243,6 @@ async fn drive_loop(
         crate::turn_driver::project_session(&state, session_id, projection_caps).await?;
 
     let tools = crate::turn_driver::tool_specs(&state);
-
-    let session_meta = state.memory.get_session(session_id).await?.ok_or(
-        openlet_core::error::CoreError::Memory(openlet_core::error::MemoryError::SessionNotFound),
-    )?;
 
     let read_history = state.read_histories.entry(session_id).or_default().clone();
 
@@ -274,7 +277,12 @@ async fn drive_loop(
         agent_registry: state.agent_registry.clone(),
     };
 
-    let input = crate::turn_driver::build_turn_input(session_id, llm_messages, tools);
+    let input = crate::turn_driver::build_turn_input(
+        session_id,
+        llm_messages,
+        tools,
+        session_meta.model.clone(),
+    );
 
     let memory = crate::turn_driver::memory_arc(&state);
     state

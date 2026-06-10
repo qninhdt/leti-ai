@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use futures::stream::{self, BoxStream, StreamExt};
 use openlet_core::adapters::model_provider::{
     ChatDelta, ChatRequest, ChatStream, FinishReason, ModelPricing, ModelProvider,
+    ProviderCapabilities,
 };
 use openlet_core::error::ProviderError;
 use tokio_util::sync::CancellationToken;
@@ -27,6 +28,21 @@ pub struct ScriptedProvider {
     turns: Mutex<VecDeque<ScriptedTurn>>,
     raw: Mutex<VecDeque<BoxStream<'static, Result<ChatDelta, ProviderError>>>>,
     pricing: Mutex<Option<ModelPricing>>,
+    /// Queue of errors to fail the `chat_stream` OPEN with, popped one per
+    /// call before any queued deltas are served. Lets retry/backoff tests
+    /// script `429 → 429 → Ok` at the stream-open boundary (distinct from
+    /// `push_turn`, which fails mid-stream as a delta). Empty = open
+    /// always succeeds.
+    open_errors: Mutex<VecDeque<ProviderError>>,
+    /// Captures the `model` field of every `ChatRequest` the runtime sends,
+    /// in call order. Lets per-session-model tests assert the override
+    /// reached the provider.
+    seen_models: Arc<Mutex<Vec<String>>>,
+    /// Substring marking a model as vision-capable. When set, `capabilities`
+    /// returns `supports_vision = true` for models containing it. Lets the
+    /// per-session-model test assert capabilities are computed for the
+    /// resolved model, not a hardcoded default.
+    vision_marker: Mutex<Option<String>>,
     /// Tracks the number of `chat_stream` calls received — useful when
     /// asserting the runtime didn't double-call the provider.
     call_count: Arc<Mutex<usize>>,
@@ -39,6 +55,9 @@ impl ScriptedProvider {
             turns: Mutex::new(VecDeque::new()),
             raw: Mutex::new(VecDeque::new()),
             pricing: Mutex::new(None),
+            open_errors: Mutex::new(VecDeque::new()),
+            seen_models: Arc::new(Mutex::new(Vec::new())),
+            vision_marker: Mutex::new(None),
             call_count: Arc::new(Mutex::new(0)),
         }
     }
@@ -84,6 +103,28 @@ impl ScriptedProvider {
     pub fn call_count(&self) -> usize {
         *self.call_count.lock().unwrap()
     }
+
+    /// Queue an error to fail the next `chat_stream` OPEN with. Popped one
+    /// per call before any queued deltas serve, so `429 → 429 → Ok` scripts
+    /// the runtime's retry/backoff at the stream-open boundary.
+    pub fn push_open_error(&self, err: ProviderError) -> &Self {
+        self.open_errors.lock().unwrap().push_back(err);
+        self
+    }
+
+    /// The `model` field of every `ChatRequest` received, in call order.
+    #[must_use]
+    pub fn seen_models(&self) -> Vec<String> {
+        self.seen_models.lock().unwrap().clone()
+    }
+
+    /// Mark models whose name contains `marker` as vision-capable, so
+    /// `capabilities` returns `supports_vision = true` for them. Lets a
+    /// per-session-model test assert capabilities track the resolved model.
+    pub fn with_vision_marker(self, marker: impl Into<String>) -> Self {
+        *self.vision_marker.lock().unwrap() = Some(marker.into());
+        self
+    }
 }
 
 impl Default for ScriptedProvider {
@@ -96,10 +137,17 @@ impl Default for ScriptedProvider {
 impl ModelProvider for ScriptedProvider {
     async fn chat_stream(
         &self,
-        _req: ChatRequest,
+        req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, ProviderError> {
         *self.call_count.lock().unwrap() += 1;
+        self.seen_models.lock().unwrap().push(req.model.clone());
+
+        // Fail the open with a scripted error if one is queued — drives
+        // the runtime's retry/backoff before any stream is produced.
+        if let Some(err) = self.open_errors.lock().unwrap().pop_front() {
+            return Err(err);
+        }
 
         if let Some(s) = self.raw.lock().unwrap().pop_front() {
             // Raw streams ignore cancellation peeking; callers that
@@ -135,5 +183,13 @@ impl ModelProvider for ScriptedProvider {
 
     fn pricing(&self, _model: &str) -> Option<ModelPricing> {
         self.pricing.lock().unwrap().clone()
+    }
+
+    fn capabilities(&self, model: &str) -> ProviderCapabilities {
+        let mut caps = ProviderCapabilities::default();
+        if let Some(marker) = self.vision_marker.lock().unwrap().as_deref() {
+            caps.supports_vision = model.contains(marker);
+        }
+        caps
     }
 }

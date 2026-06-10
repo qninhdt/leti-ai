@@ -335,6 +335,7 @@ impl MemoryStore for StubMemory {
             current_agent_slug: None,
             previous_agent_slug: None,
             depth: 0,
+            model: None,
         }))
     }
     async fn list_sessions(&self, _: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError> {

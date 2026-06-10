@@ -57,8 +57,8 @@ impl MemoryStore for SqliteMemoryStore {
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
                  version, created_at, updated_at, deleted_at, extensions,
-                 capabilities, current_agent_slug, previous_agent_slug, depth)
-               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}', NULL, NULL, 0)"#,
+                 capabilities, current_agent_slug, previous_agent_slug, depth, model)
+               VALUES (?, ?, ?, ?, ?, '0.1.0', ?, ?, NULL, 'null', '{}', NULL, NULL, 0, NULL)"#,
         )
         .bind(&id_str)
         .bind(&agent_str)
@@ -88,8 +88,8 @@ impl MemoryStore for SqliteMemoryStore {
             r#"INSERT INTO sessions
                 (id, agent_id, parent_session_id, status, permission_mode,
                  version, created_at, updated_at, deleted_at, extensions,
-                 capabilities, current_agent_slug, previous_agent_slug, depth)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                 capabilities, current_agent_slug, previous_agent_slug, depth, model)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(id.to_string())
         .bind(meta.agent_id.to_string())
@@ -105,6 +105,7 @@ impl MemoryStore for SqliteMemoryStore {
         .bind(meta.current_agent_slug.as_deref())
         .bind(meta.previous_agent_slug.as_deref())
         .bind(i64::from(meta.depth))
+        .bind(meta.model.as_deref())
         .execute(&self.pool)
         .await
         .map_err(map_io)?;
@@ -116,7 +117,7 @@ impl MemoryStore for SqliteMemoryStore {
         let row = sqlx::query(
             r#"SELECT id, agent_id, parent_session_id, status, permission_mode,
                       version, created_at, updated_at, deleted_at, extensions,
-                      capabilities, current_agent_slug, previous_agent_slug, depth
+                      capabilities, current_agent_slug, previous_agent_slug, depth, model
                FROM sessions WHERE id = ?"#,
         )
         .bind(session.to_string())
@@ -131,7 +132,7 @@ impl MemoryStore for SqliteMemoryStore {
         let mut sql = String::from(
             "SELECT id, agent_id, parent_session_id, status, permission_mode, \
              version, created_at, updated_at, deleted_at, extensions, capabilities, \
-             current_agent_slug, previous_agent_slug, depth \
+             current_agent_slug, previous_agent_slug, depth, model \
              FROM sessions WHERE 1=1",
         );
         if !filter.include_deleted {

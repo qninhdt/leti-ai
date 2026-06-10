@@ -91,6 +91,27 @@ impl ProviderError {
             Self::Unimplemented => FailureClass::ProviderUnimplemented,
         }
     }
+
+    /// Whether the runtime should retry the chat call after this error.
+    /// Only transient transport faults (rate-limit, network/5xx) retry;
+    /// auth, decode, context-overflow, cancellation, and unimplemented are
+    /// terminal — retrying them just hammers the provider with a request
+    /// that can never succeed (and, for auth, with a known-bad key).
+    #[must_use]
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::RateLimit { .. } | Self::Network(_))
+    }
+
+    /// Server-suggested backoff in milliseconds, when the error carries
+    /// one (a `429` with `Retry-After`). `None` ⇒ the caller falls back to
+    /// its own exponential backoff schedule.
+    #[must_use]
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::RateLimit { retry_after_ms } => Some(*retry_after_ms),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]

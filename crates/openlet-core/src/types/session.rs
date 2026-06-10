@@ -99,6 +99,12 @@ pub struct SessionMeta {
     /// `OPENLET_SUBAGENT_MAX_DEPTH` (default 3) at spawn time.
     #[serde(default)]
     pub depth: u8,
+    /// Per-session model override. `None` ⇒ the runtime resolves the
+    /// model from `RuntimeConfig::default_model`. When set, this model is
+    /// sent to the provider and `capabilities()` is computed for it so
+    /// vision/quirk detection matches the model actually used.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// Frontend affordances the session's caller exposes. Default = every

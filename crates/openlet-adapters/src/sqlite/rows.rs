@@ -33,6 +33,7 @@ pub(crate) fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta
     let previous_agent_slug: Option<String> = row.try_get("previous_agent_slug").map_err(map_io)?;
     let depth: i64 = row.try_get("depth").map_err(map_io)?;
     let depth = u8::try_from(depth.max(0)).unwrap_or(u8::MAX);
+    let model: Option<String> = row.try_get("model").map_err(map_io)?;
 
     Ok(SessionMeta {
         id: SessionId(parse_uuid(&id_str)?),
@@ -49,6 +50,7 @@ pub(crate) fn row_to_session(row: sqlx::sqlite::SqliteRow) -> Result<SessionMeta
         current_agent_slug,
         previous_agent_slug,
         depth,
+        model,
     })
 }
 

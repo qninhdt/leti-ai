@@ -499,3 +499,97 @@ async fn evict_session_cost_drops_the_entry() {
         "evicted session must report zero cost"
     );
 }
+
+#[tokio::test]
+async fn tool_args_deltas_stream_transiently_and_durable_toolcall_unchanged() {
+    // Two args chunks split mid-JSON. They must surface as ordered
+    // transient PartDelta{ToolArgs} events for the live frontend, while
+    // the durable ToolCall part (flushed at Finish) carries the full
+    // parsed args. The transient deltas are NOT persisted as parts.
+    let provider = MockProvider::fixed(vec![
+        Ok(ChatDelta::ToolCallStart {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            index: 0,
+        }),
+        Ok(ChatDelta::ToolCallArgsDelta {
+            index: 0,
+            args_chunk: "{\"cmd\":".into(),
+        }),
+        Ok(ChatDelta::ToolCallArgsDelta {
+            index: 0,
+            args_chunk: "\"ls\"}".into(),
+        }),
+        Ok(ChatDelta::Finish {
+            reason: FinishReason::ToolUse,
+            usage: None,
+        }),
+    ]);
+
+    let session_id = SessionId::new();
+    let (rt, memory, events) = build(provider, cfg());
+    let outcome = rt
+        .run_turn(turn_input(session_id), CancellationToken::new())
+        .await
+        .expect("turn ok");
+
+    // Transient tool-args deltas observed in order.
+    let captured = events.captured.lock().unwrap();
+    let arg_deltas: Vec<(String, Persistence)> = captured
+        .iter()
+        .filter_map(|(e, p)| match e {
+            AgentEvent::PartDelta {
+                delta_kind: DeltaKind::ToolArgs,
+                delta,
+                ..
+            } => Some((delta.clone(), *p)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        arg_deltas,
+        vec![
+            ("{\"cmd\":".to_string(), Persistence::Transient),
+            ("\"ls\"}".to_string(), Persistence::Transient),
+        ],
+        "tool-args deltas must stream in order and be transient-only"
+    );
+
+    // The transient tool-args part_id must NOT have produced a durable
+    // PartCreated (live-view-only; durable ToolCall is the record).
+    let tool_args_delta_part_ids: std::collections::HashSet<PartId> = captured
+        .iter()
+        .filter_map(|(e, _)| match e {
+            AgentEvent::PartDelta {
+                delta_kind: DeltaKind::ToolArgs,
+                part_id,
+                ..
+            } => Some(*part_id),
+            _ => None,
+        })
+        .collect();
+    for (e, _) in captured.iter() {
+        if let AgentEvent::PartCreated { part_id, .. } = e {
+            assert!(
+                !tool_args_delta_part_ids.contains(part_id),
+                "tool-args streaming part must never be persisted via PartCreated"
+            );
+        }
+    }
+    drop(captured);
+
+    // Durable ToolCall part carries the full reassembled args.
+    let parts = memory
+        .parts
+        .lock()
+        .unwrap()
+        .get(&outcome.assistant_message_id)
+        .cloned()
+        .unwrap_or_default();
+    let args = parts.iter().find_map(|p| match p {
+        Part::ToolCall { args, .. } => Some(args.clone()),
+        _ => None,
+    });
+    let args = args.expect("durable tool_call part missing");
+    assert_eq!(args["cmd"], "ls", "durable ToolCall args unchanged");
+}

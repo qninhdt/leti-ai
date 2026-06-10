@@ -57,6 +57,7 @@ impl RecordingCore {
             current_agent_slug: None,
             previous_agent_slug: None,
             depth: 0,
+            model: None,
         };
         Arc::new(Self {
             meta,
@@ -243,6 +244,7 @@ async fn missing_user_id_skips_silently() {
             current_agent_slug: None,
             previous_agent_slug: None,
             depth: 0,
+            model: None,
         },
         cancellations: Mutex::new(Vec::new()),
     });

@@ -27,7 +27,7 @@ pub use compaction::{
     COMPACTION_REQUEST, CompactDecision, PRESERVE_RECENT, build_compaction_projection,
     should_compact, superseded_messages,
 };
-pub use conversation::{ConversationRuntime, RuntimeConfig, TurnInput, TurnOutcome};
+pub use conversation::{ConversationRuntime, RetryConfig, RuntimeConfig, TurnInput, TurnOutcome};
 pub use cost::{compute_cost, format_usd};
 pub use doom_guard::{DoomVerdict, ToolCallSig};
 pub use processor::{Processor, ProcessorEvent, ProcessorPart, ProcessorState};

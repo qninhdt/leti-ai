@@ -109,6 +109,7 @@ pub fn plan_subagent_spawn(
         current_agent_slug: parent.current_agent_slug.clone(),
         previous_agent_slug: parent.previous_agent_slug.clone(),
         depth: next_depth,
+        model: parent.model.clone(),
     };
 
     let child_perm: Arc<dyn PermissionManager> = Arc::new(ScopedPermissionManager::new(

@@ -280,6 +280,7 @@ fn seed_meta(sid: SessionId, current: Option<&str>, previous: Option<&str>) -> S
         current_agent_slug: current.map(str::to_string),
         previous_agent_slug: previous.map(str::to_string),
         depth: 0,
+        model: None,
     }
 }
 

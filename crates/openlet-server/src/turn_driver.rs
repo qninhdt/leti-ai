@@ -75,22 +75,22 @@ pub(crate) fn memory_arc(
     state.memory.clone()
 }
 
-/// Assemble the `TurnInput` both drivers feed into `run_loop`. Every
-/// per-turn override (`system_prompt`, `model`, `max_tokens`,
-/// `temperature`) defaults to `None` — the runtime resolves the model
-/// from `RuntimeConfig` — so callers only supply the session, projected
-/// messages, and tool specs.
+/// Assemble the `TurnInput` both drivers feed into `run_loop`. `model`
+/// is the session's per-session override (`None` ⇒ the runtime resolves
+/// from `RuntimeConfig::default_model`); the remaining per-turn overrides
+/// (`system_prompt`, `max_tokens`, `temperature`) default to `None`.
 #[must_use]
 pub(crate) fn build_turn_input(
     session_id: SessionId,
     messages: Vec<LlmMessage>,
     tools: Vec<ToolSpec>,
+    model: Option<String>,
 ) -> TurnInput {
     TurnInput {
         session_id,
         messages,
         system_prompt: None,
-        model: None,
+        model,
         max_tokens: None,
         temperature: None,
         tools,
