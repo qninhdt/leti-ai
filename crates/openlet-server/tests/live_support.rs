@@ -83,6 +83,7 @@ impl LiveServer {
             "mock/model-small",
             None,
             None,
+            false,
         )
         .await
     }
@@ -100,6 +101,7 @@ impl LiveServer {
             "mock/model-small",
             Some(data_dir),
             None,
+            false,
         )
         .await
     }
@@ -107,7 +109,7 @@ impl LiveServer {
     /// Boot against real OpenRouter. Reads `OPENROUTER_API_KEY` from env;
     /// callers must gate on its presence + `OPENLET_LIVE_E2E=1`.
     pub async fn with_openrouter() -> Self {
-        Self::with_openrouter_inner(None).await
+        Self::with_openrouter_inner(None, false).await
     }
 
     /// Boot against real OpenRouter with a deliberately small agent context
@@ -117,10 +119,18 @@ impl LiveServer {
     /// is `None` and compaction never fires. Used by the compaction-continuity
     /// live test.
     pub async fn with_openrouter_small_window(context_window: u32) -> Self {
-        Self::with_openrouter_inner(Some(context_window)).await
+        Self::with_openrouter_inner(Some(context_window), false).await
     }
 
-    async fn with_openrouter_inner(compaction_window: Option<u32>) -> Self {
+    /// Boot against real OpenRouter with the REAL subagent spawner wired in
+    /// (late-bound to AppState, mirroring main.rs), so a live model's
+    /// `subagent_task` call drives an actual child run_loop. Used by the
+    /// subagent live test.
+    pub async fn with_openrouter_subagents() -> Self {
+        Self::with_openrouter_inner(None, true).await
+    }
+
+    async fn with_openrouter_inner(compaction_window: Option<u32>, enable_subagents: bool) -> Self {
         let key = std::env::var("OPENROUTER_API_KEY")
             .expect("OPENROUTER_API_KEY required for live OpenRouter E2E");
         let model = std::env::var("OPENLET_LIVE_E2E_MODEL")
@@ -131,6 +141,7 @@ impl LiveServer {
             &model,
             None,
             compaction_window,
+            enable_subagents,
         )
         .await
     }
@@ -143,6 +154,7 @@ impl LiveServer {
         model: &str,
         data_dir: Option<PathBuf>,
         compaction_window: Option<u32>,
+        enable_subagents: bool,
     ) -> Self {
         let (data_root, owned_tempdir) = match data_dir {
             Some(d) => (d, None),
@@ -203,8 +215,20 @@ impl LiveServer {
 
         let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
         let task_registry = Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32));
+        // When subagents are enabled, register the REAL spawner (late-bound to
+        // AppState below, mirroring main.rs boot order) so a live model's
+        // `subagent_task` call actually drives a child run_loop. Otherwise the
+        // stub returns Err (the default for tests that don't exercise spawning).
+        let real_spawner = if enable_subagents {
+            Some(Arc::new(openlet_server::RuntimeSubagentSpawner::new()))
+        } else {
+            None
+        };
         let spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> =
-            Arc::new(StubSubagentSpawner);
+            match &real_spawner {
+                Some(s) => s.clone(),
+                None => Arc::new(StubSubagentSpawner),
+            };
         let plugins = openlet_plugin_registry::all_plugins(
             shell.clone(),
             memory.clone(),
@@ -241,13 +265,17 @@ impl LiveServer {
             },
         );
 
-        // Register a `general` agent (the harness default session slug) only
-        // when a caller asks for a small compaction window. Without a
-        // registered agent, `loop_ctx.agent` is `None` and compaction never
-        // fires — so the compaction-continuity test opts in here.
+        // Register a `general` agent (the harness default session slug) when a
+        // caller needs it: a small compaction window (compaction-continuity
+        // test) OR subagents enabled (spawn admission resolves `general`).
+        // Without a registered agent, `loop_ctx.agent` is `None` (compaction
+        // never fires) and `subagent_type: "general"` fails to resolve.
         let mut agent_registry = openlet_core::agent::AgentRegistry::new();
-        if let Some(window) = compaction_window {
+        if compaction_window.is_some() || enable_subagents {
             use openlet_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
+            // Small window only for the compaction test; otherwise a roomy
+            // window so subagent turns don't trip compaction mid-flight.
+            let window = compaction_window.unwrap_or(128_000);
             let def = AgentDefinition {
                 slug: AgentSlug::new("general").expect("slug"),
                 title: "General".into(),
@@ -284,6 +312,13 @@ impl LiveServer {
             .agent_registry(Arc::new(agent_registry))
             .build()
             .expect("build app state");
+
+        // Late-bind the live AppState into the real subagent spawner, the same
+        // boot order as main.rs (spawner built before plugins, bound after the
+        // state exists). Only when subagents are enabled for this boot.
+        if let Some(s) = &real_spawner {
+            s.set_state(state.clone());
+        }
 
         // Mirror the binary (`main.rs`): the question/answer route hard-requires
         // an `AuthPrincipal` extension. Without this layer a real model's
