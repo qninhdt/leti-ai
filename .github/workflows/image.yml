@@ -40,16 +40,20 @@ jobs:
 
       - name: Container healthcheck smoke
         run: |
-          # Run the image with the in-process mock model so no key is needed,
-          # bound loopback inside the container; poll /v1/health from the host
-          # via the published port.
+          # Bind LOOPBACK inside the container and poll /v1/health from inside
+          # via `docker exec`. The local profile's dev authenticator refuses a
+          # NON-loopback bind by design (H6 fail-closed: a dev auth admits every
+          # request as one principal, so it must never face the network). A
+          # host-published port would force a 0.0.0.0 bind and trip that gate —
+          # so we test the shippable image without weakening the security model.
+          # The runtime stage ships curl (for the built-in HEALTHCHECK too).
           docker run -d --name openlet-smoke \
-            -p 127.0.0.1:8787:8787 \
+            -e OPENLET_BIND=127.0.0.1:8787 \
             -e OPENLET_DEFAULT_MODEL=mock/model-small \
             openlet-server:ci
           ok=0
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then
+            if docker exec openlet-smoke curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then
               ok=1; break
             fi
             sleep 2
