@@ -99,6 +99,10 @@ assets/
 # Exception: use-mcp ships a persistent tool catalog at assets/tools.json
 !claude/skills/use-mcp/assets/
 !claude/skills/use-mcp/assets/**
+# Exception: core-agents embeds plan_mode.md at compile time (include_str!),
+# so this is load-bearing source, not a marketing asset — must be tracked.
+!crates/openlet-plugins/core-agents/assets/
+!crates/openlet-plugins/core-agents/assets/**
 
 # External repos for study/reference
 external/
