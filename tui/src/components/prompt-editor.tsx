@@ -18,12 +18,16 @@ import { createPromptSubmit } from "../render/use-prompt-submit.js";
 import { PromptMetaRow } from "./prompt-meta-row.js";
 import { PromptShelf } from "./prompt-shelf.js";
 import { PromptHintRow } from "./prompt-hint-row.js";
+import { FileAutocomplete } from "../dialogs/file-autocomplete.js";
 import { PROMPT_BODY_BORDER } from "../utils/border-chars.js";
 import { formatTokens, formatUsd } from "../utils/format.js";
 import { placeholderText, randomPlaceholderIndex } from "../utils/placeholder-rotation.js";
+import { activeMention } from "../utils/mention-parser.js";
 
+import { Show } from "solid-js";
 import type { TextareaRenderable, KeyEvent, MouseEvent } from "@opentui/core";
 import type { MessageView } from "../store/index.js";
+import type { FileEntryDto } from "../api/types.js";
 
 const PALETTE_SHORTCUT = process.platform === "darwin" ? "⌘K" : "ctrl+k";
 const INTERRUPT_RESET_MS = 5000;
@@ -49,6 +53,13 @@ export function PromptEditor() {
   const [historyIdx, setHistoryIdx] = createSignal<number | null>(null);
   const [interruptCount, setInterruptCount] = createSignal(0);
   const [placeholderIdx, setPlaceholderIdx] = createSignal(randomPlaceholderIndex());
+  // @-mention autocomplete: query is the active `@token` path (null when no
+  // mention is under the cursor). files/index drive the inline popup. The popup
+  // is editor-local (not a modal overlay) so the textarea keeps focus and the
+  // user can refine the query as they type.
+  const [mentionQuery, setMentionQuery] = createSignal<string | null>(null);
+  const [acFiles, setAcFiles] = createSignal<FileEntryDto[]>([]);
+  const [acIndex, setAcIndex] = createSignal(0);
   let interruptTimer: ReturnType<typeof setTimeout> | undefined;
 
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
@@ -158,7 +169,82 @@ export function PromptEditor() {
     }
   }
 
-  function onKeyDown(event: KeyEvent): void {
+  // Recompute the active @-mention from the textarea's buffer + cursor; opens
+  // or closes the inline popup. Called on content/cursor change.
+  function refreshMention(): void {
+    if (!input || input.isDestroyed) {
+      setMentionQuery(null);
+      return;
+    }
+    const span = activeMention(input.plainText, input.cursorOffset);
+    setMentionQuery(span ? span.path : null);
+    if (span) setAcIndex(0);
+  }
+
+  // Debounced listFiles fetch driven by the active mention query.
+  createEffect(
+    on(mentionQuery, (q) => {
+      if (q === null) {
+        setAcFiles([]);
+        return;
+      }
+      const timer = setTimeout(() => {
+        void runtime.client
+          .listFiles(q)
+          .then((res) => {
+            if (mentionQuery() === q) setAcFiles(res.files);
+          })
+          .catch(() => setAcFiles([]));
+      }, 120);
+      onCleanup(() => clearTimeout(timer));
+    }),
+  );
+
+  const popupOpen = () => mentionQuery() !== null && acFiles().length > 0;
+
+  // Replace the active `@query` span with the chosen `@path` token in the
+  // textarea, then close the popup.
+  function acceptMention(path: string): void {
+    if (!input || input.isDestroyed) return;
+    const buffer = input.plainText;
+    const span = activeMention(buffer, input.cursorOffset);
+    if (!span) return;
+    const next = `${buffer.slice(0, span.start)}@${path} ${buffer.slice(span.end)}`;
+    input.setText(next);
+    input.cursorOffset = span.start + path.length + 2;
+    setValue(next);
+    setMentionQuery(null);
+  }
+
+  const onKeyDown = (event: KeyEvent): void => {
+    // When the file popup is open it captures navigation/accept/close keys.
+    if (popupOpen()) {
+      if (event.name === "up") {
+        event.preventDefault();
+        setAcIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (event.name === "down") {
+        event.preventDefault();
+        setAcIndex((i) => Math.min(acFiles().length - 1, i + 1));
+        return;
+      }
+      if (event.name === "return" || event.name === "tab") {
+        event.preventDefault();
+        const choice = acFiles()[acIndex()];
+        if (choice) acceptMention(choice.path);
+        return;
+      }
+      if (event.name === "escape") {
+        event.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
+    handleKey(event);
+  };
+
+  function handleKey(event: KeyEvent): void {
     if (event.name === "k" && event.ctrl) {
       // ⌘K / ctrl+k opens the command palette overlay; the editor blurs (the
       // overlay-open effect) so the palette owns the keyboard.
@@ -220,7 +306,9 @@ export function PromptEditor() {
             keyBindings={PROMPT_KEY_BINDINGS}
             onContentChange={() => {
               if (input && !input.isDestroyed) setValue(input.plainText);
+              refreshMention();
             }}
+            onCursorChange={() => refreshMention()}
             onKeyDown={onKeyDown}
             onSubmit={onSubmit}
             onMouseDown={(e: MouseEvent) => e.target?.focus()}
@@ -231,6 +319,9 @@ export function PromptEditor() {
           <PromptMetaRow agent={agent()} model={model()} accent={accent()} />
         </box>
       </box>
+      <Show when={popupOpen()}>
+        <FileAutocomplete query={mentionQuery() ?? ""} files={acFiles()} index={acIndex()} />
+      </Show>
       <PromptShelf borderColor={accent()} />
       <PromptHintRow
         streaming={streaming()}

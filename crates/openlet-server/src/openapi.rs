@@ -12,6 +12,7 @@ use utoipa::OpenApi;
 
 use crate::diagnostics::{CheckResult, DoctorReport, Status};
 use crate::routes::attachments::AttachmentAck;
+use crate::routes::files::{FileContentDto, FileEntryDto, FileKindDto, FileListDto};
 use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
 
 #[derive(OpenApi)]
@@ -34,6 +35,10 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         DoctorReport,
         ErrorDto,
         EventDto,
+        FileContentDto,
+        FileEntryDto,
+        FileKindDto,
+        FileListDto,
         HealthDto,
         MessageDto,
         PartDto,
@@ -57,6 +62,7 @@ use crate::routes::plugin::{PluginHealthDto, PluginInfoDto};
         (name = "question",    description = "Interactive ask_user prompt replies"),
         (name = "event",       description = "SSE event channel"),
         (name = "plugin",      description = "Plugin discovery + health"),
+        (name = "files",       description = "Workspace file listing + content (@-mentions)"),
         (name = "diagnostics", description = "Preflight diagnostics"),
     )
 )]

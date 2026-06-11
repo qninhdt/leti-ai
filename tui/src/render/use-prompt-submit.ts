@@ -10,6 +10,7 @@
 import { findCommand } from "../commands/registry.js";
 import { useStore } from "../store/index.js";
 import { randomId } from "../utils/id.js";
+import { embedMentions } from "../services/attachment-embedder.js";
 
 import type { AppRuntime } from "./app-context.js";
 import type { CreateMessageDto } from "../api/types.js";
@@ -72,8 +73,29 @@ export function createPromptSubmit(runtime: AppRuntime): (text: string) => Promi
     }
 
     if (!store.activeSessionId) return;
+    const sessionId = store.activeSessionId;
+
+    // Resolve @-mentions: embed file content into the outgoing prompt, collect
+    // badge descriptors for the optimistic message. History stores the RAW text
+    // (un-expanded @tokens) — never the embedded content — so a recall re-fetches
+    // via the API rather than persisting file bytes to disk.
+    const { promptSection, badges } = await embedMentions(text, runtime.client);
     runtime.history.push(text);
-    await runtime.client.promptAsync(store.activeSessionId, textPrompt(text));
+    const ack = await runtime.client.promptAsync(sessionId, textPrompt(text + promptSection));
+
+    // Add the optimistic user message keyed by the server-assigned id, so a
+    // later message_created echo for the same id is deduped (preserving the FE
+    // badges, which the SSE path can't reconstruct).
+    useStore.getState().addUserMessage(sessionId, ack.message_id, text, badges);
+
+    // Surface any per-file resolution failure as a banner (the badge also shows
+    // "unsupported", but a missing/denied file warrants a visible message).
+    const failed = badges.filter((b) => b.error);
+    if (failed.length > 0) {
+      useStore
+        .getState()
+        .setClientError(`could not attach: ${failed.map((b) => b.path).join(", ")}`);
+    }
   }
 
   return async function submit(text: string): Promise<void> {

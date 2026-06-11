@@ -7,6 +7,7 @@ import { For, Show } from "solid-js";
 
 import { theme } from "../theme/index.js";
 import { SPLIT_BORDER } from "../utils/border-chars.js";
+import { FileBadgeChip } from "./file-badge.js";
 
 import type { MessageView } from "../store/index.js";
 
@@ -42,6 +43,13 @@ export function MessageUser(props: MessageUserProps) {
           </Show>
         )}
       </For>
+      <Show when={props.message.badges}>
+        {(badges) => (
+          <box flexDirection="row" gap={1} marginTop={1} flexWrap="wrap">
+            <For each={badges()}>{(badge) => <FileBadgeChip badge={badge} />}</For>
+          </box>
+        )}
+      </Show>
     </box>
   );
 }

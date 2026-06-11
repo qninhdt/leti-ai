@@ -124,4 +124,33 @@ describe("store applyEvent", () => {
     expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-a")).toBe(false);
     expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-b")).toBe(true);
   });
+
+  it("addUserMessage reconciles an SSE placeholder that arrived first (no dup, role=user, badges kept)", () => {
+    const s = useStore.getState();
+    const sid = "sid-opt";
+    const mid = "mid-opt";
+    // SSE echo wins the race: message_created inserts an empty role:"assistant"
+    // placeholder for this id BEFORE the optimistic add runs.
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    s.addUserMessage(sid, mid, "look at @src/app.tsx", [
+      { path: "src/app.tsx", kind: "text", unsupported: false, truncated: false },
+    ]);
+    const list = useStore.getState().messages[sid] ?? [];
+    expect(list.length).toBe(1);
+    expect(list[0]?.role).toBe("user");
+    expect(list[0]?.parts[0]?.text).toBe("look at @src/app.tsx");
+    expect(list[0]?.badges?.[0]?.path).toBe("src/app.tsx");
+  });
+
+  it("addUserMessage appends when no placeholder exists (add wins the race)", () => {
+    const s = useStore.getState();
+    const sid = "sid-opt2";
+    const mid = "mid-opt2";
+    s.addUserMessage(sid, mid, "hello", []);
+    // A later echo for the same id must dedupe, not duplicate.
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    const list = useStore.getState().messages[sid] ?? [];
+    expect(list.length).toBe(1);
+    expect(list[0]?.role).toBe("user");
+  });
 });

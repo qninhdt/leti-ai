@@ -6,6 +6,7 @@ pub mod attachments;
 pub mod cancel;
 pub mod diagnostics;
 pub mod event;
+pub mod files;
 pub mod health;
 pub mod message;
 pub mod permission;

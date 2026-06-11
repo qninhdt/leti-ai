@@ -17,8 +17,8 @@ use utoipa_swagger_ui::SwaggerUi;
 use crate::app_state::AppState;
 use crate::openapi::ApiDoc;
 use crate::routes::{
-    agent, attachments, cancel, diagnostics, event, health, message, permission, plugin, question,
-    session,
+    agent, attachments, cancel, diagnostics, event, files, health, message, permission, plugin,
+    question, session,
 };
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
@@ -44,6 +44,7 @@ impl Default for RouterBuilder {
             .with_plugin_routes()
             .with_diagnostics_routes()
             .with_attachment_routes()
+            .with_files_routes()
     }
 }
 
@@ -139,6 +140,17 @@ impl RouterBuilder {
             .routes(routes!(attachments::upload))
             .layer(attachments::body_limit_layer());
         self.inner = self.inner.merge(layered);
+        self
+    }
+
+    /// `GET /v1/files` + `GET /v1/files/content` — workspace file listing +
+    /// content for the TUI @-mention feature (mock data this phase).
+    #[must_use]
+    pub fn with_files_routes(mut self) -> Self {
+        self.inner = self
+            .inner
+            .routes(routes!(files::list))
+            .routes(routes!(files::content));
         self
     }
 

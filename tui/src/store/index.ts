@@ -6,6 +6,7 @@
 import { create } from "zustand";
 
 import type { ConnState } from "../api/sse.js";
+import type { FileBadge } from "../services/attachment-embedder.js";
 import type {
   AgentDto,
   EventDto,
@@ -66,6 +67,9 @@ export interface PartView extends PartDto {
 export interface MessageView extends MessageDto {
   parts: PartView[];
   step_finish?: { reason: string; usage_total?: number; cost?: string };
+  /// File-mention badge chips for a user message (Phase 6 @-mentions). Carried
+  /// on the optimistic user message and preserved when the SSE echo arrives.
+  badges?: FileBadge[];
 }
 
 export interface ConnSlice {
@@ -117,6 +121,12 @@ export interface State {
   setSessions: (sessions: SessionDto[]) => void;
   setActiveSession: (id: string | null) => void;
   setClientError: (message: string | null) => void;
+  /// Append an optimistic user message (role:"user") carrying the raw text and
+  /// file-mention badges. The SSE stream never produces a user message
+  /// (message_created hardcodes role:"assistant"), so the TUI must add it
+  /// itself. The client-generated id means a later server echo is deduped by
+  /// the message_created handler — preserving the FE badges.
+  addUserMessage: (sessionId: string, messageId: string, text: string, badges: FileBadge[]) => void;
 }
 
 function emptyMessage(sessionId: string, messageId: string): MessageView {
@@ -268,6 +278,34 @@ export const useStore = create<State>((set) => ({
     })),
   setActiveSession: (id) => set({ activeSessionId: id }),
   setClientError: (message) => set({ clientError: message }),
+
+  addUserMessage: (sessionId, messageId, text, badges) =>
+    set((s) => {
+      const list = s.messages[sessionId] ?? [];
+      const userMsg: MessageView = {
+        id: messageId,
+        session_id: sessionId,
+        role: "user",
+        parts: [{ id: messageId, message_id: messageId, kind: "text", text, buffer: "", reasoning_buffer: "" }],
+        created_at: new Date().toISOString(),
+        badges: badges.length > 0 ? badges : undefined,
+      };
+      const idx = list.findIndex((m) => m.id === messageId);
+      if (idx >= 0) {
+        // The SSE `message_created` echo can arrive BEFORE this optimistic add
+        // (the server publishes the event before returning the prompt ack), and
+        // it inserts an empty placeholder with a hardcoded role:"assistant".
+        // Upgrade that placeholder in place rather than no-op'ing, so the user
+        // text + badges survive regardless of which side wins the race. Safe:
+        // the ack id is the user message's own id (the assistant reply gets a
+        // different id), and user parts are pre-supplied, never streamed, so no
+        // real streamed content is clobbered.
+        const next = list.slice();
+        next[idx] = userMsg;
+        return { messages: { ...s.messages, [sessionId]: next } };
+      }
+      return { messages: { ...s.messages, [sessionId]: list.concat(userMsg) } };
+    }),
 
   applyEvent: (ev) =>
     set((s) => {

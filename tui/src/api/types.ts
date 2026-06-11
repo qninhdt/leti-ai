@@ -111,6 +111,26 @@ export interface PluginInfoDto {
   enabled: boolean;
 }
 
+// File @-mention DTOs — mirror crates/openlet-server/src/routes/files.rs.
+export type FileKindDto = "text" | "image" | "pdf";
+
+export interface FileEntryDto {
+  path: string;
+  type: FileKindDto;
+}
+
+export interface FileListDto {
+  files: FileEntryDto[];
+}
+
+export interface FileContentDto {
+  path: string;
+  type: FileKindDto;
+  content?: string;
+  truncated?: boolean;
+  unsupported?: boolean;
+}
+
 export type EventDto =
   | { kind: "session_status"; session_id: string; status: SessionStatus; at: string }
   | { kind: "message_created"; session_id: string; message_id: string; at: string }
