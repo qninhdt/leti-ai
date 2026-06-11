@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use crate::error::MemoryError;
 use crate::types::agent::AgentId;
 use crate::types::message::{Message, MessageId};
+use crate::types::pagination::{Page, PageResult};
 use crate::types::part::{Part, PartId};
 use crate::types::permission::PermissionMode;
 use crate::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
@@ -39,6 +40,20 @@ pub trait MemoryStore: Send + Sync + 'static {
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError>;
 
     async fn list_sessions(&self, filter: SessionFilter) -> Result<Vec<SessionMeta>, MemoryError>;
+
+    /// Paginated `list_sessions`. Cloud stores serving many tenants must
+    /// bound the result set; the default slices the unbounded
+    /// [`Self::list_sessions`] by the opaque offset cursor so test
+    /// doubles need no change. Production stores override with native
+    /// `LIMIT/OFFSET` (or keyset) SQL.
+    async fn list_sessions_paged(
+        &self,
+        filter: SessionFilter,
+        page: Page,
+    ) -> Result<PageResult<SessionMeta>, MemoryError> {
+        let all = self.list_sessions(filter).await?;
+        Ok(PageResult::from_slice(all, &page))
+    }
 
     async fn update_status(
         &self,
@@ -94,6 +109,18 @@ pub trait MemoryStore: Send + Sync + 'static {
     ) -> Result<(), MemoryError>;
 
     async fn list_messages(&self, session: SessionId) -> Result<Vec<Message>, MemoryError>;
+
+    /// Paginated `list_messages`. Same contract as
+    /// [`Self::list_sessions_paged`]: default slices the unbounded list;
+    /// production stores override with native paging.
+    async fn list_messages_paged(
+        &self,
+        session: SessionId,
+        page: Page,
+    ) -> Result<PageResult<Message>, MemoryError> {
+        let all = self.list_messages(session).await?;
+        Ok(PageResult::from_slice(all, &page))
+    }
 
     /// Lists every persisted part for `msg`, in append order. Used by
     /// the multi-step turn loop to harvest tool_calls from the latest

@@ -12,6 +12,7 @@ use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::error::MemoryError;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId};
+use openlet_core::types::pagination::{Page, PageResult};
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::permission::PermissionMode;
 use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
@@ -157,6 +158,63 @@ impl MemoryStore for SqliteMemoryStore {
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_io)?;
         rows.into_iter().map(row_to_session).collect()
+    }
+
+    async fn list_sessions_paged(
+        &self,
+        filter: SessionFilter,
+        page: Page,
+    ) -> Result<PageResult<SessionMeta>, MemoryError> {
+        // Native LIMIT/OFFSET. Cursor is the decimal row offset, matching
+        // the trait default's encoding so callers can't tell which impl
+        // backs the page. Fetch limit+1 to learn whether a next page
+        // exists without a second COUNT query.
+        let limit = page.effective_limit() as usize;
+        let offset: usize = page
+            .cursor
+            .as_deref()
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+
+        let mut sql = String::from(
+            "SELECT id, agent_id, parent_session_id, status, permission_mode, \
+             version, created_at, updated_at, deleted_at, extensions, capabilities, \
+             current_agent_slug, previous_agent_slug, depth, model \
+             FROM sessions WHERE 1=1",
+        );
+        if !filter.include_deleted {
+            sql.push_str(" AND deleted_at IS NULL");
+        }
+        if filter.status.is_some() {
+            sql.push_str(" AND status = ?");
+        }
+        if filter.agent_id.is_some() {
+            sql.push_str(" AND agent_id = ?");
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+
+        let mut q = sqlx::query(&sql);
+        if let Some(s) = filter.status {
+            q = q.bind(status_str(s));
+        }
+        let agent_str = filter.agent_id.as_ref().map(|a| a.to_string());
+        if let Some(a) = agent_str.as_deref() {
+            q = q.bind(a);
+        }
+        q = q.bind(limit as i64 + 1).bind(offset as i64);
+
+        let rows = q.fetch_all(&self.pool).await.map_err(map_io)?;
+        let mut items: Vec<SessionMeta> = rows
+            .into_iter()
+            .map(row_to_session)
+            .collect::<Result<_, _>>()?;
+        let next_cursor = if items.len() > limit {
+            items.truncate(limit);
+            Some((offset + limit).to_string())
+        } else {
+            None
+        };
+        Ok(PageResult { items, next_cursor })
     }
 
     async fn update_status(
@@ -393,6 +451,42 @@ impl MemoryStore for SqliteMemoryStore {
         .map_err(map_io)?;
 
         rows.into_iter().map(row_to_message).collect()
+    }
+
+    async fn list_messages_paged(
+        &self,
+        session: SessionId,
+        page: Page,
+    ) -> Result<PageResult<Message>, MemoryError> {
+        let limit = page.effective_limit() as usize;
+        let offset: usize = page
+            .cursor
+            .as_deref()
+            .and_then(|c| c.parse().ok())
+            .unwrap_or(0);
+
+        let rows = sqlx::query(
+            r#"SELECT id, session_id, role, created_at FROM messages
+               WHERE session_id = ? ORDER BY seq ASC LIMIT ? OFFSET ?"#,
+        )
+        .bind(session.to_string())
+        .bind(limit as i64 + 1)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        let mut items: Vec<Message> = rows
+            .into_iter()
+            .map(row_to_message)
+            .collect::<Result<_, _>>()?;
+        let next_cursor = if items.len() > limit {
+            items.truncate(limit);
+            Some((offset + limit).to_string())
+        } else {
+            None
+        };
+        Ok(PageResult { items, next_cursor })
     }
 
     async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError> {

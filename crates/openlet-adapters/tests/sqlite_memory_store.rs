@@ -5,6 +5,7 @@ use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory};
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
+use openlet_core::types::pagination::Page;
 use openlet_core::types::part::{Part, PartId};
 use openlet_core::types::session::{SessionFilter, SessionStatus};
 
@@ -234,4 +235,90 @@ async fn old_format_session_loads_model_as_none() {
         got.model.is_none(),
         "a session created without a model override must load as None"
     );
+}
+
+#[tokio::test]
+async fn list_sessions_paged_walks_pages() {
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+    let a = AgentId::new();
+    for _ in 0..5 {
+        store.create_session(a, None).await.unwrap();
+    }
+
+    // Page 1: 2 of 5 → next cursor present.
+    let p1 = store
+        .list_sessions_paged(SessionFilter::default(), Page::first(2))
+        .await
+        .unwrap();
+    assert_eq!(p1.items.len(), 2);
+    assert!(p1.next_cursor.is_some());
+
+    // Page 2: next 2.
+    let p2 = store
+        .list_sessions_paged(
+            SessionFilter::default(),
+            Page {
+                cursor: p1.next_cursor,
+                limit: 2,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(p2.items.len(), 2);
+    assert!(p2.next_cursor.is_some());
+
+    // Page 3: last 1 → no further cursor.
+    let p3 = store
+        .list_sessions_paged(
+            SessionFilter::default(),
+            Page {
+                cursor: p2.next_cursor,
+                limit: 2,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(p3.items.len(), 1);
+    assert_eq!(p3.next_cursor, None);
+
+    // Paged walk must cover the same set as the unbounded list.
+    let unbounded = store.list_sessions(SessionFilter::default()).await.unwrap();
+    assert_eq!(
+        p1.items.len() + p2.items.len() + p3.items.len(),
+        unbounded.len()
+    );
+}
+
+#[tokio::test]
+async fn list_messages_paged_matches_unbounded_order() {
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+    let session = store.create_session(AgentId::new(), None).await.unwrap();
+    for _ in 0..3 {
+        let msg = Message {
+            id: MessageId::new(),
+            session_id: session,
+            role: Role::User,
+            created_at: Utc::now(),
+        };
+        store.append_message(session, msg).await.unwrap();
+    }
+
+    let unbounded = store.list_messages(session).await.unwrap();
+    let mut walked = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = store
+            .list_messages_paged(session, Page { cursor, limit: 2 })
+            .await
+            .unwrap();
+        walked.extend(page.items.iter().map(|m| m.id));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    let expected: Vec<_> = unbounded.iter().map(|m| m.id).collect();
+    assert_eq!(walked, expected, "paged walk must equal unbounded order");
 }
