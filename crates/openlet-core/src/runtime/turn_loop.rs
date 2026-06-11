@@ -114,6 +114,16 @@ impl ConversationRuntime {
     /// we hit `max_steps`). Each tool-use turn dispatches the requested
     /// tools and appends their results as a fresh `tool`-role message
     /// before the next LLM call.
+    ///
+    /// Wrapped in a coarse `turn` span carrying the correlation ids
+    /// (`session_id` + a fresh `turn_id`) so every log line emitted
+    /// during the turn — across dispatch, provider, and compaction — is
+    /// attributable to one turn end-to-end. The span wraps the whole
+    /// loop, NOT per-token work on the stream hot path.
+    #[tracing::instrument(
+        skip_all,
+        fields(session_id = %input.session_id, turn_id = tracing::field::Empty)
+    )]
     pub async fn run_loop(
         &self,
         memory: &Arc<dyn MemoryStore>,
@@ -123,6 +133,10 @@ impl ConversationRuntime {
     ) -> Result<LoopOutcome, CoreError> {
         use crate::runtime::compaction::{CompactDecision, should_compact};
         let session_id = input.session_id;
+        // Per-invocation correlation id; recorded into the turn span so it
+        // flows into the JSON logs alongside `session_id`.
+        let turn_id = uuid::Uuid::new_v4();
+        tracing::Span::current().record("turn_id", tracing::field::display(&turn_id));
         let mut last_assistant_id: Option<MessageId> = None;
         let mut last_actual_tokens: Option<usize> = None;
         // Count of projected messages sent on the turn that produced

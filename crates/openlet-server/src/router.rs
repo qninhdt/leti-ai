@@ -8,7 +8,11 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
+use axum::http::Request;
+use axum::middleware::{Next, from_fn};
+use axum::response::Response;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use utoipa::OpenApi;
@@ -214,6 +218,9 @@ impl RouterBuilder {
             // any non-Json extractor (raw Bytes, future multipart) was
             // previously unbounded.
             .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
+            // Outermost: request-scoped correlation span wrapping all of
+            // the above so every log line carries the request_id.
+            .layer(from_fn(request_span))
             .split_for_parts();
 
         // Gate Swagger UI on OPENLET_ENABLE_DOCS. Defaults to ON for
@@ -233,6 +240,22 @@ impl RouterBuilder {
             router.with_state(state)
         }
     }
+}
+
+/// Request-scoped span carrying a fresh `request_id`. Mounted outermost
+/// so every log line for a request — through auth, workspace routing, the
+/// handler, and the turn it spawns — is attributable to one request. The
+/// per-turn span (core `run_loop`) nests its own `turn_id` under this.
+async fn request_span(req: Request<Body>, next: Next) -> Response {
+    let request_id = uuid::Uuid::new_v4();
+    let span = tracing::info_span!(
+        "request",
+        request_id = %request_id,
+        method = %req.method(),
+        path = %req.uri().path(),
+    );
+    let _enter = span.enter();
+    next.run(req).await
 }
 
 /// Resolves the CORS layer from env. Closed by default; opt-in to
