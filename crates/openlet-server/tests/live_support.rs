@@ -77,6 +77,7 @@ impl LiveServer {
             Some(SecretString::from("test-key")),
             "mock/model-small",
             None,
+            None,
         )
         .await
     }
@@ -93,6 +94,7 @@ impl LiveServer {
             Some(SecretString::from("test-key")),
             "mock/model-small",
             Some(data_dir),
+            None,
         )
         .await
     }
@@ -100,6 +102,20 @@ impl LiveServer {
     /// Boot against real OpenRouter. Reads `OPENROUTER_API_KEY` from env;
     /// callers must gate on its presence + `OPENLET_LIVE_E2E=1`.
     pub async fn with_openrouter() -> Self {
+        Self::with_openrouter_inner(None).await
+    }
+
+    /// Boot against real OpenRouter with a deliberately small agent context
+    /// window so a multi-turn conversation crosses the compaction threshold.
+    /// Registers a `general` agent (the harness default slug) carrying the
+    /// given `context_window`; without a registered agent, `loop_ctx.agent`
+    /// is `None` and compaction never fires. Used by the compaction-continuity
+    /// live test.
+    pub async fn with_openrouter_small_window(context_window: u32) -> Self {
+        Self::with_openrouter_inner(Some(context_window)).await
+    }
+
+    async fn with_openrouter_inner(compaction_window: Option<u32>) -> Self {
         let key = std::env::var("OPENROUTER_API_KEY")
             .expect("OPENROUTER_API_KEY required for live OpenRouter E2E");
         let model = std::env::var("OPENLET_LIVE_E2E_MODEL")
@@ -109,6 +125,7 @@ impl LiveServer {
             Some(SecretString::from(key)),
             &model,
             None,
+            compaction_window,
         )
         .await
     }
@@ -120,6 +137,7 @@ impl LiveServer {
         api_key: Option<SecretString>,
         model: &str,
         data_dir: Option<PathBuf>,
+        compaction_window: Option<u32>,
     ) -> Self {
         let (data_root, owned_tempdir) = match data_dir {
             Some(d) => (d, None),
@@ -218,6 +236,30 @@ impl LiveServer {
             },
         );
 
+        // Register a `general` agent (the harness default session slug) only
+        // when a caller asks for a small compaction window. Without a
+        // registered agent, `loop_ctx.agent` is `None` and compaction never
+        // fires — so the compaction-continuity test opts in here.
+        let mut agent_registry = openlet_core::agent::AgentRegistry::new();
+        if let Some(window) = compaction_window {
+            use openlet_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
+            let def = AgentDefinition {
+                slug: AgentSlug::new("general").expect("slug"),
+                title: "General".into(),
+                description: String::new(),
+                prompt_segments: Some(PromptSegments::default()),
+                tool_allowlist: Vec::new(),
+                model_id: model.to_string(),
+                default_temperature: 0.0,
+                context_window: window,
+                compaction_threshold: 0.5,
+                compaction_summary_cap_tokens: 500,
+                hidden: false,
+            };
+            def.validate().expect("valid compaction agent");
+            agent_registry.insert(def).expect("insert general agent");
+        }
+
         let state = openlet_server::AppStateBuilder::new()
             .provider(provider)
             .memory(memory.clone())
@@ -234,7 +276,7 @@ impl LiveServer {
             .runtime(runtime)
             .agents(agents)
             .default_agent_id(default_agent_id)
-            .agent_registry(Arc::new(openlet_core::agent::AgentRegistry::new()))
+            .agent_registry(Arc::new(agent_registry))
             .build()
             .expect("build app state");
 
