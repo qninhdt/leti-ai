@@ -20,12 +20,7 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
     let start = std::time::Instant::now();
@@ -43,16 +38,36 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// (the spawner clones the parent's AgentResources), so the file the child
 /// writes lands on the same disk we inspect. The assertion is the delegated
 /// work's on-disk result — only a real spawn→child-run→return arc produces it.
+///
+/// Two-tier: tier-2 (live) lets a real model on BOTH parent and child decide;
+/// tier-1 (mock) scripts the interleaved turns. The scripted provider serves
+/// parent + child from one queue; because the spawn is synchronous (the parent
+/// awaits the child before its tool result returns), the pop order is
+/// deterministic: parent-spawn → child-write → child-done → parent-done. The
+/// REAL spawner drives a real nested child run_loop on both tiers.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_delegates_to_subagent_that_does_the_work() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    // Boots with the REAL subagent spawner wired in.
-    let srv = LiveServer::with_openrouter_subagents().await;
+    // Tier-1 script in synchronous-spawn pop order:
+    //   1. parent: subagent_task(general, "...write subagent_proof.txt...")
+    //   2. child:  write subagent_proof.txt
+    //   3. child:  text DONE (ends the child run_loop)
+    //   4. parent: text DONE (after the child result rolls up)
+    let script = vec![
+        tool_turn(
+            "s1",
+            "subagent_task",
+            r#"{"subagent_type":"general","objective":"write subagent_proof.txt containing DELEGATED_WORK_DONE"}"#,
+        ),
+        tool_turn(
+            "cw",
+            "write",
+            r#"{"path":"subagent_proof.txt","content":"DELEGATED_WORK_DONE\n"}"#,
+        ),
+        text_turn("child done"),
+        text_turn("DONE"),
+    ];
+    // Boots with the REAL subagent spawner wired in (both tiers).
+    let srv = LiveServer::for_scenario_with_subagents(script).await;
     let ws = srv.workspace_root().to_path_buf();
     let proof = ws.join("subagent_proof.txt");
 
