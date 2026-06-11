@@ -242,3 +242,77 @@ data across tenants.
 
 See `docs/multi-provider.md` for the per-workspace BYOK pattern with
 `MultiProvider`.
+
+## Inbound auth & outbound credentials
+
+openlet-ai is zero-trust: identity is never read from an upstream-injected
+header — it must come from a verified credential. The `openlet_server::auth`
+module ships two pluggable traits, each with a local default, plus the
+canonical identity types.
+
+### Inbound: `Authenticator`
+
+```rust
+use openlet_server::{AuthError, AuthPrincipal, Authenticator};
+
+#[async_trait::async_trait]
+impl Authenticator for cloud::JwksAuthenticator {
+    async fn authenticate(
+        &self,
+        headers: &axum::http::HeaderMap,
+    ) -> Result<AuthPrincipal, AuthError> {
+        // RS256-verify the bearer token against openlet's JWKS, reject
+        // act-bearing tokens, map the verified subject → AuthPrincipal.
+        let token = bearer(headers).ok_or(AuthError::MissingCredential)?;
+        let claims = self.verify(token).map_err(|e| AuthError::InvalidCredential(e.to_string()))?;
+        Ok(AuthPrincipal { caller_id: claims.sub, principal_type: PrincipalType::User })
+    }
+
+    fn is_dev(&self) -> bool { false } // not the admit-all dev default
+}
+```
+
+Mount it via `RouterBuilder::build_with_auth(state, Arc::new(my_auth))`. The
+default `build(state)` mounts `LocalDevAuthenticator` (admits one fixed
+principal, no token) — correct for `./openlet-ai` loopback dev, refused on a
+non-loopback bind and under `OPENLET_RUNTIME_PROFILE=cloud` (fail-closed).
+The `AuthLayer` runs before the workspace layer and injects the
+`AuthPrincipal` the workspace gate + question route require.
+
+### Runtime profile
+
+`OPENLET_RUNTIME_PROFILE=local|cloud` (default `local`). `local` resolves the
+dev authenticator; `cloud` makes `authenticator_for_profile` fail closed —
+the cloud binary MUST build its own `Authenticator` and call
+`build_with_auth` rather than relying on the default.
+
+### Outbound: `CredentialProvider`
+
+When an agent tool calls an openlet service, it carries openlet-ai's own
+service-account credential scoped to the agent workspace (external SA, not a
+per-turn user token). The trait + a `NoopCredentialProvider` default (returns
+`Ok(None)`) live in `openlet_server::auth`; the holder is on
+`AppState::credential_provider` (set via `AppStateBuilder::credential_provider`).
+
+```rust
+use openlet_server::{CredentialProvider, OutboundCredential, AgentWorkspace};
+
+#[async_trait::async_trait]
+impl CredentialProvider for cloud::SaIssuer {
+    async fn workspace_credential(
+        &self,
+        ws: &AgentWorkspace,
+    ) -> Result<Option<OutboundCredential>, openlet_server::CredentialError> {
+        Ok(Some(self.mint_sa_token(ws).await?))
+    }
+}
+```
+
+**Threading status:** the seam is built and held, but NOT yet wired into any
+tool call — core has no outbound HTTP tool today (every builtin is local:
+bash/edit/read/write/glob/grep/list/todo/ask_user/plan_mode/subagent_task/
+task_status). **Plug-in point:** when a real outbound tool lands, it reads
+`AppState::credential_provider`, calls `workspace_credential(agent_workspace)`,
+and attaches the returned bearer as `Authorization: Bearer <token>` on its
+outbound request. Until then the noop default keeps the local binary
+credential-free.

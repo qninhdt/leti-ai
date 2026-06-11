@@ -133,6 +133,12 @@ pub struct AppState {
     /// In-process subagent task registry. Bounded by
     /// `OPENLET_SUBAGENT_MAX_PER_SESSION` (default 32) per ROOT session.
     pub task_registry: Arc<TaskRegistry>,
+    /// Outbound service-account credential seam. Local default is a
+    /// no-op (`Ok(None)` — agent tools make no authenticated outbound
+    /// calls). Held here so a future outbound HTTP tool can read it from
+    /// the tool context; NOT yet threaded into any tool call (no outbound
+    /// tool exists in core today).
+    pub credential_provider: Arc<dyn crate::auth::CredentialProvider>,
 }
 
 impl AppState {

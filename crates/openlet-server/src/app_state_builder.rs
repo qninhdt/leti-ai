@@ -61,6 +61,7 @@ pub struct AppStateBuilder {
     agent_registry: Option<Arc<AgentRegistry>>,
     questions: Option<Arc<QuestionRegistry>>,
     task_registry: Option<Arc<TaskRegistry>>,
+    credential_provider: Option<Arc<dyn crate::auth::CredentialProvider>>,
 }
 
 impl AppStateBuilder {
@@ -177,6 +178,12 @@ impl AppStateBuilder {
         self
     }
 
+    #[must_use]
+    pub fn credential_provider(mut self, v: Arc<dyn crate::auth::CredentialProvider>) -> Self {
+        self.credential_provider = Some(v);
+        self
+    }
+
     /// Validate required fields and assemble the [`AppState`]. Auto-fills
     /// `runtime` from provider+memory+events+config if the integrator did
     /// not supply one explicitly.
@@ -247,6 +254,9 @@ impl AppStateBuilder {
             task_registry: self
                 .task_registry
                 .unwrap_or_else(|| Arc::new(TaskRegistry::from_env())),
+            credential_provider: self
+                .credential_provider
+                .unwrap_or_else(|| Arc::new(crate::auth::NoopCredentialProvider)),
         })
     }
 }
