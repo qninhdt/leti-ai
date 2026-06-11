@@ -100,10 +100,7 @@ async fn real_model_runs_todo_tracked_build_workflow() {
         Duration::from_secs(8),
     )
     .await;
-    assert!(
-        built,
-        "expected mathutils.py + test_mathutils.py on disk"
-    );
+    assert!(built, "expected mathutils.py + test_mathutils.py on disk");
 
     // Invariant 2 — the real proof: run the model's test ourselves from a
     // clean shell. It must pass against the module the model wrote.
@@ -153,7 +150,9 @@ async fn real_model_runs_todo_tracked_build_workflow() {
     // Every item carries content + a known status — the tool's schema.
     for item in items {
         assert!(
-            item.get("content").and_then(serde_json::Value::as_str).is_some(),
+            item.get("content")
+                .and_then(serde_json::Value::as_str)
+                .is_some(),
             "each todo needs content: {item:?}"
         );
         let status = item
@@ -170,9 +169,9 @@ async fn real_model_runs_todo_tracked_build_workflow() {
     }
     // At least one item should be marked completed — the model was told to
     // update statuses as it finished steps, and the task DID complete.
-    let any_completed = items.iter().any(|i| {
-        i.get("status").and_then(serde_json::Value::as_str) == Some("completed")
-    });
+    let any_completed = items
+        .iter()
+        .any(|i| i.get("status").and_then(serde_json::Value::as_str) == Some("completed"));
     assert!(
         any_completed,
         "at least one todo should be marked completed after the task finished: {items:?}"
