@@ -6,11 +6,13 @@
 # runs on the cached deps; the runtime image is a slim, non-root Debian
 # carrying only the binary + a healthcheck.
 
-# Pin the toolchain to the workspace's rust-version (1.85, edition 2024).
-ARG RUST_VERSION=1.85
+# Build with the latest stable Rust to mirror `rust-toolchain.toml`
+# (`channel = "stable"`, the same toolchain CI's `rustup show` resolves).
+# Do NOT pin to the workspace `rust-version` (1.85) — that is the MSRV floor,
+# and modern build tooling (cargo-chef) needs a newer compiler than the floor.
 
 # --- planner: compute the dependency recipe -------------------------------
-FROM rust:${RUST_VERSION}-slim AS chef
+FROM rust:slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
