@@ -18,15 +18,10 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
+use live_support::{LiveServer, text_turn, tool_turn};
 
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
 
 /// Scan persisted parts for a `Part::Plan`, returning its text. The plan is
 /// durable (persisted by `exit_plan_mode`), so this reads straight from the
@@ -50,15 +45,27 @@ async fn persisted_plan_text(srv: &LiveServer, sid: &str) -> Option<String> {
 /// distinctive sentinel, then exit plan mode submitting that plan. Assert a
 /// durable `Part::Plan` was persisted carrying the sentinel — proving the full
 /// enter→exit state machine ran and froze the plan for operator review.
-#[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
-async fn real_model_enters_and_exits_plan_mode() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
+///
+/// Two-tier: tier-2 (live) lets a real model run enter→draft→exit; tier-1
+/// (mock) scripts the enter_plan_mode + exit_plan_mode calls. Both dispatch the
+/// real plan-mode tools (profile swap + durable Part::Plan persist + events),
+/// so the persisted-plan + transition-event assertions hold on either tier.
+const PLAN_SENTINEL: &str = "PLAN_SENTINEL_7731";
 
-    let srv = LiveServer::with_openrouter().await;
+#[tokio::test]
+async fn real_model_enters_and_exits_plan_mode() {
+    // Tier-1 script: enter plan mode, then exit submitting a plan carrying the
+    // sentinel. The exit_plan_mode tool persists the Part::Plan + fires events
+    // on both tiers, so this is not a tautology — it drives the same wiring.
+    let exit_args = format!(
+        r#"{{"plan":"1. scaffold\n2. {PLAN_SENTINEL}\n3. ship"}}"#
+    );
+    let script = vec![
+        tool_turn("p1", "enter_plan_mode", "{}"),
+        tool_turn("p2", "exit_plan_mode", &exit_args),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let sid = srv.create_session().await;
     // Danger mode so the `agent:enter_plan_mode` / `agent:exit_plan_mode`
     // permission checks auto-allow instead of parking on an Ask (no human is
@@ -71,7 +78,7 @@ async fn real_model_enters_and_exits_plan_mode() {
 
     // Distinctive sentinel the model must carry into the plan text, so the
     // assertion can't false-match generic prose.
-    let sentinel = "PLAN_SENTINEL_7731";
+    let sentinel = PLAN_SENTINEL;
     let prompt = format!(
         "First call the enter_plan_mode tool. Then draft a SHORT three-step \
          plan for building a TODO app; the plan text MUST include the exact \

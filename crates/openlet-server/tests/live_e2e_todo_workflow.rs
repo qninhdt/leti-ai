@@ -20,12 +20,7 @@ use std::process::Command;
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 fn python_available() -> bool {
     Command::new("python3")
@@ -50,19 +45,35 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// list. Assertions: the module + test landed on disk, the test actually
 /// passes when WE run it independently, and a durable todos.json was persisted
 /// recording the checklist the model maintained.
+///
+/// Two-tier: tier-2 (live) lets a real model build+test while tracking todos;
+/// tier-1 (mock) scripts todo→write→write→bash→todo. Both dispatch the real
+/// todo/write/bash tools, so the on-disk module/test + persisted todos.json
+/// assertions are meaningful on either tier.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_runs_todo_tracked_build_workflow() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
     if !python_available() {
         eprintln!("skipping: python3 not on PATH");
         return;
     }
 
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: create a todo list, write the module + test, run the
+    // test, then mark todos completed. The writes carry real content the
+    // assertions check; the todo calls persist the real todos.json. All tools
+    // execute on both tiers.
+    let todos_initial = r#"{"todos":[{"content":"write mathutils.py","status":"in_progress","priority":"high"},{"content":"write test","status":"pending","priority":"high"},{"content":"run test","status":"pending","priority":"medium"}]}"#;
+    let todos_done = r#"{"todos":[{"content":"write mathutils.py","status":"completed","priority":"high"},{"content":"write test","status":"completed","priority":"high"},{"content":"run test","status":"completed","priority":"medium"}]}"#;
+    let module_src = r#"{"path":"mathutils.py","content":"def factorial(n):\n    return 1 if n <= 1 else n * factorial(n - 1)\n"}"#;
+    let test_src = r#"{"path":"test_mathutils.py","content":"from mathutils import factorial\nassert factorial(5) == 120\nassert factorial(0) == 1\nprint('ALL_TESTS_PASSED')\n"}"#;
+    let script = vec![
+        tool_turn("t1", "todo", todos_initial),
+        tool_turn("w1", "write", module_src),
+        tool_turn("w2", "write", test_src),
+        tool_turn("b1", "bash", r#"{"command":"python3 test_mathutils.py"}"#),
+        tool_turn("t2", "todo", todos_done),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
     let module = ws.join("mathutils.py");
     let test_file = ws.join("test_mathutils.py");
