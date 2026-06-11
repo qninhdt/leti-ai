@@ -1,17 +1,22 @@
 # Openlet TUI
 
-Ink/React client for openlet-agent-core. Connects to an `openlet-server`
-instance over REST + SSE; streams agent turns into a terminal UI.
+SolidJS client (on `@opentui`) for openlet-agent-core. Connects to an
+`openlet-server` instance over REST + SSE; streams agent turns into a
+full-screen terminal UI with an OpenCode-style prompt, overlay dialogs, and
+`@`-file mentions.
+
+> **Runtime:** requires [Bun](https://bun.sh) >= 1.3 — `@opentui/core` uses
+> native FFI that Node does not provide.
 
 ## Quickstart
 
 ```bash
 cd tui
-npm install
+bun install
 # Server must be running locally on http://127.0.0.1:8787
 npm run codegen   # regenerate src/api/schema.d.ts from /v1/doc/openapi.json
 npm run build
-node dist/cli.mjs
+bun dist/cli.mjs
 ```
 
 After `npm pack` you can `npm i -g <tarball>` to get the `openlet`
