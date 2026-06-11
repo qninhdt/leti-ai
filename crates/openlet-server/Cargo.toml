@@ -30,6 +30,7 @@ openlet-protocol.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 reqwest.workspace = true
+regex.workspace = true
 rust_decimal.workspace = true
 secrecy.workspace = true
 serde.workspace = true

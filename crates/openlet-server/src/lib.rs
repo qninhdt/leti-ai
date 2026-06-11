@@ -11,6 +11,7 @@ pub mod core_api_impl;
 pub mod diagnostics;
 pub mod error;
 pub mod events;
+pub mod evidence_scrubber;
 pub(crate) mod mention;
 pub mod metrics;
 pub mod middleware;
