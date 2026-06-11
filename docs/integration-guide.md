@@ -316,3 +316,71 @@ task_status). **Plug-in point:** when a real outbound tool lands, it reads
 and attaches the returned bearer as `Authorization: Bearer <token>` on its
 outbound request. Until then the noop default keeps the local binary
 credential-free.
+
+## Adapter contract spec (cloud impl conformance)
+
+Each adapter trait was widened so a cloud backend is expressible without
+forking core. A cloud impl must satisfy the behaviors below; the local
+impls' existing test suites are the executable reference (no generic test
+kit ships — run your own targeted tests against these behaviors).
+
+### MemoryStore — pagination + scoping
+- `list_sessions_paged` / `list_messages_paged` return at most `Page::limit`
+  rows plus a `next_cursor`; `None` cursor means the last page. The cursor
+  is **opaque** — callers pass it back verbatim, never parse it.
+- A paged walk must cover the same set, in the same order, as the
+  unbounded `list_*` (reference: `sqlite_memory_store` paged tests).
+- Soft-delete: `delete_session` sets `deleted_at`; default `list_*`
+  excludes deleted unless `SessionFilter::include_deleted`.
+- Cross-workspace isolation: a cloud store keys rows by workspace and MUST
+  NOT return another tenant's sessions. `SessionId` is globally unique, so
+  no per-method partition arg is needed — scope at the connection/store
+  level. Assert cross-workspace reads return empty/NotFound.
+
+### ArtifactStore — streaming + presign
+- `get_stream` must reassemble to the same bytes as buffered `get`
+  (reference: `localfs_artifact_store` streaming round-trip).
+- `put_stream` collects/streams a body equivalent to `put`.
+- `presign(ref, op)` returns `Some(url)` only if the backend supports
+  direct client transfer (S3/MinIO); local returns `None`. A `Get` URL
+  must download the same bytes; a `Put` URL must accept an upload that a
+  later `get` reads back.
+
+### EventSink — routing + delivery
+- `publish_routed` with a `RoutingKey` delivers to subscribers scoped to
+  that workspace/user; the local bus ignores the key (broadcasts to all)
+  via the default. Durable events still carry a monotonic `event_id` in
+  assignment = persist = broadcast order (the replay-seam contract).
+- `delivery_semantics()` truthfully reports `BestEffort` (frames may drop
+  to a slow subscriber) or `AtLeastOnce` (durable, consumer dedupes on
+  `event_id`). Transient (`part.delta`/`heartbeat`) events are never
+  persisted regardless.
+
+### ModelProvider / WorkspaceResolver / PermissionManager
+- Already impl-agnostic — see the per-trait audit notes in source. A
+  remote provider, control-plane resolver, or cloud authz service plugs in
+  with no signature change. `WorkspaceResolver::resolve` receives the
+  authenticated principal and returns `Forbidden` on an ownership
+  mismatch.
+
+## Quota / cost-cap integration (plugin seam, not a trait)
+
+There is **no `Quota` trait**. Cost control is the plugin cost-tick seam,
+demonstrated by `test-quota-stub` (`crates/openlet-plugins/test-quota-stub`):
+
+- `on_cost_tick`: read `extensions["user_id"]`, decrement the per-user
+  balance by `delta_usd`, and call `CoreApi::cancel_session` when it hits
+  zero — the active turn unwinds mid-flight.
+- `before_turn`: re-check the balance and return `HookResult::Stop` so the
+  next turn never starts (covers the cancel-vs-next-iteration race).
+
+Cost numbers come from core's verified cost path; the plugin only decides
+when to stop. Openlet Cloud forks this plugin to call its billing/ledger
+service instead of the in-memory map. **Fail-closed vs fail-open on a
+ledger outage is the integrator's choice** — local stays fail-open (no cap,
+logs); a cloud deploy should deny on ledger-unreachable.
+
+**Open question (owner):** does openlet-ai own a self-contained cost ledger,
+or call a future openlet quota service? Determines whether the cost-tick
+plugin is storage-backed or a remote client. No openlet LLM-cost service
+exists today, so this stays a plugin seam with the decision deferred.
