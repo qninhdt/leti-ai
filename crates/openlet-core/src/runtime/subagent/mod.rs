@@ -70,7 +70,7 @@ pub fn plan_subagent_spawn(
     root_session_id: SessionId,
     max_depth: u8,
 ) -> Result<SpawnPlan, SpawnError> {
-    let next_depth = parent.depth.checked_add(1).unwrap_or(u8::MAX);
+    let next_depth = parent.depth.saturating_add(1);
     if next_depth > max_depth {
         return Err(SpawnError::SubagentDepthExceeded {
             requested: next_depth,

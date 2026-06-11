@@ -42,6 +42,9 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+# Exception: the TUI ships a committed lockfile — `npm ci` + the CI
+# setup-node cache both require it (reproducible installs).
+!tui/package-lock.json
 
 # semantic-release
 .nyc_output
