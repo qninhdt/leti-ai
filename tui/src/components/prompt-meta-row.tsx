@@ -35,7 +35,7 @@ export function PromptMetaRow(props: PromptMetaRowProps) {
         <Show when={props.agent} fallback={<box height={1} />}>
           {(agent) => (
             <>
-              <text fg={props.accent}>{titlecase(agent().name)}</text>
+              <text fg={props.accent}>{titlecase(agent().display_name)}</text>
               <text fg={oc.textMuted}>·</text>
               <text flexShrink={0} fg={oc.text}>
                 {props.model}

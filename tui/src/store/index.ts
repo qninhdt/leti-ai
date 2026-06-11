@@ -3,7 +3,7 @@
 // crates/openlet-protocol after axum's serde rename_all="snake_case".
 // Phase plan dotted names (session.status etc.) are translated by sse.ts.
 
-import { create } from "zustand";
+import { createStore } from "zustand/vanilla";
 
 import type { ConnState } from "../api/sse.js";
 import type { FileBadge } from "../services/attachment-embedder.js";
@@ -240,7 +240,7 @@ function updatePartById(
   return { ...msg, parts };
 }
 
-export const useStore = create<State>((set) => ({
+export const useStore = createStore<State>((set) => ({
   conn: { status: "idle", attempt: 0, lastEventId: null },
   sessions: {},
   activeSessionId: null,

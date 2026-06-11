@@ -34,7 +34,7 @@ export function Sidebar() {
             <Show when={agent()}>
               {(a) => (
                 <box flexDirection="column" marginTop={1}>
-                  <text fg={oc.text}>{a().name}</text>
+                  <text fg={oc.text}>{a().display_name}</text>
                   <Show when={a().model}>
                     {(m) => <text fg={oc.textMuted}>{m()}</text>}
                   </Show>

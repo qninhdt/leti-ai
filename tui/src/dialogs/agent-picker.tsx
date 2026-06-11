@@ -8,7 +8,7 @@
 import { For, Show, onCleanup, onMount } from "solid-js";
 
 import { theme } from "../theme/index.js";
-import { useStore } from "../store/index.js";
+import { useStore, type OverlayEntry } from "../store/index.js";
 import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { setOverlayHandler } from "../render/key-router.js";
@@ -23,7 +23,7 @@ export function AgentPickerDialog() {
 
   async function select(agent: AgentDto): Promise<void> {
     const store = useStore.getState();
-    store.removeOverlay((e) => e.kind === "agent_picker");
+    store.removeOverlay((e: OverlayEntry) => e.kind === "agent_picker");
     try {
       const session = await runtime.client.createSession({ agent_id: agent.id });
       const fresh = useStore.getState();
@@ -47,7 +47,7 @@ export function AgentPickerDialog() {
             <box flexDirection="row">
               <text fg={i() === nav.index() ? oc.accent : oc.text}>
                 {i() === nav.index() ? "▸ " : "  "}
-                {agent.name}
+                {agent.display_name}
               </text>
               <Show when={agent.description}>
                 {(d) => <text fg={oc.textMuted}> — {d()}</text>}
