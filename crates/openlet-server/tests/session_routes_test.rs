@@ -2,7 +2,7 @@
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use openlet_protocol::{CreateSessionDto, SessionDto};
+use openlet_protocol::{CreateSessionDto, MessageDto, SessionDto};
 use serde_json::json;
 use tower::util::ServiceExt;
 
@@ -167,4 +167,84 @@ async fn create_session_with_extensions_round_trip() {
     let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
     let fetched: SessionDto = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(fetched.extensions, extensions);
+}
+
+/// `GET /v1/session/:id/messages` hydrates each message with its persisted
+/// parts (the Part union). Seeds a user message + text part via the memory
+/// handle, then asserts the route returns it with the part body — the path
+/// the TUI uses to load history on session resume.
+#[tokio::test]
+async fn list_messages_returns_hydrated_parts() {
+    use openlet_core::types::message::{Message, MessageId, Role};
+    use openlet_core::types::part::{Part, PartId};
+    use openlet_core::types::session::SessionId;
+
+    let harness = support::TestHarness::new().await;
+    let app = harness.router();
+    let memory = harness.memory.clone();
+
+    // Seed a session with one user message carrying a text part.
+    let sid = memory
+        .create_session(openlet_core::types::agent::AgentId::new(), None)
+        .await
+        .unwrap();
+    let msg = Message {
+        id: MessageId::new(),
+        session_id: sid,
+        role: Role::User,
+        created_at: chrono::Utc::now(),
+    };
+    let mid = memory.append_message(sid, msg).await.unwrap();
+    memory
+        .append_part(
+            mid,
+            Part::Text {
+                id: PartId::new(),
+                text: "hello from history".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/v1/session/{}/messages", SessionId::as_uuid(&sid)))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let messages: Vec<MessageDto> = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, Role::User);
+    assert_eq!(
+        messages[0].parts.len(),
+        1,
+        "message must carry its text part"
+    );
+    // The part union serializes with a `kind` tag; the text body must be present.
+    let part_json = serde_json::to_value(&messages[0].parts[0]).unwrap();
+    assert_eq!(part_json["kind"], "text");
+    assert_eq!(part_json["text"], "hello from history");
+}
+
+/// Messages for an unknown session → 404 (session existence is checked
+/// before listing).
+#[tokio::test]
+async fn list_messages_unknown_session_returns_404() {
+    let harness = support::TestHarness::new().await;
+    let app = harness.router();
+    let unknown = uuid::Uuid::new_v4();
+    let resp = app
+        .oneshot(
+            Request::get(format!("/v1/session/{unknown}/messages"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

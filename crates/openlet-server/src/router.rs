@@ -21,8 +21,8 @@ use crate::auth::{AuthLayer, Authenticator, LocalDevAuthenticator};
 use crate::middleware::WorkspaceRoutingLayer;
 use crate::openapi::ApiDoc;
 use crate::routes::{
-    agent, attachments, cancel, diagnostics, event, health, message, model, permission, plugin,
-    question, session,
+    agent, attachments, cancel, diagnostics, event, files, health, message, model, permission,
+    plugin, question, session,
 };
 use crate::workspace_resolver::StaticWorkspaceResolver;
 
@@ -50,6 +50,7 @@ impl Default for RouterBuilder {
             .with_plugin_routes()
             .with_diagnostics_routes()
             .with_attachment_routes()
+            .with_files_routes()
     }
 }
 
@@ -82,10 +83,13 @@ impl RouterBuilder {
         self
     }
 
-    /// `POST /v1/session/:id/prompt_async`.
+    /// `POST /v1/session/:id/prompt_async` + `GET /v1/session/:id/messages`.
     #[must_use]
     pub fn with_message_routes(mut self) -> Self {
-        self.inner = self.inner.routes(routes!(message::prompt_async));
+        self.inner = self
+            .inner
+            .routes(routes!(message::prompt_async))
+            .routes(routes!(message::list_messages));
         self
     }
 
@@ -152,6 +156,17 @@ impl RouterBuilder {
             .routes(routes!(attachments::upload))
             .layer(attachments::body_limit_layer());
         self.inner = self.inner.merge(layered);
+        self
+    }
+
+    /// `GET /v1/files` + `GET /v1/files/content` — workspace file listing +
+    /// content for the TUI @-mention feature (mock data this phase).
+    #[must_use]
+    pub fn with_files_routes(mut self) -> Self {
+        self.inner = self
+            .inner
+            .routes(routes!(files::list))
+            .routes(routes!(files::content));
         self
     }
 

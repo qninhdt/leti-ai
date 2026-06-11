@@ -17,7 +17,7 @@ use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
 use openlet_core::types::session::{SessionId, SessionStatus};
-use openlet_protocol::{CreateMessageDto, PromptAckDto};
+use openlet_protocol::{CreateMessageDto, MessageDto, PartDto, PromptAckDto};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -205,6 +205,37 @@ pub async fn prompt_async(
             ack: true,
         }),
     ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/session/{id}/messages",
+    tag = "session",
+    params(("id" = Uuid, Path, description = "Session id")),
+    responses(
+        (status = 200, description = "Messages with their parts, in append order", body = [MessageDto]),
+        (status = 404, description = "Session not found"),
+    )
+)]
+pub async fn list_messages(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Vec<MessageDto>>, AppError> {
+    let sid = SessionId::from(id);
+    state.require_session(sid).await?;
+
+    // Hydrate each message with its persisted parts (the Part tagged
+    // union — text/reasoning/tool_call/tool_result/...). The streaming
+    // protocol only carries part ids on part_created/part_updated, so a
+    // resuming client fetches the full bodies here.
+    let messages = state.memory.list_messages(sid).await?;
+    let mut out = Vec::with_capacity(messages.len());
+    for msg in messages {
+        let parts = state.memory.list_parts(sid, msg.id).await?;
+        let part_dtos: Vec<PartDto> = parts.into_iter().map(PartDto::from).collect();
+        out.push(MessageDto::from_message(msg, part_dtos));
+    }
+    Ok(Json(out))
 }
 
 async fn drive_loop(
