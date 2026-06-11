@@ -98,6 +98,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # Build FIRST in its own step so the compile time isn't counted against
+      # the health-poll window below (a cold `cargo run` was still compiling
+      # past the 60s poll → curl never connected). The boot step then reuses
+      # the built artifact and serves within a second.
+      - name: Build server binary
+        run: cargo build -p openlet-server --bin openlet-server
+
       # Boot the server (mock provider, ephemeral) and dump its OpenAPI doc,
       # then regenerate the TS schema and fail if it diverges from the
       # committed copy — prevents the TUI contract-mismatch class of bug.
@@ -105,7 +112,7 @@ jobs:
         run: |
           OPENLET_BIND=127.0.0.1:8787 \
           OPENLET_DATA_DIR="$(mktemp -d)" \
-            cargo run -p openlet-server -- serve &
+            cargo run -p openlet-server --bin openlet-server -- serve &
           SERVER_PID=$!
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1 && break
