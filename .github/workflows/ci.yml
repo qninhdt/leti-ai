@@ -54,7 +54,12 @@ jobs:
         run: cargo deny check
 
       - name: Supply-chain — cargo audit
-        run: cargo audit
+        run: |
+          # The cargo cache can leave a non-empty, non-git ~/.cargo/advisory-db
+          # that cargo-audit refuses to clone into ("Refusing to initialize the
+          # non-empty directory"). Clear it so audit fetches a fresh DB.
+          rm -rf ~/.cargo/advisory-db
+          cargo audit
 
   tui:
     name: tui (typecheck / test / pack)
