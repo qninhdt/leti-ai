@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
-use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
+use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore, ByteStream};
 use openlet_core::error::ArtifactError;
 use openlet_core::types::session::SessionId;
 
@@ -113,6 +113,25 @@ impl ArtifactStore for LocalFsArtifactStore {
             _ => ArtifactError::Io(e.to_string()),
         })?;
         Ok(Bytes::from(bytes))
+    }
+
+    async fn get_stream(&self, r: &ArtifactRef) -> Result<ByteStream, ArtifactError> {
+        use futures::StreamExt;
+        use tokio_util::io::ReaderStream;
+
+        validate_key(&r.key)?;
+        let path = self.key_path(r.session_id, &r.key);
+        let file = tokio::fs::File::open(&path)
+            .await
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::NotFound => ArtifactError::NotFound(r.key.clone()),
+                _ => ArtifactError::Io(e.to_string()),
+            })?;
+        // Stream the file in chunks rather than buffering the whole body —
+        // the reference impl for cloud streaming stores.
+        let stream =
+            ReaderStream::new(file).map(|res| res.map_err(|e| ArtifactError::Io(e.to_string())));
+        Ok(stream.boxed())
     }
 
     async fn list(&self, session: SessionId) -> Result<Vec<ArtifactRef>, ArtifactError> {

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use openlet_adapters::localfs::LocalFsArtifactStore;
 use openlet_adapters::sqlite::SqliteMemoryStore;
 use openlet_adapters::sqlite::open_in_memory;
-use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
+use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore, PresignOp};
 use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::types::agent::AgentId;
 
@@ -83,4 +83,43 @@ async fn get_missing_returns_not_found() {
     };
     let err = store.get(&r).await.unwrap_err();
     matches!(err, openlet_core::error::ArtifactError::NotFound(_));
+}
+
+#[tokio::test]
+async fn get_stream_round_trips_bytes() {
+    use futures::StreamExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_in_memory().await.unwrap();
+    let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
+    let mem = SqliteMemoryStore::new(pool);
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
+
+    let payload = Bytes::from_static(b"streamed body across chunks");
+    let r = store.put(session, "s.txt", payload.clone()).await.unwrap();
+
+    // Streamed read must reassemble to the same bytes as buffered get.
+    let mut stream = store.get_stream(&r).await.expect("get_stream");
+    let mut collected = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        collected.extend_from_slice(&chunk.expect("chunk ok"));
+    }
+    assert_eq!(Bytes::from(collected), payload);
+}
+
+#[tokio::test]
+async fn presign_is_none_for_local() {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = open_in_memory().await.unwrap();
+    let store = LocalFsArtifactStore::new(dir.path().to_path_buf(), pool.clone());
+    let mem = SqliteMemoryStore::new(pool);
+    let session = mem.create_session(AgentId::new(), None).await.unwrap();
+
+    let r = store
+        .put(session, "p.txt", Bytes::from_static(b"x"))
+        .await
+        .unwrap();
+    // Local filesystem has no presigned-URL capability.
+    assert!(store.presign(&r, PresignOp::Get).is_none());
+    assert!(store.presign(&r, PresignOp::Put).is_none());
 }
