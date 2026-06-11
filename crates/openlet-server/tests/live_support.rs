@@ -91,6 +91,7 @@ impl LiveServer {
             None,
             false,
             Vec::new(),
+            false,
         )
         .await
     }
@@ -110,6 +111,7 @@ impl LiveServer {
             None,
             false,
             Vec::new(),
+            false,
         )
         .await
     }
@@ -179,6 +181,7 @@ impl LiveServer {
             compaction_window,
             enable_subagents,
             scripted_turns,
+            true,
         )
         .await
     }
@@ -193,6 +196,7 @@ impl LiveServer {
         compaction_window: Option<u32>,
         enable_subagents: bool,
         scripted_turns: Vec<ScriptedTurn>,
+        tier_scenario: bool,
     ) -> Self {
         let (data_root, owned_tempdir) = match data_dir {
             Some(d) => (d, None),
@@ -224,12 +228,12 @@ impl LiveServer {
         let events: Arc<dyn openlet_core::adapters::EventSink> =
             Arc::new(BroadcastBus::with_repo(event_repo));
 
-        // Tier switch. Live enabled (key + flag) → REAL OpenRouter. Otherwise,
-        // a scenario boot (non-empty script) → scripted mock driving the SAME
-        // body; an empty script keeps the OpenRouterProvider pointed at the
-        // caller's `base_url` (the `with_mock` MockOpenAiService path).
-        let provider: Arc<dyn ModelProvider> = if scenario_live_enabled() || scripted_turns.is_empty()
-        {
+        // Tier switch. `tier_scenario` distinguishes the two-tier scenario
+        // boots (for_scenario*/with_openrouter*) from the `with_mock` path
+        // (which always uses OpenRouterProvider pointed at a MockOpenAiService
+        // URL). For scenario boots: live (key + flag) → REAL OpenRouter; else
+        // the scripted mock driving the SAME body.
+        let provider: Arc<dyn ModelProvider> = if !tier_scenario || scenario_live_enabled() {
             Arc::new(OpenRouterProvider::new(
                 base_url.to_string(),
                 api_key,
@@ -748,7 +752,7 @@ fn is_terminal_status(json: &Value) -> bool {
 // the same wiring a tier-2 pass exercises.
 
 use openlet_core::adapters::model_provider::{
-    ChatDelta, ChatRequest, ChatStream, FinishReason, ModelPricing,
+    ChatDelta, ChatRequest, ChatStream, FinishReason, ModelInfo, ModelPricing,
 };
 use openlet_core::error::ProviderError;
 use openlet_core::types::event::Usage;
@@ -838,6 +842,24 @@ impl ModelProvider for ScriptedProvider {
             cached_input_per_mtok: None,
             cache_write_per_mtok: None,
         })
+    }
+
+    /// A small fixed catalog so the tier-1 models test exercises the
+    /// `GET /v1/models` route serialization (real plumbing) — distinct from the
+    /// trait default (`[]`). The live tier returns the real OpenRouter catalog.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        Ok(vec![
+            ModelInfo {
+                id: "mock/model-small".into(),
+                display_name: Some("Mock Small".into()),
+                context_length: Some(8192),
+            },
+            ModelInfo {
+                id: "mock/model-large".into(),
+                display_name: Some("Mock Large".into()),
+                context_length: Some(128_000),
+            },
+        ])
     }
 }
 

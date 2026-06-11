@@ -22,32 +22,20 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-/// Returns true only when the operator has explicitly opted into live
-/// traffic AND a key is present. Keeps both the default suite and a bare
-/// `--ignored` run on a keyless box from making network calls.
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn};
 
 /// `GET /v1/models` against the real OpenRouter catalog returns a
 /// non-empty, well-formed list. This is the cheapest live check — a free
 /// catalog GET, no token spend.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn live_models_catalog_nonempty() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-2 (live) hits the real OpenRouter catalog; tier-1 (mock) returns the
+    // ScriptedProvider's fixed catalog. Either way `/v1/models` must serialize
+    // a non-empty list of id-bearing entries — this tests the route plumbing on
+    // both tiers (no token spend on either).
+    let srv = LiveServer::for_scenario(Vec::new()).await;
     let models = srv.models().await;
-    assert!(
-        !models.is_empty(),
-        "real OpenRouter catalog should be non-empty"
-    );
+    assert!(!models.is_empty(), "catalog should be non-empty");
     // Every entry must carry an id — the one field the route guarantees.
     for m in &models {
         assert!(
@@ -62,13 +50,12 @@ async fn live_models_catalog_nonempty() {
 /// invariants hold against a real provider — message/part/delta ordering
 /// and a terminal idle status. Asserts shape, not the model's exact words.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn live_single_turn_streams_real_completion() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-2 (live) streams a real one-word completion; tier-1 (mock) streams a
+    // scripted text turn. Both must produce the same BE→FE invariants:
+    // message_created → part_delta → terminal session_status, with non-empty
+    // assistant text. Asserts shape, not exact words.
+    let srv = LiveServer::for_scenario(vec![text_turn("ok")]).await;
 
     let sid = srv.create_session().await;
     // Tiny prompt → tiny response. Keeps token spend negligible.
