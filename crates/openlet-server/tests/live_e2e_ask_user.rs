@@ -20,12 +20,7 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
     let start = std::time::Instant::now();
@@ -43,15 +38,28 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// the SSE stream for the parked `question.requested`, answers with a specific
 /// option index, and then asserts the model wrote the option WE selected — the
 /// end-to-end proof that the answer routed back into the model's reasoning.
+///
+/// Two-tier: tier-2 (live) lets a real model ask then act; tier-1 (mock)
+/// scripts ask_user→write. On BOTH tiers the ask_user tool genuinely parks the
+/// turn on the rendezvous, the test answers concurrently, and the resumed turn
+/// writes the choice — so the park→answer→resume wiring + the single-use 404
+/// replay guard are exercised identically.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_asks_user_then_acts_on_the_answer() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: ask_user (options red=0, blue=1) parks the turn; after the
+    // test answers [1], the runtime feeds the selection back and the scripted
+    // write records "blue". The real ask_user + write tools run on both tiers.
+    let ask_args = r#"{"header":"color","question":"Pick a color","options":[{"label":"red"},{"label":"blue"}]}"#;
+    let script = vec![
+        tool_turn("q1", "ask_user", ask_args),
+        tool_turn(
+            "w1",
+            "write",
+            r#"{"path":"choice.txt","content":"blue\n"}"#,
+        ),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
     let choice_file = ws.join("choice.txt");
 
