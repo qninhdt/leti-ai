@@ -1,0 +1,123 @@
+//! Gated real-OpenRouter plan-mode E2E — the profile-swap state-machine proof.
+//!
+//! `enter_plan_mode` / `exit_plan_mode` are the only path a model has to flip
+//! the session's active agent profile: enter switches to the read-only `plan`
+//! profile and emits `PlanModeEntered`; exit carries the model's frozen plan
+//! text, restores the prior profile, emits `PlanModeExited`, and persists a
+//! durable `Part::Plan` for audit/replay. This test drives a real model
+//! through enter→(produce plan)→exit and asserts the persisted artifact — only
+//! a model that actually called both tools in sequence produces it.
+//!
+//! Gated identically to the other live tiers (`#[ignore]` +
+//! `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`).
+//!
+//! Run:
+//!   OPENLET_LIVE_E2E=1 cargo test -p openlet-server --test \
+//!     live_e2e_plan_mode -- --ignored
+
+use std::time::Duration;
+
+mod live_support;
+use live_support::LiveServer;
+
+use openlet_core::types::part::Part;
+use openlet_core::types::session::SessionId;
+
+fn live_enabled() -> bool {
+    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
+        && std::env::var("OPENROUTER_API_KEY").is_ok()
+}
+
+/// Scan persisted parts for a `Part::Plan`, returning its text. The plan is
+/// durable (persisted by `exit_plan_mode`), so this reads straight from the
+/// same sqlite the server writes — race-free vs the transient SSE stream.
+async fn persisted_plan_text(srv: &LiveServer, sid: &str) -> Option<String> {
+    let session = SessionId(sid.parse().expect("uuid"));
+    let memory = srv.memory();
+    let messages = memory.list_messages(session).await.unwrap_or_default();
+    for msg in messages {
+        let parts = memory.list_parts(session, msg.id).await.unwrap_or_default();
+        for p in parts {
+            if let Part::Plan { plan, .. } = p {
+                return Some(plan);
+            }
+        }
+    }
+    None
+}
+
+/// Tell the model to enter plan mode, draft a short plan containing a
+/// distinctive sentinel, then exit plan mode submitting that plan. Assert a
+/// durable `Part::Plan` was persisted carrying the sentinel — proving the full
+/// enter→exit state machine ran and froze the plan for operator review.
+#[tokio::test]
+#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
+async fn real_model_enters_and_exits_plan_mode() {
+    if !live_enabled() {
+        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
+        return;
+    }
+
+    let srv = LiveServer::with_openrouter().await;
+    let sid = srv.create_session().await;
+    // Danger mode so the `agent:enter_plan_mode` / `agent:exit_plan_mode`
+    // permission checks auto-allow instead of parking on an Ask (no human is
+    // here to approve them).
+    assert_eq!(
+        srv.set_mode(&sid, "danger").await,
+        reqwest::StatusCode::OK,
+        "set danger mode"
+    );
+
+    // Distinctive sentinel the model must carry into the plan text, so the
+    // assertion can't false-match generic prose.
+    let sentinel = "PLAN_SENTINEL_7731";
+    let prompt = format!(
+        "First call the enter_plan_mode tool. Then draft a SHORT three-step \
+         plan for building a TODO app; the plan text MUST include the exact \
+         token `{sentinel}` somewhere. Then call the exit_plan_mode tool, \
+         passing that full plan text as the `plan` argument. After exiting, \
+         reply DONE. Do not skip either tool call."
+    );
+    let ack = srv.prompt(&sid, &prompt).await;
+    assert_eq!(ack, reqwest::StatusCode::ACCEPTED, "prompt ack");
+
+    // enter → model drafts → exit is a multi-step tool sequence; bounded.
+    let frames = srv
+        .collect_session_events(&sid, Duration::from_secs(120))
+        .await;
+
+    // Primary proof: a durable Part::Plan was persisted carrying the sentinel.
+    let mut plan = persisted_plan_text(&srv, &sid).await;
+    // Small grace for the final persist to settle after terminal status.
+    if plan.is_none() {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        plan = persisted_plan_text(&srv, &sid).await;
+    }
+    let plan = plan.expect("exit_plan_mode must persist a durable Part::Plan");
+    assert!(
+        plan.contains(sentinel),
+        "the persisted plan must carry the sentinel the model was told to \
+         include (proves the model's plan text, not an empty/synthetic part). \
+         Plan was: {plan:?}"
+    );
+
+    // Corroborate via the event stream: both plan-mode transitions fired.
+    // EventDto uses snake_case kinds (`plan_mode_entered`/`plan_mode_exited`).
+    let kinds: Vec<String> = frames
+        .iter()
+        .filter_map(|f| {
+            f.get("kind")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .collect();
+    assert!(
+        kinds.iter().any(|k| k == "plan_mode_entered"),
+        "expected a plan_mode_entered event; saw {kinds:?}"
+    );
+    assert!(
+        kinds.iter().any(|k| k == "plan_mode_exited"),
+        "expected a plan_mode_exited event; saw {kinds:?}"
+    );
+}
