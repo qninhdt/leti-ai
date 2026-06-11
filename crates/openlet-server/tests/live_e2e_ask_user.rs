@@ -52,11 +52,7 @@ async fn real_model_asks_user_then_acts_on_the_answer() {
     let ask_args = r#"{"header":"color","question":"Pick a color","options":[{"label":"red"},{"label":"blue"}]}"#;
     let script = vec![
         tool_turn("q1", "ask_user", ask_args),
-        tool_turn(
-            "w1",
-            "write",
-            r#"{"path":"choice.txt","content":"blue\n"}"#,
-        ),
+        tool_turn("w1", "write", r#"{"path":"choice.txt","content":"blue\n"}"#),
         text_turn("DONE"),
     ];
     let srv = LiveServer::for_scenario(script).await;

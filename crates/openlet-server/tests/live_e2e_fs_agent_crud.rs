@@ -48,11 +48,7 @@ async fn real_model_does_full_fs_crud() {
     // Tier-1 script: the full CRUD tool sequence. The write creates the file,
     // edit mutates it, bash(rm) deletes it — all real tools, both tiers.
     let script = vec![
-        tool_turn(
-            "w1",
-            "write",
-            r#"{"path":"notes.txt","content":"alpha\n"}"#,
-        ),
+        tool_turn("w1", "write", r#"{"path":"notes.txt","content":"alpha\n"}"#),
         tool_turn("r1", "read", r#"{"path":"notes.txt"}"#),
         tool_turn(
             "e1",

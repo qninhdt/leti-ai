@@ -124,10 +124,11 @@ impl LiveServer {
         Self::with_openrouter_inner(None, false, Vec::new(), None).await
     }
 
-    /// Two-tier scenario boot: tier-2 (real OpenRouter) when `OPENLET_LIVE_E2E=1`
-    /// + a key is present, else tier-1 (the scripted mock playing `script`).
-    /// The SAME scenario body (drive + on-disk assert) runs on both tiers; only
-    /// the LLM backend differs. `script` is the tier-1 tool/text turn sequence.
+    /// Two-tier scenario boot. Tier-2 (real OpenRouter) runs when
+    /// `OPENLET_LIVE_E2E=1` and a key is present; otherwise tier-1 (the scripted
+    /// mock playing `script`). The SAME scenario body (drive + on-disk assert)
+    /// runs on both tiers; only the LLM backend differs. `script` is the tier-1
+    /// tool/text turn sequence.
     pub async fn for_scenario(script: Vec<ScriptedTurn>) -> Self {
         Self::with_openrouter_inner(None, false, script, None).await
     }
@@ -199,6 +200,7 @@ impl LiveServer {
 
     /// `data_dir`: `Some` → on-disk sqlite reused across boots (persistence
     /// test); `None` → ephemeral tempdir + in-memory sqlite (fast default).
+    #[allow(clippy::too_many_arguments)]
     async fn boot(
         base_url: &str,
         api_key: Option<SecretString>,

@@ -57,9 +57,7 @@ async fn real_model_enters_and_exits_plan_mode() {
     // Tier-1 script: enter plan mode, then exit submitting a plan carrying the
     // sentinel. The exit_plan_mode tool persists the Part::Plan + fires events
     // on both tiers, so this is not a tautology — it drives the same wiring.
-    let exit_args = format!(
-        r#"{{"plan":"1. scaffold\n2. {PLAN_SENTINEL}\n3. ship"}}"#
-    );
+    let exit_args = format!(r#"{{"plan":"1. scaffold\n2. {PLAN_SENTINEL}\n3. ship"}}"#);
     let script = vec![
         tool_turn("p1", "enter_plan_mode", "{}"),
         tool_turn("p2", "exit_plan_mode", &exit_args),
