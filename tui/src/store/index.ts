@@ -24,6 +24,40 @@ export type ViewKind =
   | { kind: "plugins" }
   | { kind: "help" };
 
+// Overlay stack entries. Each carries the payload its dialog needs to resolve
+// itself — notably the permission entry MUST carry `askId` so a reply targets
+// the exact request, even with multiple permissions pending (pendingPermissions
+// is keyed by askId). A bare kind would make ≥2 concurrent asks ambiguous.
+export type OverlayEntry =
+  | { kind: "permission"; askId: string }
+  | { kind: "agent_picker" }
+  | { kind: "session_picker" }
+  | { kind: "help" }
+  | { kind: "plugins" }
+  | { kind: "command_palette" };
+
+export type OverlayKind = OverlayEntry["kind"];
+
+// Transition shim: map the legacy modal ViewKinds (still emitted by the slash
+// command registry via CommandContext.setView) onto overlay entries. Removed
+// once commands push overlays directly (Phase 5).
+function viewToOverlay(view: ViewKind): OverlayEntry | null {
+  switch (view.kind) {
+    case "agent_picker":
+      return { kind: "agent_picker" };
+    case "session_picker":
+      return { kind: "session_picker" };
+    case "help":
+      return { kind: "help" };
+    case "plugins":
+      return { kind: "plugins" };
+    case "permission":
+      return { kind: "permission", askId: view.askId };
+    default:
+      return null;
+  }
+}
+
 export interface PartView extends PartDto {
   buffer: string;
   reasoning_buffer: string;
@@ -66,9 +100,18 @@ export interface State {
   /// banner and hint to the user that writes are blocked until exit.
   planMode: Record<string, boolean>;
   view: ViewKind;
+  /// Overlay stack rendered atop the active route (dialogs, pickers, command
+  /// palette). Top of stack = last element. Replaces the view-swap model for
+  /// modal surfaces; `view` is retained only for the chat/route distinction
+  /// during the Phase 5 transition.
+  overlays: OverlayEntry[];
   applyEvent: (ev: EventDto) => void;
   setConn: (status: ConnState, detail?: { attempt?: number; lastEventId?: number }) => void;
   setView: (view: ViewKind) => void;
+  pushOverlay: (entry: OverlayEntry) => void;
+  popOverlay: () => void;
+  removeOverlay: (predicate: (entry: OverlayEntry) => boolean) => void;
+  clearOverlays: () => void;
   setAgents: (agents: AgentDto[]) => void;
   setPlugins: (plugins: PluginInfoDto[]) => void;
   setSessions: (sessions: SessionDto[]) => void;
@@ -187,6 +230,7 @@ export const useStore = create<State>((set) => ({
   clientError: null,
   planMode: {},
   view: { kind: "chat" },
+  overlays: [],
 
   setConn: (status, detail) =>
     set((s) => ({
@@ -197,7 +241,25 @@ export const useStore = create<State>((set) => ({
       },
     })),
 
-  setView: (view) => set({ view }),
+  // Transition shim: the slash-command registry still calls setView with modal
+  // kinds via CommandContext. Map those onto overlay pushes; only the chat kind
+  // stays a real route. Removed once commands push overlays directly (Phase 5).
+  setView: (view) =>
+    set((s) => {
+      const overlay = viewToOverlay(view);
+      if (!overlay) return { view };
+      const already = s.overlays.some(
+        (e) =>
+          e.kind === overlay.kind &&
+          (e.kind !== "permission" || e.askId === (overlay as { askId?: string }).askId),
+      );
+      return already ? {} : { overlays: s.overlays.concat(overlay) };
+    }),
+  pushOverlay: (entry) => set((s) => ({ overlays: s.overlays.concat(entry) })),
+  popOverlay: () => set((s) => ({ overlays: s.overlays.slice(0, -1) })),
+  removeOverlay: (predicate) =>
+    set((s) => ({ overlays: s.overlays.filter((e) => !predicate(e)) })),
+  clearOverlays: () => set({ overlays: [] }),
   setAgents: (agents) => set({ agents }),
   setPlugins: (plugins) => set({ plugins }),
   setSessions: (sessions) =>
@@ -285,19 +347,34 @@ export const useStore = create<State>((set) => ({
         }
 
         case "permission_asked": {
+          // Push a permission overlay carrying its askId so the reply targets
+          // the exact request. Multiple permissions can be pending at once
+          // (pendingPermissions is keyed by askId); a bare overlay kind would
+          // make ≥2 concurrent asks ambiguous. Skip a duplicate push if this
+          // askId is already on the stack (idempotent re-delivery).
+          const already = s.overlays.some(
+            (e) => e.kind === "permission" && e.askId === ev.request.ask_id,
+          );
           return {
             pendingPermissions: { ...s.pendingPermissions, [ev.request.ask_id]: ev.request },
-            view: { kind: "permission", askId: ev.request.ask_id },
+            overlays: already
+              ? s.overlays
+              : s.overlays.concat({ kind: "permission", askId: ev.request.ask_id }),
           };
         }
 
         case "permission_resolved": {
+          // Resolve BY askId, from anywhere in the stack — not a blind pop.
+          // An async resolve must not dismiss whatever overlay happens to be on
+          // top (e.g. a help overlay opened above the permission).
           const next = { ...s.pendingPermissions };
           delete next[ev.ask_id];
-          const view: ViewKind = s.view.kind === "permission" && s.view.askId === ev.ask_id
-            ? { kind: "chat" }
-            : s.view;
-          return { pendingPermissions: next, view };
+          return {
+            pendingPermissions: next,
+            overlays: s.overlays.filter(
+              (e) => !(e.kind === "permission" && e.askId === ev.ask_id),
+            ),
+          };
         }
 
         case "plugin_error": {

@@ -11,3 +11,10 @@ export function formatUsd(value: string | number | undefined | null): string {
 export function shortId(id: string): string {
   return id.slice(0, 8);
 }
+
+// Compact token count the way OpenCode's prompt hint shows it: raw under 1000,
+// otherwise one-decimal "k" (e.g. 1234 -> "1.2k"). Used in the editor hint row.
+export function formatTokens(tokens: number): string {
+  if (tokens < 1000) return String(tokens);
+  return `${(tokens / 1000).toFixed(1)}k`;
+}

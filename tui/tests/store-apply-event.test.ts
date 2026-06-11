@@ -60,7 +60,7 @@ describe("store applyEvent", () => {
     expect(part?.status).toBe("complete");
   });
 
-  it("permission_asked sets pending + flips view to permission", () => {
+  it("permission_asked sets pending + pushes a permission overlay carrying askId", () => {
     const s = useStore.getState();
     s.applyEvent({
       kind: "permission_asked",
@@ -74,13 +74,31 @@ describe("store applyEvent", () => {
     });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeDefined();
-    expect(state.view.kind).toBe("permission");
+    const top = state.overlays[state.overlays.length - 1];
+    expect(top).toEqual({ kind: "permission", askId: "ask-1" });
   });
 
-  it("permission_resolved clears pending + restores chat view", () => {
+  it("permission_resolved clears pending + removes the matching overlay by askId", () => {
     useStore.getState().applyEvent({ kind: "permission_resolved", ask_id: "ask-1", decision: "allow" });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeUndefined();
-    expect(state.view.kind).toBe("chat");
+    expect(state.overlays.some((e) => e.kind === "permission" && e.askId === "ask-1")).toBe(false);
+  });
+
+  it("resolves the correct permission when two are pending (no wrong-overlay dismissal)", () => {
+    const s = useStore.getState();
+    const ask = (id: string): EventDto => ({
+      kind: "permission_asked",
+      session_id: "sid-5",
+      request: { ask_id: id, session_id: "sid-5", permission: "edit:foo", tool_name: "edit" },
+    });
+    s.applyEvent(ask("ask-a"));
+    s.applyEvent(ask("ask-b"));
+    // Resolve the FIRST (lower in the stack) — a blind top-of-stack pop would
+    // wrongly drop ask-b's overlay instead.
+    s.applyEvent({ kind: "permission_resolved", ask_id: "ask-a", decision: "allow" });
+    const overlays = useStore.getState().overlays;
+    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-a")).toBe(false);
+    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-b")).toBe(true);
   });
 });
