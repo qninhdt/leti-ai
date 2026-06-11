@@ -341,3 +341,39 @@ async fn concurrent_durable_publishes_broadcast_in_event_id_order() {
         "durable replay must contain every event in id order"
     );
 }
+
+#[tokio::test]
+async fn publish_routed_default_delegates_to_publish() {
+    use openlet_core::adapters::event_sink::RoutingKey;
+
+    let (bus, session) = make_bus_with_session().await;
+    let mut rx = bus.subscribe(EventFilter::default());
+
+    // Local bus ignores the routing key — publish_routed must behave
+    // exactly like publish (durable id assigned, broadcast to all).
+    bus.publish_routed(
+        session_status_event(session),
+        Persistence::Durable,
+        RoutingKey {
+            workspace: Some("ws-1".into()),
+            user: Some("u-1".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let delivered = rx.recv().await.unwrap();
+    assert!(
+        delivered.event_id.is_some(),
+        "routed durable publish must still carry an event_id"
+    );
+    let replay = bus.replay_since(session, 0).await.unwrap();
+    assert_eq!(replay.len(), 1, "routed event must be durably persisted");
+}
+
+#[tokio::test]
+async fn local_bus_is_best_effort() {
+    use openlet_core::adapters::event_sink::DeliverySemantics;
+    let bus = BroadcastBus::new();
+    assert_eq!(bus.delivery_semantics(), DeliverySemantics::BestEffort);
+}

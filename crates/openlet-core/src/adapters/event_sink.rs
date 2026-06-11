@@ -14,6 +14,30 @@ pub enum Persistence {
     Transient,
 }
 
+/// Where a cloud event bus should route an event. The local in-process
+/// broadcast bus ignores this (every subscriber sees every event); a
+/// Kafka/Redis impl uses it to partition per workspace/user so a tenant
+/// only receives its own stream. All fields optional — `None` means
+/// "unrouted / broadcast to all", which is the local behavior.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RoutingKey {
+    pub workspace: Option<String>,
+    pub user: Option<String>,
+}
+
+/// Delivery guarantee a sink offers. The local broadcast bus is
+/// best-effort (a lagging subscriber drops frames); a durable cloud bus
+/// can offer at-least-once. Consumers that need exactly-once dedupe on
+/// `event_id` regardless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliverySemantics {
+    /// Frames may be dropped to a slow subscriber (in-proc broadcast).
+    BestEffort,
+    /// Every event is delivered at least once (durable cloud bus); the
+    /// consumer must dedupe on `event_id`.
+    AtLeastOnce,
+}
+
 /// Wraps an `AgentEvent` with the durable autoincrement id assigned at
 /// publish time (when the event was persisted to the `events` table).
 /// SSE handlers use the id as the `Last-Event-ID` resume cursor.
@@ -47,6 +71,26 @@ pub trait EventSink: Send + Sync + 'static {
     /// `event_id`; ordering between transient and durable events is
     /// not guaranteed.
     async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError>;
+
+    /// Publish with an explicit routing key. The default ignores the key
+    /// and delegates to [`Self::publish`] (the local broadcast bus
+    /// fans out to every subscriber). A cloud bus overrides this to
+    /// partition delivery per workspace/user.
+    async fn publish_routed(
+        &self,
+        ev: AgentEvent,
+        persistence: Persistence,
+        _routing: RoutingKey,
+    ) -> Result<(), EventError> {
+        self.publish(ev, persistence).await
+    }
+
+    /// The delivery guarantee this sink offers. Default is
+    /// [`DeliverySemantics::BestEffort`] (the in-process broadcast bus);
+    /// a durable cloud bus overrides to [`DeliverySemantics::AtLeastOnce`].
+    fn delivery_semantics(&self) -> DeliverySemantics {
+        DeliverySemantics::BestEffort
+    }
 
     /// Returns a fresh broadcast receiver. The caller filters as it reads.
     fn subscribe(&self, filter: EventFilter) -> broadcast::Receiver<DeliveredEvent>;
