@@ -22,26 +22,19 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn};
 
 /// One real text turn; assert a `step_finished` frame carries a non-null,
 /// parseable, non-negative `cost_decimal_str`. That field is `None` unless
 /// the gateway's `usage.cost` was plumbed through — so a populated value is
 /// the end-to-end proof of the fix for a model with no static pricing row.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_turn_reports_gateway_cost() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-2 (live) proves the gateway's usage.cost flows through; tier-1
+    // (mock) proves the same SSE plumbing with the ScriptedProvider's pricing +
+    // usage. Both must surface a parseable non-negative cost_decimal_str on a
+    // step_finished frame — that field is None unless cost was plumbed through.
+    let srv = LiveServer::for_scenario(vec![text_turn("hello there friend")]).await;
     let sid = srv.create_session().await;
 
     // Pure text — no tools. Keep the spend tiny.
