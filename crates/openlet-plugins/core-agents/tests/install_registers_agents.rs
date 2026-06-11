@@ -60,14 +60,25 @@ async fn core_agents_plugin_registers_general_and_indexer() {
     let g = registry.get(&general).expect("general present");
     let i = registry.get(&indexer).expect("indexer present");
     let p = registry.get(&plan).expect("plan present");
-    assert_eq!(g.tool_allowlist.len(), 8);
-    assert_eq!(i.tool_allowlist.len(), 3);
-    // plan agent allowlist: read, list, grep, glob, web_search,
-    // web_fetch, enter_plan_mode, exit_plan_mode
-    assert_eq!(p.tool_allowlist.len(), 8);
-    assert!(p.tool_allowlist.iter().any(|t| t == "read"));
-    assert!(p.tool_allowlist.iter().any(|t| t == "exit_plan_mode"));
-    assert!(!p.tool_allowlist.iter().any(|t| t == "write"));
+
+    // Semantic allowlist assertions — what each agent's role REQUIRES,
+    // not a count that mirrors the source constant (a len() check passes
+    // even if the wrong tools are swapped in/out).
+    let has = |def: &openlet_core::agent::AgentDefinition, t: &str| {
+        def.tool_allowlist.iter().any(|x| x == t)
+    };
+
+    // general: full write-capable catalog.
+    assert!(has(g, "read") && has(g, "write") && has(g, "edit") && has(g, "bash"));
+
+    // indexer: read-only — must have read tools, must NOT mutate.
+    assert!(has(i, "read") && has(i, "list"));
+    assert!(!has(i, "write") && !has(i, "edit") && !has(i, "bash"));
+
+    // plan: read + plan-mode toggles, but never write/edit/bash (it
+    // proposes a plan, it doesn't execute changes).
+    assert!(has(p, "read") && has(p, "enter_plan_mode") && has(p, "exit_plan_mode"));
+    assert!(!has(p, "write") && !has(p, "edit") && !has(p, "bash"));
     assert!(!g.cacheable_prompt().is_empty());
     assert!(!p.cacheable_prompt().is_empty());
 }

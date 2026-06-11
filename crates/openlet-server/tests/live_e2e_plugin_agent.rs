@@ -8,7 +8,6 @@
 //! plugins view + agent picker consume it.
 
 use openlet_test_mock_provider::MockOpenAiService;
-use serde_json::Value;
 
 mod live_support;
 use live_support::LiveServer;
@@ -57,10 +56,17 @@ async fn plugin_health_found_and_not_found() {
         .get_with_status(&format!("/v1/plugin/{id}/health"))
         .await;
     assert_eq!(status, reqwest::StatusCode::OK, "health of {id}");
+    // The found/not-found contract is the real assertion here (registry
+    // presence → 200, absence → 404). `healthy` is currently a STATIC
+    // field the handler hardcodes — there is no real liveness probe on the
+    // Plugin trait yet — so asserting `healthy==true` would be tautological.
+    // Instead assert the handler routed + echoed the queried id, which
+    // exercises the path. If a real `health()` probe lands, add a fixture
+    // plugin that reports unhealthy and assert the false case here.
     assert_eq!(
-        body["healthy"],
-        Value::Bool(true),
-        "plugin {id} should be healthy"
+        body["id"].as_str(),
+        Some(id.as_str()),
+        "health response must echo the queried plugin id; got {body:?}"
     );
 
     // Unknown plugin → 404 with the documented slug.
