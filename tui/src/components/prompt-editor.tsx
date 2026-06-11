@@ -11,6 +11,7 @@
 import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 
 import { theme } from "../theme/index.js";
+import { useStore } from "../store/index.js";
 import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { createPromptSubmit } from "../render/use-prompt-submit.js";
@@ -158,6 +159,13 @@ export function PromptEditor() {
   }
 
   function onKeyDown(event: KeyEvent): void {
+    if (event.name === "k" && event.ctrl) {
+      // ⌘K / ctrl+k opens the command palette overlay; the editor blurs (the
+      // overlay-open effect) so the palette owns the keyboard.
+      event.preventDefault();
+      useStore.getState().pushOverlay({ kind: "command_palette" });
+      return;
+    }
     if (event.name === "up" && (input?.cursorOffset ?? 0) === 0) {
       event.preventDefault();
       recallHistory(-1);

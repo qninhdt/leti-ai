@@ -19,13 +19,5 @@
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*", "tests/**/*"],
-  "exclude": [
-    "src/components/status-bar.tsx",
-    "src/views/agent-picker.tsx",
-    "src/views/chat-view.tsx",
-    "src/views/help-view.tsx",
-    "src/views/permission-modal.tsx",
-    "src/views/plugins-view.tsx",
-    "src/views/session-picker.tsx"
-  ]
+  "exclude": []
 }

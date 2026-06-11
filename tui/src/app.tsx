@@ -10,6 +10,7 @@ import { Show, createMemo } from "solid-js";
 import { HomeRoute } from "./routes/home-route.js";
 import { SessionRoute } from "./routes/session-route.js";
 import { OverlayHost } from "./render/overlay-host.js";
+import { ToastHost } from "./render/toast-host.js";
 import { useKeyRouter } from "./render/key-router.js";
 import { useBootstrap } from "./render/use-bootstrap.js";
 import { useStoreSelector } from "./render/store-bridge.js";
@@ -38,6 +39,7 @@ export function App() {
           <SessionRoute width={size().width} />
         </Show>
       </box>
+      <ToastHost />
       <OverlayHost />
     </box>
   );
