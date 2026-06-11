@@ -59,6 +59,9 @@ pub struct LiveServer {
     // hardcodes capabilities to `{}` → `user_questions=false`, which makes
     // `ask_user` error synchronously instead of parking).
     default_agent_id: openlet_core::types::agent::AgentId,
+    // The artifact store the server uses. Exposed so the todo test can read
+    // back the persisted `todos.json` the `todo` tool writes.
+    artifacts: Arc<dyn openlet_core::adapters::ArtifactStore>,
     serve_task: JoinHandle<()>,
     // `None` when the data dir is caller-owned (the persistence test passes
     // its own `TempDir` so the same dir survives a boot→drop→reboot cycle);
@@ -293,13 +296,12 @@ impl LiveServer {
             agent_registry.insert(def).expect("insert general agent");
         }
 
+        let artifacts: Arc<dyn openlet_core::adapters::ArtifactStore> =
+            Arc::new(LocalFsArtifactStore::new(artifact_root, pool.clone()));
         let state = openlet_server::AppStateBuilder::new()
             .provider(provider)
             .memory(memory.clone())
-            .artifacts(Arc::new(LocalFsArtifactStore::new(
-                artifact_root,
-                pool.clone(),
-            )))
+            .artifacts(artifacts.clone())
             .tools(Arc::new(LocalShellToolExecutor::new()))
             .tool_registry(tool_registry)
             .events(events)
@@ -346,6 +348,7 @@ impl LiveServer {
             workspace_root,
             memory,
             default_agent_id,
+            artifacts,
             serve_task,
             _tempdir: owned_tempdir,
         }
@@ -408,6 +411,22 @@ impl LiveServer {
             .await
             .expect("answer question")
             .status()
+    }
+
+    /// Read a persisted artifact by key from the same store the server uses,
+    /// returning its bytes (or `None` if absent). The local store resolves by
+    /// `(session, key)` and ignores the ref's `size`, so a minimal ref works.
+    /// Used by the todo workflow test to read back `todos.json`.
+    pub async fn read_artifact(&self, session_id: &str, key: &str) -> Option<Vec<u8>> {
+        use openlet_core::adapters::artifact_store::ArtifactRef;
+        let session = openlet_core::types::session::SessionId(session_id.parse().expect("uuid"));
+        let r = ArtifactRef {
+            session_id: session,
+            key: key.to_string(),
+            size: 0,
+            mime: None,
+        };
+        self.artifacts.get(&r).await.ok().map(|b| b.to_vec())
     }
 
     /// Open the session SSE stream and read frames until a `question.requested`
