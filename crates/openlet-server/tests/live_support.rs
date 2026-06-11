@@ -17,11 +17,14 @@
 #![allow(dead_code)]
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::stream::{self, StreamExt};
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
@@ -87,6 +90,7 @@ impl LiveServer {
             None,
             None,
             false,
+            Vec::new(),
         )
         .await
     }
@@ -105,6 +109,7 @@ impl LiveServer {
             Some(data_dir),
             None,
             false,
+            Vec::new(),
         )
         .await
     }
@@ -112,7 +117,29 @@ impl LiveServer {
     /// Boot against real OpenRouter. Reads `OPENROUTER_API_KEY` from env;
     /// callers must gate on its presence + `OPENLET_LIVE_E2E=1`.
     pub async fn with_openrouter() -> Self {
-        Self::with_openrouter_inner(None, false).await
+        Self::with_openrouter_inner(None, false, Vec::new()).await
+    }
+
+    /// Two-tier scenario boot: tier-2 (real OpenRouter) when `OPENLET_LIVE_E2E=1`
+    /// + a key is present, else tier-1 (the scripted mock playing `script`).
+    /// The SAME scenario body (drive + on-disk assert) runs on both tiers; only
+    /// the LLM backend differs. `script` is the tier-1 tool/text turn sequence.
+    pub async fn for_scenario(script: Vec<ScriptedTurn>) -> Self {
+        Self::with_openrouter_inner(None, false, script).await
+    }
+
+    /// `for_scenario` with the REAL subagent spawner wired in (for the subagent
+    /// scenario: tier-2 lets a live model decide to spawn; tier-1 scripts the
+    /// `subagent_task` call).
+    pub async fn for_scenario_with_subagents(script: Vec<ScriptedTurn>) -> Self {
+        Self::with_openrouter_inner(None, true, script).await
+    }
+
+    /// `for_scenario` with a small compaction window (compaction-continuity
+    /// scenario). Tier-1 still exercises the wiring; tier-2 proves a real model
+    /// recalls across a real summarization turn.
+    pub async fn for_scenario_small_window(window: u32, script: Vec<ScriptedTurn>) -> Self {
+        Self::with_openrouter_inner(Some(window), false, script).await
     }
 
     /// Boot against real OpenRouter with a deliberately small agent context
@@ -122,7 +149,7 @@ impl LiveServer {
     /// is `None` and compaction never fires. Used by the compaction-continuity
     /// live test.
     pub async fn with_openrouter_small_window(context_window: u32) -> Self {
-        Self::with_openrouter_inner(Some(context_window), false).await
+        Self::with_openrouter_inner(Some(context_window), false, Vec::new()).await
     }
 
     /// Boot against real OpenRouter with the REAL subagent spawner wired in
@@ -130,12 +157,18 @@ impl LiveServer {
     /// `subagent_task` call drives an actual child run_loop. Used by the
     /// subagent live test.
     pub async fn with_openrouter_subagents() -> Self {
-        Self::with_openrouter_inner(None, true).await
+        Self::with_openrouter_inner(None, true, Vec::new()).await
     }
 
-    async fn with_openrouter_inner(compaction_window: Option<u32>, enable_subagents: bool) -> Self {
-        let key = std::env::var("OPENROUTER_API_KEY")
-            .expect("OPENROUTER_API_KEY required for live OpenRouter E2E");
+    async fn with_openrouter_inner(
+        compaction_window: Option<u32>,
+        enable_subagents: bool,
+        scripted_turns: Vec<ScriptedTurn>,
+    ) -> Self {
+        // On the live tier the key is REQUIRED; on the mock tier (tier-1) the
+        // key is absent, so fall back to a placeholder (the scripted provider
+        // ignores it).
+        let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| "mock-key".to_string());
         let model = std::env::var("OPENLET_LIVE_E2E_MODEL")
             .unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
         Self::boot(
@@ -145,6 +178,7 @@ impl LiveServer {
             None,
             compaction_window,
             enable_subagents,
+            scripted_turns,
         )
         .await
     }
@@ -158,6 +192,7 @@ impl LiveServer {
         data_dir: Option<PathBuf>,
         compaction_window: Option<u32>,
         enable_subagents: bool,
+        scripted_turns: Vec<ScriptedTurn>,
     ) -> Self {
         let (data_root, owned_tempdir) = match data_dir {
             Some(d) => (d, None),
@@ -189,11 +224,22 @@ impl LiveServer {
         let events: Arc<dyn openlet_core::adapters::EventSink> =
             Arc::new(BroadcastBus::with_repo(event_repo));
 
-        let provider: Arc<dyn ModelProvider> = Arc::new(OpenRouterProvider::new(
-            base_url.to_string(),
-            api_key,
-            openlet_adapters::openrouter::OpenRouterConfig::default(),
-        ));
+        // Tier switch. Live enabled (key + flag) → REAL OpenRouter. Otherwise,
+        // a scenario boot (non-empty script) → scripted mock driving the SAME
+        // body; an empty script keeps the OpenRouterProvider pointed at the
+        // caller's `base_url` (the `with_mock` MockOpenAiService path).
+        let provider: Arc<dyn ModelProvider> = if scenario_live_enabled() || scripted_turns.is_empty()
+        {
+            Arc::new(OpenRouterProvider::new(
+                base_url.to_string(),
+                api_key,
+                openlet_adapters::openrouter::OpenRouterConfig::default(),
+            ))
+        } else {
+            Arc::new(ScriptedProvider {
+                turns: Mutex::new(scripted_turns.into()),
+            })
+        };
 
         let config = Config {
             bind_addr: "127.0.0.1:0".to_string(),
@@ -658,6 +704,14 @@ impl LiveServer {
     }
 }
 
+/// Tier switch for the shared scenario harness: tier-2 (real OpenRouter) when
+/// `OPENLET_LIVE_E2E=1` AND a key is present; otherwise tier-1 (scripted mock).
+/// Centralized so every scenario file branches identically.
+pub fn scenario_live_enabled() -> bool {
+    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
+        && std::env::var("OPENROUTER_API_KEY").is_ok()
+}
+
 /// Extract the joined `data:` payload from one raw SSE frame (handles
 /// multi-line `data:` per the SSE spec; ignores `id:`/`event:` lines).
 fn parse_sse_data(raw: &str) -> Option<String> {
@@ -681,6 +735,110 @@ fn is_terminal_status(json: &Value) -> bool {
             json.get("status").and_then(Value::as_str),
             Some("idle" | "cancelled" | "errored")
         )
+}
+
+// --- Scripted mock provider (tier-1 backend) -------------------------------
+//
+// Emits a pre-scripted sequence of turns so a tier-1 (no-key) run drives the
+// SAME scenario body as the tier-2 (live OpenRouter) run. Each "turn" is the
+// delta list the runtime sees for one model step: a text turn ends the loop,
+// a tool turn makes the runtime dispatch a real builtin tool (real fs/shell/
+// memory) and feed the result back into the NEXT scripted turn. The mock fakes
+// only the LLM's decisions, never the tool execution — so a tier-1 pass proves
+// the same wiring a tier-2 pass exercises.
+
+use openlet_core::adapters::model_provider::{
+    ChatDelta, ChatRequest, ChatStream, FinishReason, ModelPricing,
+};
+use openlet_core::error::ProviderError;
+use openlet_core::types::event::Usage;
+use tokio_util::sync::CancellationToken;
+
+/// One model step's worth of deltas.
+pub type ScriptedTurn = Vec<Result<ChatDelta, ProviderError>>;
+
+/// A text turn that ends the loop. Carries usage so the cost path is non-zero.
+pub fn text_turn(text: &str) -> ScriptedTurn {
+    vec![
+        Ok(ChatDelta::Role),
+        Ok(ChatDelta::Content { text: text.into() }),
+        Ok(ChatDelta::Finish {
+            reason: FinishReason::EndTurn,
+            usage: Some(Usage {
+                input_tokens: 1000,
+                output_tokens: 100,
+                ..Default::default()
+            }),
+        }),
+    ]
+}
+
+/// A tool-call turn: the runtime dispatches `name` with `args_json` (a real
+/// builtin against real adapters), then continues with the next scripted turn.
+pub fn tool_turn(call_id: &str, name: &str, args_json: &str) -> ScriptedTurn {
+    vec![
+        Ok(ChatDelta::Role),
+        Ok(ChatDelta::ToolCallStart {
+            call_id: call_id.into(),
+            name: name.into(),
+            index: 0,
+        }),
+        Ok(ChatDelta::ToolCallArgsDelta {
+            index: 0,
+            args_chunk: args_json.into(),
+        }),
+        Ok(ChatDelta::Finish {
+            reason: FinishReason::ToolUse,
+            usage: Some(Usage {
+                input_tokens: 1000,
+                output_tokens: 50,
+                ..Default::default()
+            }),
+        }),
+    ]
+}
+
+/// Pops one scripted turn per `chat_stream`; peeks the cancel token between
+/// deltas so a tripped token yields a synthetic `Cancelled` finish.
+struct ScriptedProvider {
+    turns: Mutex<VecDeque<ScriptedTurn>>,
+}
+
+#[async_trait]
+impl ModelProvider for ScriptedProvider {
+    async fn chat_stream(
+        &self,
+        _req: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<ChatStream, ProviderError> {
+        let deltas = self.turns.lock().unwrap().pop_front().unwrap_or_default();
+        let stream = stream::unfold(
+            (deltas.into_iter(), cancel, false),
+            |(mut iter, cancel, done)| async move {
+                if done {
+                    return None;
+                }
+                if cancel.is_cancelled() {
+                    let frame = Ok(ChatDelta::Finish {
+                        reason: FinishReason::Cancelled,
+                        usage: None,
+                    });
+                    return Some((frame, (iter, cancel, true)));
+                }
+                iter.next().map(|d| (d, (iter, cancel, done)))
+            },
+        );
+        Ok(Box::new(stream.boxed()) as ChatStream)
+    }
+
+    fn pricing(&self, _model: &str) -> Option<ModelPricing> {
+        Some(ModelPricing {
+            input_per_mtok: Decimal::ONE,
+            output_per_mtok: Decimal::ONE,
+            cached_input_per_mtok: None,
+            cache_write_per_mtok: None,
+        })
+    }
 }
 
 // --- Inline stubs (mirrors support.rs; kept local so this harness is

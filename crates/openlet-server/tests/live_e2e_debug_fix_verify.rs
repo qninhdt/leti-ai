@@ -23,12 +23,7 @@ use std::process::Command;
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 /// True if `python3` exists on PATH. The scenario shells out to it, so a box
 /// without Python should skip rather than spuriously fail.
@@ -55,27 +50,41 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// ask the model to make it run correctly. The model must run it, read the
 /// traceback, fix the typo, and re-run. Final assertion: the script both has
 /// the corrected symbol AND executes to the expected output from a clean shell.
+///
+/// Two-tier: tier-2 (live) lets a real model decide the bash→read→edit→bash
+/// sequence; tier-1 (mock) scripts that exact sequence. BOTH dispatch the real
+/// `bash`/`edit` tools against the real shell + fs, so the on-disk + re-run
+/// assertions are meaningful on either tier.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_debugs_and_fixes_runtime_error() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
     if !python_available() {
         eprintln!("skipping: python3 not on PATH");
         return;
     }
 
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: the plausible tool sequence a model would run. The `edit`
+    // call carries the REAL fix (reslt → result); the edit tool executes it on
+    // both tiers, so this is not a tautology — it drives the same wiring.
+    let script = vec![
+        tool_turn("c1", "bash", r#"{"command":"python3 compute.py"}"#),
+        tool_turn("c2", "read", r#"{"path":"compute.py"}"#),
+        tool_turn(
+            "c3",
+            "edit",
+            r#"{"path":"compute.py","find":"return reslt","replace":"return result"}"#,
+        ),
+        tool_turn("c4", "bash", r#"{"command":"python3 compute.py"}"#),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
-    let script = ws.join("compute.py");
+    let script_path = ws.join("compute.py");
 
     // The bug: the function computes into `result` but returns `reslt` (a
     // typo) → NameError when called. Running it prints a traceback the model
     // must read to locate the fix. The correct output is the integer 15.
     std::fs::write(
-        &script,
+        &script_path,
         "def add_all(nums):\n\
          \x20\x20\x20\x20result = 0\n\
          \x20\x20\x20\x20for n in nums:\n\
@@ -108,7 +117,7 @@ async fn real_model_debugs_and_fixes_runtime_error() {
         .collect_session_events(&sid, Duration::from_secs(120))
         .await;
 
-    let read_src = || std::fs::read_to_string(&script).unwrap_or_default();
+    let read_src = || std::fs::read_to_string(&script_path).unwrap_or_default();
 
     // Invariant 1: the typo'd symbol is gone from the source.
     let fixed = wait_disk(
