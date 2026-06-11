@@ -37,7 +37,10 @@ RUN cargo build --release --bin openlet-server \
     && strip target/release/openlet-server
 
 # --- runtime: slim non-root image ----------------------------------------
-FROM debian:bookworm-slim AS runtime
+# Must match the builder's glibc: `rust:slim` is Debian trixie (glibc 2.39),
+# so the runtime base is trixie-slim too — a bookworm runtime (glibc 2.36)
+# can't load a trixie-built binary (`GLIBC_2.39 not found`).
+FROM debian:trixie-slim AS runtime
 # ca-certificates for outbound TLS to OpenRouter; curl for the healthcheck.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
