@@ -24,7 +24,7 @@ Tracks the production-rehabilitation program (plan
 | 9 | TUI rehab — polish | ✅ | delivered by the merged Solid migration (OpenCode-style overlays, dialogs, prompt editor) |
 | 10 | Telemetry & observability | ✅ | correlated spans + dormant-by-default Prometheus metrics |
 | 11 | Testing strategy redesign | ✅ | Rust gaps closed; TUI suite green post-merge (33 vitest passing) |
-| 12 | Real-LLM acceptance | ✅ | M18 scrubber + 9 live tests (8 suites) PASS against real OpenRouter — incl. 5 multi-turn/multi-actor scenarios (cross-file refactor, debug-fix-verify, scaffold-discovery, compaction-continuity, ask_user human-in-the-loop) |
+| 12 | Real-LLM acceptance | ✅ | M18 scrubber + 10 live tests (9 suites) PASS against real OpenRouter — incl. 6 multi-turn/multi-actor scenarios (cross-file refactor, debug-fix-verify, scaffold-discovery, compaction-continuity, ask_user human-in-the-loop, subagent orchestration) |
 | 13 | Infrastructure | ✅ | Dockerfile + Compose + env separation (compose config validated) |
 | 14 | CI-CD pipeline | ✅ | PR checks + gated nightly + image build; deny.toml tightened; false CI claims removed |
 | 15 | Docs & final report | ✅ (this) | 6 mandated docs + final report |
