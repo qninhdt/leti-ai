@@ -12,6 +12,16 @@ use crate::types::session::SessionId;
 ///
 /// Backed by a layered ruleset
 /// (defaults ++ agent ++ workspace ++ session, last-match-wins).
+///
+/// Cloud-readiness (adapter-contract audit): the trait is already
+/// async + impl-agnostic — `PermissionCtx`/`PermissionRequest` carry the
+/// session + action context a remote authorization service needs, and
+/// the ask/reply rendezvous is expressed over opaque `AskId`s with no
+/// local-process assumption. A cloud impl can call openlet's authz
+/// service from `check` and back the ask map with a shared store. No
+/// signature change needed; the agent-workspace identity threading is
+/// deferred with [`super::tool_executor::ToolExecutor`] (same reason —
+/// no consumer + cross-crate type placement).
 #[async_trait]
 pub trait PermissionManager: Send + Sync + 'static {
     async fn check(

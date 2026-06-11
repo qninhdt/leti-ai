@@ -61,6 +61,14 @@ pub enum WorkspaceError {
 /// enforce ownership — a caller may only resolve a workspace they own or
 /// are authorized for. The local single-tenant impl ignores it; cloud
 /// impls return [`WorkspaceError::Forbidden`] on a mismatch.
+///
+/// Cloud-readiness (adapter-contract audit): finalized — the principal +
+/// opaque `workspace_id` + `Forbidden`/`NotFound`/`Invalid`/`LookupFailed`
+/// error set are sufficient for a control-plane-backed resolver that maps
+/// caller → agent-workspaces. No `std::path` leaks into the trait;
+/// per-workspace data roots are computed impl-side via
+/// [`workspace_data_root`]. No signature change needed beyond the
+/// principal threading added in the auth phase.
 #[async_trait]
 pub trait WorkspaceResolver: Send + Sync + 'static {
     async fn resolve(

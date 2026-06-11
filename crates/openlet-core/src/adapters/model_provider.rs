@@ -195,6 +195,13 @@ pub struct ModelInfo {
 ///
 /// Implementations MUST be cancellation-aware: dropping `chat_stream` or
 /// triggering `cancel` mid-stream MUST tear down upstream connections.
+///
+/// Cloud-readiness (adapter-contract audit): this trait is already
+/// impl-agnostic — `ChatRequest`/`ChatStream` are wire-neutral, streaming
+/// is a `Stream` trait object, and `capabilities`/`list_models`/`pricing`
+/// carry no local assumptions. A remote provider (OpenRouter, a cloud
+/// gateway) is expressible with no signature change; verified by the
+/// `OpenRouterProvider` + `OpenAiProvider` impls.
 #[async_trait]
 pub trait ModelProvider: Send + Sync + 'static {
     async fn chat_stream(

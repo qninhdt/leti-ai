@@ -104,6 +104,19 @@ pub struct GrepHit {
 }
 
 /// Six built-in tool methods, implemented with workspace canonicalization.
+///
+/// Cloud-readiness (adapter-contract audit): the trait takes `&Path`
+/// arguments but makes NO assumption that the path resolves on the local
+/// filesystem — path canonicalization + sandboxing live behind the
+/// `ToolCtx::fs` (`Arc<dyn Filesystem>`) seam, so a remote-workspace impl
+/// swaps the filesystem backing without changing this trait. The
+/// outbound service-account credential + agent workspace identity
+/// (`CredentialProvider`/`AgentWorkspace`, server-side) are NOT threaded
+/// through `ToolCtx` yet: no core tool makes authenticated outbound calls
+/// today, and those types live in `openlet-server` (core can't depend on
+/// server). Plug-in point when a real outbound tool lands: read the
+/// credential from app state in the server-side executor — see the
+/// integration guide.
 #[async_trait]
 pub trait ToolExecutor: Send + Sync + 'static {
     async fn run_bash(&self, ctx: ToolCtx, cmd: BashCommand) -> Result<BashOutput, ToolError>;
