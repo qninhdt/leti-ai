@@ -50,6 +50,9 @@ pnpm-lock.yaml
 .env*
 !.env.example
 
+# Local Compose override (copy from docker-compose.override.yml.example)
+docker-compose.override.yml
+
 # vercel
 .vercel
 

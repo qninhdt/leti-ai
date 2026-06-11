@@ -1,0 +1,33 @@
+# Build context exclusions — keep the Docker build context small + secret-free.
+
+# Rust build artifacts (rebuilt inside the image).
+/target
+**/target
+
+# Node / TUI (the server image doesn't build the TUI).
+**/node_modules
+tui/dist
+
+# Secrets + local env — NEVER ship into the image.
+.env
+.env.*
+!.env.example
+
+# Local run state + scratch.
+.openlet-run
+.openlet
+temp
+drafts
+plans
+
+# VCS + tooling metadata.
+.git
+.github
+.claude
+.codegraph
+.repomixignore
+
+# Docs + non-build files.
+docs
+*.md
+!README.md

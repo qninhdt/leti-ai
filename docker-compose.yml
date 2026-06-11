@@ -1,0 +1,41 @@
+# Base Compose file (tracked). Boots the openlet-server on an internal
+# network with a persistent named volume. By design it publishes NO host
+# ports — local development copies `docker-compose.override.yml.example`
+# to `docker-compose.override.yml` (gitignored) to remap a host port,
+# avoiding conflicts when several projects run on one machine.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose --env-file .env.local up
+#
+# Mock (network-free) provider:
+#   docker compose --profile mock up
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openlet-server:local
+    # `--env-file` selects local/dev/staging/prod; the file supplies the
+    # model key, bind, data dir, log format, metrics bind, auth profile.
+    env_file:
+      - .env.example
+    environment:
+      # Container always binds all interfaces; host exposure is the
+      # operator's choice via the override file's port mapping.
+      OPENLET_BIND: 0.0.0.0:8787
+      OPENLET_DATA_DIR: /data
+    volumes:
+      # Named volume → sqlite + artifacts + session logs persist across
+      # `down`/`up` cycles. Removed only with `docker compose down -v`.
+      - openlet-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/v1/health"]
+      interval: 15s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  openlet-data:

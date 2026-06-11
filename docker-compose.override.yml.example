@@ -1,0 +1,49 @@
+# Local Compose override — COPY to `docker-compose.override.yml` (which is
+# gitignored) and tweak. Compose auto-merges `docker-compose.override.yml`
+# on top of the base file, so you never edit the tracked base for local
+# preferences.
+#
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   docker compose --env-file .env.local up
+#
+# This solves the multi-project port-conflict problem: the host port is
+# remapped to an uncommon default (18787) and overridable per shell via
+# OPENLET_HOST_PORT, while the container keeps binding 8787 internally.
+
+services:
+  server:
+    ports:
+      # host:container — loopback-only so the API isn't exposed to the LAN.
+      # Override the host side per machine: OPENLET_HOST_PORT=23456 docker compose up
+      - "127.0.0.1:${OPENLET_HOST_PORT:-18787}:8787"
+      # Metrics scrape port (Phase 10) — only useful when the server has
+      # OPENLET_METRICS_BIND set in its env file.
+      - "127.0.0.1:${OPENLET_METRICS_HOST_PORT:-19464}:9464"
+    # Use your local env file (gitignored) for keys + per-env settings.
+    env_file:
+      - .env.local
+
+  # Network-free in-process mock LLM. Enabled only with the `mock` profile:
+  #   docker compose --profile mock up
+  # The mock binary runs the same server image with the mock provider
+  # selected by env, so no real OpenRouter key is needed.
+  server-mock:
+    profiles: ["mock"]
+    image: openlet-server:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      OPENLET_BIND: 0.0.0.0:8787
+      OPENLET_DATA_DIR: /data
+      # Point the provider at an in-cluster mock gateway, or rely on the
+      # binary's --mock affordance once containerized. Documented as a
+      # starting point; wire the concrete mock endpoint per deployment.
+      OPENLET_DEFAULT_MODEL: mock/model-small
+    ports:
+      - "127.0.0.1:${OPENLET_MOCK_HOST_PORT:-18788}:8787"
+    volumes:
+      - openlet-data-mock:/data
+
+volumes:
+  openlet-data-mock:
