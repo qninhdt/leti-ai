@@ -14,9 +14,8 @@ use axum::middleware::from_fn;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
-use openlet_server::middleware::{
-    AuthPrincipal, WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer,
-};
+use openlet_server::AuthPrincipal;
+use openlet_server::middleware::{WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer};
 use openlet_server::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 use openlet_server::{AppState, StaticWorkspaceResolver};
 use tower::ServiceExt;
@@ -54,9 +53,8 @@ fn build_router(state: Arc<AppState>, inject_principal: bool) -> Router {
     if inject_principal {
         route.layer(from_fn(
             |mut req: Request<Body>, next: axum::middleware::Next| async move {
-                req.extensions_mut().insert(AuthPrincipal {
-                    subject: "test-user".into(),
-                });
+                req.extensions_mut()
+                    .insert(AuthPrincipal::user("test-user"));
                 next.run(req).await
             },
         ))
@@ -112,9 +110,8 @@ async fn missing_workspace_returns_404() {
         .layer(WorkspaceRoutingLayer::new(resolver))
         .layer(from_fn(
             |mut req: Request<Body>, next: axum::middleware::Next| async move {
-                req.extensions_mut().insert(AuthPrincipal {
-                    subject: "test-user".into(),
-                });
+                req.extensions_mut()
+                    .insert(AuthPrincipal::user("test-user"));
                 next.run(req).await
             },
         ));
@@ -146,9 +143,8 @@ async fn extension_unused_compiles() {
         .layer(WorkspaceRoutingLayer::new(resolver))
         .layer(from_fn(
             |mut req: Request<Body>, next: axum::middleware::Next| async move {
-                req.extensions_mut().insert(AuthPrincipal {
-                    subject: "test-user".into(),
-                });
+                req.extensions_mut()
+                    .insert(AuthPrincipal::user("test-user"));
                 next.run(req).await
             },
         ));
@@ -162,4 +158,47 @@ async fn extension_unused_compiles() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// C1 regression: ONE canonical `AuthPrincipal` must gate both the
+/// workspace layer AND the handler-side guard. The handler extracts
+/// `WorkspaceRoutingGuard`, whose `from_request_parts` looks the
+/// principal up by `TypeId`. We inject the crate-root re-export
+/// (`openlet_server::AuthPrincipal`) — the SAME path `main.rs` and the
+/// question route use. If a second same-named type were reintroduced in
+/// either place, the `TypeId` lookup would miss and this would 401.
+#[tokio::test]
+async fn one_canonical_principal_satisfies_layer_and_guard() {
+    async fn guarded(guard: WorkspaceRoutingGuard) -> impl IntoResponse {
+        // Touch the principal so the field is load-bearing, not dead.
+        (StatusCode::OK, guard.principal.caller_id)
+    }
+    let state = Arc::new(support::TestHarness::raw_state().await);
+    let resolver = StaticWorkspaceResolver::new(state.clone());
+    let app = Router::new()
+        .route("/v1/guarded", get(guarded))
+        .layer(WorkspaceRoutingLayer::new(resolver))
+        .layer(from_fn(
+            |mut req: Request<Body>, next: axum::middleware::Next| async move {
+                // Inject the crate-root canonical type, exactly as the
+                // mounted AuthLayer / binary does.
+                req.extensions_mut()
+                    .insert(openlet_server::AuthPrincipal::user("canon"));
+                next.run(req).await
+            },
+        ));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/guarded")
+                .header(WORKSPACE_HEADER, "default")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "canonical AuthPrincipal must satisfy both the layer gate and the guard"
+    );
 }

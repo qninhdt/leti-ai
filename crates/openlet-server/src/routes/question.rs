@@ -6,11 +6,10 @@
 //! resolve, so a replayed answer (e.g. retry after timeout) returns
 //! 404 rather than re-firing the awaiting tool.
 //!
-//! Auth: the route requires an `AuthPrincipal` extension on the
-//! request. Integrators (cloud plugin / reverse proxy middleware)
-//! attach this marker via a tower layer; absence == 401. Core stays
-//! auth-blind by construction — the marker is the *only* thing we
-//! check, not its contents.
+//! Auth: the route requires the canonical [`AuthPrincipal`] extension on
+//! the request — the same type the mounted `AuthLayer` injects and the
+//! workspace gate checks. This route only asserts a principal is present
+//! (presence == authenticated); it does not inspect its contents.
 
 use axum::Extension;
 use axum::Json;
@@ -21,14 +20,8 @@ use openlet_protocol::QuestionAnswerDto;
 use uuid::Uuid;
 
 use crate::app_state::AppState;
+use crate::auth::AuthPrincipal;
 use crate::error::AppError;
-
-/// Marker the auth middleware inserts via `request.extensions_mut().insert`.
-/// Cloud integrators may define their own concrete type and register a
-/// tower layer that converts it to this marker; the route only cares
-/// whether *some* principal is present, not what shape it has.
-#[derive(Clone, Debug)]
-pub struct AuthPrincipal;
 
 #[utoipa::path(
     post,

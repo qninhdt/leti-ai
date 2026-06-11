@@ -288,9 +288,9 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // is the correct local behaviour.
     let app = RouterBuilder::default()
         .build(state.clone())
-        .layer(axum::Extension(
-            openlet_server::routes::question::AuthPrincipal,
-        ));
+        .layer(axum::Extension(openlet_server::AuthPrincipal::user(
+            "local-dev",
+        )));
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;

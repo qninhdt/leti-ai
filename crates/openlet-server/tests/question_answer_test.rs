@@ -41,9 +41,8 @@ async fn question_answer_without_auth_principal_returns_401() {
 #[tokio::test]
 async fn question_answer_unknown_id_with_auth_returns_404() {
     let state = support::TestHarness::raw_state().await;
-    let app = openlet_server::build_router(state.clone()).layer(axum::Extension(
-        openlet_server::routes::question::AuthPrincipal,
-    ));
+    let app = openlet_server::build_router(state.clone())
+        .layer(axum::Extension(openlet_server::AuthPrincipal::user("test")));
 
     let body = serde_json::to_vec(&QuestionAnswerDto {
         question_id: Uuid::now_v7(),
@@ -67,9 +66,8 @@ async fn question_answer_unknown_id_with_auth_returns_404() {
 async fn question_answer_resolves_registered_id() {
     let state = support::TestHarness::raw_state().await;
     let registry: Arc<QuestionRegistry> = state.questions.clone();
-    let app = openlet_server::build_router(state.clone()).layer(axum::Extension(
-        openlet_server::routes::question::AuthPrincipal,
-    ));
+    let app = openlet_server::build_router(state.clone())
+        .layer(axum::Extension(openlet_server::AuthPrincipal::user("test")));
 
     // Register a oneshot, hit the route, assert receiver wakes with payload.
     let qid = QuestionId::new();

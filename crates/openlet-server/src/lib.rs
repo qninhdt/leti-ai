@@ -24,10 +24,13 @@ pub mod workspace_resolver;
 
 pub use app_state::{AgentResources, AppState, TurnHandle};
 pub use app_state_builder::{AppStateBuilder, AppStateBuilderError};
-pub use error::AppError;
-pub use middleware::{
-    AuthPrincipal, WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer,
+pub use auth::{
+    AgentWorkspace, AuthError, AuthLayer, AuthPrincipal, Authenticator, CredentialError,
+    CredentialProvider, LocalDevAuthenticator, NoopCredentialProvider, OutboundCredential,
+    PrincipalType,
 };
+pub use error::AppError;
+pub use middleware::{WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer};
 pub use router::RouterBuilder;
 pub use subagent_spawner::RuntimeSubagentSpawner;
 pub use workspace_resolver::{

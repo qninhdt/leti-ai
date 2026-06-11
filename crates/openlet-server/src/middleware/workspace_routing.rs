@@ -25,25 +25,13 @@ use axum::response::{IntoResponse, Response};
 use tower::{Layer, Service};
 
 use crate::app_state::AppState;
+use crate::auth::AuthPrincipal;
 use crate::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 
 /// HTTP header used to select the workspace for a request. Cloud
 /// deployments require this on every authenticated request; the local
 /// binary tolerates absence (resolver is single-tenant).
 pub const WORKSPACE_HEADER: &str = "x-openlet-workspace";
-
-/// Authenticated principal — populated by upstream auth middleware
-/// (the ask_user route uses an env-key fallback). The presence
-/// of this extension is the cross-tenant gate.
-///
-/// Cloud integrators replace this struct with their own (mounting
-/// before workspace_routing); the type identity is what the guard
-/// looks up. Re-exported here so non-server crates can construct it
-/// in tests.
-#[derive(Debug, Clone)]
-pub struct AuthPrincipal {
-    pub subject: String,
-}
 
 /// Extractor for handlers that need the resolved per-workspace state.
 /// Returns 401 if auth hasn't run, 400 for malformed workspace ids,

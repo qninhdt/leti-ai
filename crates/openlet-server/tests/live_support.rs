@@ -242,9 +242,8 @@ impl LiveServer {
         // an `AuthPrincipal` extension. Without this layer a real model's
         // `ask_user` answer POST → 401 → the registry oneshot never resolves →
         // the runner hangs to its 300s timeout. Inject it like the binary does.
-        let app = openlet_server::build_router(state).layer(axum::Extension(
-            openlet_server::routes::question::AuthPrincipal,
-        ));
+        let app = openlet_server::build_router(state)
+            .layer(axum::Extension(openlet_server::AuthPrincipal::user("test")));
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
         let addr = listener.local_addr().expect("local addr");
         let base = format!("http://{addr}");
