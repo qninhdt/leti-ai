@@ -26,6 +26,7 @@ OpenAPI shape (see `/v1/doc/openapi.json`) works.
 | `OPENLET_MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | no | Model API base URL — honored on the serve path. Point at a self-hosted gateway or the in-process mock. |
 | `OPENLET_MAX_COST_USD` | `5.00` | no | Per-session hard limit. |
 | `OPENLET_LOG_FORMAT` | `json` | no | `json` or `pretty`. |
+| `OPENLET_METRICS_BIND` | _(unset)_ | no | If set (e.g. `127.0.0.1:9464`), serves Prometheus metrics at `GET /metrics` on that address. Unset → metrics fully off. |
 | `OPENLET_WORKSPACE` | `<data_dir>/workspace` | no | Default agent workspace root. |
 | `RUST_LOG` | `info` | no | Tracing `EnvFilter` directive. |
 
@@ -93,6 +94,40 @@ into a log shipper. Switch to `OPENLET_LOG_FORMAT=pretty` for local
 development. Errors are emitted with structured fields including
 `class` (the `FailureClass` slug) so dashboards can group failures
 without parsing free-form text.
+
+Every HTTP request runs inside a `request` span (fresh `request_id`) and
+every agent turn inside a `turn` span (`session_id` + `turn_id`), with
+nested spans on tool dispatch, the provider call, and compaction — so a
+single turn is traceable end-to-end in the JSON logs.
+
+## Metrics
+
+openlet-ai is software, not an infra bundle: **running it locally needs no
+Prometheus and no docker-compose.** Metric emission compiles in but is a
+no-op until a recorder is installed, and the recorder + `/metrics`
+endpoint only start when `OPENLET_METRICS_BIND` is set.
+
+```bash
+# No metrics — plain local run.
+cargo run -p openlet-server -- serve
+
+# Opt in: serve Prometheus metrics on a separate loopback port.
+OPENLET_METRICS_BIND=127.0.0.1:9464 cargo run -p openlet-server -- serve
+# then point a Prometheus scraper at http://127.0.0.1:9464/metrics
+```
+
+Exposed metrics: `openlet_turns_total`, `openlet_tokens_total{kind}`,
+`openlet_cost_usd_total`, `openlet_provider_retries_total`,
+`openlet_tool_executions_total{tool,outcome}`, `openlet_compactions_total`,
+`openlet_plugin_faults_total{hook}`.
+
+The endpoint binds on its own listener — it is NEVER mounted on the public
+app router (no auth/body-limit/CORS coupling). **Security:** the open
+scrape exposes AGGREGATE values only — no per-`workspace` label, because
+that label set would enumerate every tenant (cross-tenant spend leak +
+Prometheus cardinality DoS). Cloud deployments scrape `/metrics` on an
+internal port; per-workspace breakdown belongs behind an authenticated
+admin scrape, not this endpoint.
 
 ## Pre-PR pipeline
 
