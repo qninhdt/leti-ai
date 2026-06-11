@@ -148,5 +148,8 @@ async fn real_model_renames_symbol_across_files() {
         .filter_map(Result::ok)
         .filter(|e| e.path().extension().is_some_and(|x| x == "py"))
         .count();
-    assert_eq!(py_files, 3, "exactly the three seeded .py files should exist");
+    assert_eq!(
+        py_files, 3,
+        "exactly the three seeded .py files should exist"
+    );
 }

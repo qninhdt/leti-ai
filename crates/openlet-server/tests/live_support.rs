@@ -441,9 +441,7 @@ impl LiveServer {
                             if json.get("kind").and_then(Value::as_str)
                                 == Some("question_requested")
                             {
-                                if let Some(qid) =
-                                    json.get("question_id").and_then(Value::as_str)
-                                {
+                                if let Some(qid) = json.get("question_id").and_then(Value::as_str) {
                                     return Some(qid.to_string());
                                 }
                             }
