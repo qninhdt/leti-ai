@@ -51,8 +51,23 @@ instead of parking on an `Ask`.
 | SQLite race | Real `SqliteMemoryStore` via `common::sqlite_helper::make_pool` | `MockMemoryStore` (no monotonic seq) |
 | Permission-only flow | `common::mock_permission::{AllowAll, DenyAll, ScriptedPermission}` | New permission mocks |
 
-## Time discipline
+## Test taxonomy — layer + mock policy
 
+Every test belongs to one layer; the file's doc comment should say which.
+The rule of thumb is **mock the boundary, never the logic under test**.
+
+| Layer | Location | Real | Mocked | Example |
+|---|---|---|---|---|
+| **Unit** | inline `#[cfg(test)]` | the logic under test | I/O, time, provider, stores | cost math, compaction decision, token estimate, doom guard, dispatch fault synthesis |
+| **Integration** | `crates/*/tests/` | local adapters (sqlite `:memory:`, localfs, bus) | model provider only | sqlite paging, bus replay, `plugin_fault_observability` |
+| **E2E (mock-LLM)** | `live_e2e_*` / `subagent_e2e` | full wiring over loopback TCP or in-proc AppState | LLM responses (scripted/`MockOpenAiService`) | session persist, fs write, `subagent_e2e` |
+| **E2E (real-LLM)** | `#[ignore]` + `OPENLET_LIVE_E2E=1` + key | everything incl. the model | nothing | `live_e2e_openrouter_gated` (Phase 12) |
+
+- The **mock-LLM e2e layer is the default keyless CI path** — it exercises real transport/sqlite/plugins with deterministic model output.
+- **Never mock a store to dodge a contract** (e.g. sqlite's monotonic `seq`): use the real local adapter — its rich suite is the cloud-impl reference (Phase 7 contract spec).
+- The single permitted real-LLM layer costs money + needs a key; it stays double-gated so keyless CI is green.
+
+## Time discipline
 - **Virtual time:** prefer `#[tokio::test(start_paused = true)]` + `tokio::time::advance(...)` over real sleeps.
 - **Real OS sleeps:** allowed only for OS-level guarantees (signal delivery, pgroup teardown). Document in test header why.
 - **Per-test budget:** under 2 seconds on `cargo test` unless tagged `#[ignore]` with reason.
