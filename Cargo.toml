@@ -50,6 +50,12 @@ schemars = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# Metrics (facade + Prometheus recorder). Emission via the `metrics`
+# facade is a no-op until a recorder is installed, so the local binary
+# carries metric call sites at zero cost and needs NO Prometheus/infra.
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.16", default-features = false }
+
 # Errors
 thiserror = "2.0"
 anyhow = "1.0"

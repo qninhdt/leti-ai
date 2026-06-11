@@ -84,6 +84,15 @@ fn init_tracing(format: LogFormat) {
 }
 
 async fn run_server(config: Config) -> anyhow::Result<()> {
+    // Install the metrics recorder BEFORE any emission, but ONLY when a
+    // scrape bind is configured. Unset → no recorder → `metrics` macros
+    // are no-ops and the binary runs as plain software (no Prometheus,
+    // no infra). The handle + bind are carried to the spawn below.
+    let metrics_setup = match openlet_server::metrics::metrics_bind_from_env() {
+        Some(bind) => Some((bind, openlet_server::metrics::install_recorder()?)),
+        None => None,
+    };
+
     let db_path = config.data_dir.join("db.sqlite");
     let artifact_root = config.data_dir.join("artifacts");
     let session_log_root = config.data_dir.join("sessions");
@@ -327,6 +336,17 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         } else {
             info!(bind = %addr, "bound loopback at http://{addr}");
         }
+    }
+
+    // Spawn the metrics scrape endpoint on its own listener (separate
+    // bind, never the public app router) when configured. Detached — the
+    // process exits via the main server's graceful shutdown.
+    if let Some((bind, handle)) = metrics_setup {
+        tokio::spawn(async move {
+            if let Err(e) = openlet_server::metrics::serve_metrics(bind, handle).await {
+                tracing::warn!(error = %e, "metrics endpoint stopped");
+            }
+        });
     }
 
     let serve_result = axum::serve(listener, app)

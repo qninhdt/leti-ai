@@ -12,6 +12,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod events;
 pub(crate) mod mention;
+pub mod metrics;
 pub mod middleware;
 pub mod notif_bucket;
 pub mod openapi;
