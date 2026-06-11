@@ -52,8 +52,10 @@ jobs:
             echo "::notice::OPENROUTER_API_KEY not set — skipping live acceptance (CI stays green)."
             exit 0
           fi
-          # The #[ignore]'d live tests only run under --ignored AND the env gate.
-          cargo test -p openlet-server -- --ignored
+          # Two-tier scenarios: the env gate (OPENLET_LIVE_E2E=1 + key) selects
+          # the LIVE backend; without it the same tests run mock-backed in ci.yml.
+          # No --ignored filter — the scenarios are no longer #[ignore]'d.
+          cargo test -p openlet-server
 
       # Evidence is written to gitignored plans/**/evidence/. It is scrubbed
       # at write time by the Phase 12 evidence scrubber (sk- keys, bearer,
