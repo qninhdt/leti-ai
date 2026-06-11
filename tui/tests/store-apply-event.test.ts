@@ -60,6 +60,29 @@ describe("store applyEvent", () => {
     expect(part?.status).toBe("complete");
   });
 
+  it("part_updated preserves reasoning_buffer so a finished thought keeps content", () => {
+    const s = useStore.getState();
+    const sid = "sid-r";
+    const mid = "mid-r";
+    const pid = "pid-r";
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    s.applyEvent({ kind: "part_created", session_id: sid, message_id: mid, part_id: pid, at: "" });
+    s.applyEvent({
+      kind: "part_delta",
+      session_id: sid,
+      message_id: mid,
+      part_id: pid,
+      delta_kind: "reasoning",
+      delta: "weighing options",
+    });
+    s.applyEvent({ kind: "part_updated", session_id: sid, message_id: mid, part_id: pid });
+    const part = useStore.getState().messages[sid]?.[0]?.parts[0];
+    // Reasoning deltas accumulate in reasoning_buffer, not buffer; finalizing
+    // must not wipe it or the collapsed "Thought" view renders empty.
+    expect(part?.reasoning_buffer).toBe("weighing options");
+    expect(part?.status).toBe("complete");
+  });
+
   it("permission_asked sets pending + pushes a permission overlay carrying askId", () => {
     const s = useStore.getState();
     s.applyEvent({

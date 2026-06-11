@@ -44,3 +44,10 @@ export const PROMPT_SHELF_UNDERLINE_BORDER: BorderCharacters = {
   ...EMPTY_BORDER,
   horizontal: "▀",
 };
+
+// Plain `┃` left rail with no cap — OpenCode's SplitBorder, used by block-tool
+// output cards (`borderColor` is set near-invisible at the call site).
+export const SPLIT_BORDER: BorderCharacters = {
+  ...EMPTY_BORDER,
+  vertical: "┃",
+};

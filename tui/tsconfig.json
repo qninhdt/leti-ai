@@ -20,10 +20,7 @@
   },
   "include": ["src/**/*", "tests/**/*"],
   "exclude": [
-    "src/components/markdown-renderer.tsx",
-    "src/components/message-list.tsx",
     "src/components/status-bar.tsx",
-    "src/components/tool-call-card.tsx",
     "src/views/agent-picker.tsx",
     "src/views/chat-view.tsx",
     "src/views/help-view.tsx",

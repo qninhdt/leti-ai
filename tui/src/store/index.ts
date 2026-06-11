@@ -326,9 +326,12 @@ export const useStore = create<State>((set) => ({
           const messages = updateMessageById(s.messages, ev.session_id, ev.message_id, (msg) =>
             updatePartById(msg, ev.part_id, (part) => ({
               ...part,
+              // Settle the streamed text buffer into the final text. Reasoning
+              // deltas accumulate in `reasoning_buffer` (not `buffer`), so it
+              // is preserved here — clearing it would erase a finished
+              // reasoning block, leaving the collapsed view with no content.
               text: (part.text ?? "") + part.buffer,
               buffer: "",
-              reasoning_buffer: "",
               status: "complete",
             })),
           );
