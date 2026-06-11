@@ -23,9 +23,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 # --- builder: cook deps (cached), then build the binary -------------------
 FROM chef AS builder
 # System deps for the build: pkg-config + libssl headers are commonly
-# needed by transitive crates; keep this minimal.
+# needed by transitive crates; curl is required by utoipa-swagger-ui's
+# build script, which downloads the Swagger UI assets at compile time.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev \
+    && apt-get install -y --no-install-recommends pkg-config libssl-dev curl \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=planner /app/recipe.json recipe.json
 # Cook ONLY dependencies — this layer is cached until Cargo.lock/Cargo.toml
