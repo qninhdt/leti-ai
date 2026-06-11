@@ -54,6 +54,11 @@ pub struct LiveServer {
     // sqlite after a reboot (assistant text lives in the parts table, not in
     // the transient SSE delta stream, so there's no HTTP route to read it).
     memory: Arc<dyn openlet_core::adapters::MemoryStore>,
+    // The default agent id the server registered. Exposed so the ask_user
+    // test can persist a question-capable session (default `create_session`
+    // hardcodes capabilities to `{}` → `user_questions=false`, which makes
+    // `ask_user` error synchronously instead of parking).
+    default_agent_id: openlet_core::types::agent::AgentId,
     serve_task: JoinHandle<()>,
     // `None` when the data dir is caller-owned (the persistence test passes
     // its own `TempDir` so the same dir survives a boot→drop→reboot cycle);
@@ -305,6 +310,7 @@ impl LiveServer {
             model: model.to_string(),
             workspace_root,
             memory,
+            default_agent_id,
             serve_task,
             _tempdir: owned_tempdir,
         }
@@ -312,6 +318,108 @@ impl LiveServer {
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Create a session with `user_questions` capability ENABLED, persisted
+    /// directly via the same memory store the server uses. The default
+    /// `POST /v1/session` route hardcodes capabilities to `{}` (headless-safe),
+    /// so `ask_user` would error synchronously; this opt-in path lets the
+    /// ask_user live test exercise the real park→answer→resume flow.
+    ///
+    /// Built by reading a normally-created session's meta (so the private
+    /// `permission_mode` default is inherited, not named here), re-stamping a
+    /// fresh id, flipping the capability on, and re-persisting.
+    pub async fn create_question_capable_session(&self) -> String {
+        let seed = self
+            .memory
+            .create_session(self.default_agent_id, None)
+            .await
+            .expect("seed session");
+        let mut meta = self
+            .memory
+            .get_session(seed)
+            .await
+            .expect("get seed meta")
+            .expect("seed meta present");
+        meta.id = openlet_core::types::session::SessionId::new();
+        meta.capabilities.user_questions = true;
+        meta.model = Some(self.model.clone());
+        self.memory
+            .create_session_with_meta(meta.clone())
+            .await
+            .expect("create question-capable session");
+        meta.id.to_string()
+    }
+
+    /// `POST /v1/sessions/:id/question/answer` — resolve a pending `ask_user`
+    /// question by id with the chosen option indices. Returns the status code
+    /// so the caller can assert acceptance (200) vs not-found (404).
+    pub async fn answer_question(
+        &self,
+        session_id: &str,
+        question_id: &str,
+        selected: Vec<usize>,
+    ) -> reqwest::StatusCode {
+        self.http
+            .post(format!(
+                "{}/v1/sessions/{session_id}/question/answer",
+                self.base_url
+            ))
+            .json(&serde_json::json!({
+                "question_id": question_id,
+                "selected": selected,
+            }))
+            .send()
+            .await
+            .expect("answer question")
+            .status()
+    }
+
+    /// Open the session SSE stream and read frames until a `question.requested`
+    /// event arrives, returning its `question_id`. Unlike
+    /// `collect_session_events`, this returns BEFORE terminal status — the turn
+    /// is parked on the pending question and will not reach terminal until the
+    /// caller answers it. Returns `None` if the deadline elapses first.
+    pub async fn wait_for_question(&self, session_id: &str, deadline: Duration) -> Option<String> {
+        use futures::StreamExt as _;
+
+        let url = format!("{}/v1/event?session={session_id}", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .header("accept", "text/event-stream")
+            .send()
+            .await
+            .expect("sse connect");
+        let mut stream = resp.bytes_stream();
+        let mut buf = String::new();
+
+        let find = async {
+            while let Some(chunk) = stream.next().await {
+                let Ok(bytes) = chunk else { break };
+                buf.push_str(&String::from_utf8_lossy(&bytes));
+                while let Some(idx) = buf.find("\n\n") {
+                    let raw = buf[..idx].to_string();
+                    buf.drain(..idx + 2);
+                    if let Some(data) = parse_sse_data(&raw) {
+                        if let Ok(json) = serde_json::from_str::<Value>(&data) {
+                            if json.get("kind").and_then(Value::as_str)
+                                == Some("question_requested")
+                            {
+                                if let Some(qid) =
+                                    json.get("question_id").and_then(Value::as_str)
+                                {
+                                    return Some(qid.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        };
+
+        tokio::time::timeout(deadline, find).await.ok().flatten()
     }
 
     /// Agent workspace root (`<data_dir>/ws`). The fs-write test asserts the
