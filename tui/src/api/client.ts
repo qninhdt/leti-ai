@@ -7,6 +7,8 @@ import type {
   AgentDto,
   CreateMessageDto,
   CreateSessionDto,
+  FileContentDto,
+  FileListDto,
   PermissionReplyDto,
   PluginInfoDto,
   PromptAckDto,
@@ -43,6 +45,8 @@ export interface OpenletClient {
   setMode(sessionId: string, body: SetModeDto): Promise<SessionDto>;
   replyPermission(askId: string, body: PermissionReplyDto): Promise<{ ok: true }>;
   listPlugins(): Promise<PluginInfoDto[]>;
+  listFiles(query: string): Promise<FileListDto>;
+  getFileContent(path: string): Promise<FileContentDto>;
 }
 
 export function createClient(config: ClientConfig): OpenletClient {
@@ -86,5 +90,7 @@ export function createClient(config: ClientConfig): OpenletClient {
     setMode: (id, body) => request("POST", `/v1/session/${id}/mode`, body),
     replyPermission: (askId, body) => request("POST", `/v1/permission/${askId}/reply`, body),
     listPlugins: () => request("GET", "/v1/plugin"),
+    listFiles: (query) => request("GET", `/v1/files?query=${encodeURIComponent(query)}`),
+    getFileContent: (path) => request("GET", `/v1/files/content?path=${encodeURIComponent(path)}`),
   };
 }

@@ -6,6 +6,7 @@
 import { create } from "zustand";
 
 import type { ConnState } from "../api/sse.js";
+import type { FileBadge } from "../services/attachment-embedder.js";
 import type {
   AgentDto,
   EventDto,
@@ -24,6 +25,40 @@ export type ViewKind =
   | { kind: "plugins" }
   | { kind: "help" };
 
+// Overlay stack entries. Each carries the payload its dialog needs to resolve
+// itself — notably the permission entry MUST carry `askId` so a reply targets
+// the exact request, even with multiple permissions pending (pendingPermissions
+// is keyed by askId). A bare kind would make ≥2 concurrent asks ambiguous.
+export type OverlayEntry =
+  | { kind: "permission"; askId: string }
+  | { kind: "agent_picker" }
+  | { kind: "session_picker" }
+  | { kind: "help" }
+  | { kind: "plugins" }
+  | { kind: "command_palette" };
+
+export type OverlayKind = OverlayEntry["kind"];
+
+// Transition shim: map the legacy modal ViewKinds (still emitted by the slash
+// command registry via CommandContext.setView) onto overlay entries. Removed
+// once commands push overlays directly (Phase 5).
+function viewToOverlay(view: ViewKind): OverlayEntry | null {
+  switch (view.kind) {
+    case "agent_picker":
+      return { kind: "agent_picker" };
+    case "session_picker":
+      return { kind: "session_picker" };
+    case "help":
+      return { kind: "help" };
+    case "plugins":
+      return { kind: "plugins" };
+    case "permission":
+      return { kind: "permission", askId: view.askId };
+    default:
+      return null;
+  }
+}
+
 export interface PartView extends PartDto {
   buffer: string;
   reasoning_buffer: string;
@@ -32,6 +67,9 @@ export interface PartView extends PartDto {
 export interface MessageView extends MessageDto {
   parts: PartView[];
   step_finish?: { reason: string; usage_total?: number; cost?: string };
+  /// File-mention badge chips for a user message (Phase 6 @-mentions). Carried
+  /// on the optimistic user message and preserved when the SSE echo arrives.
+  badges?: FileBadge[];
 }
 
 export interface ConnSlice {
@@ -66,14 +104,29 @@ export interface State {
   /// banner and hint to the user that writes are blocked until exit.
   planMode: Record<string, boolean>;
   view: ViewKind;
+  /// Overlay stack rendered atop the active route (dialogs, pickers, command
+  /// palette). Top of stack = last element. Replaces the view-swap model for
+  /// modal surfaces; `view` is retained only for the chat/route distinction
+  /// during the Phase 5 transition.
+  overlays: OverlayEntry[];
   applyEvent: (ev: EventDto) => void;
   setConn: (status: ConnState, detail?: { attempt?: number; lastEventId?: number }) => void;
   setView: (view: ViewKind) => void;
+  pushOverlay: (entry: OverlayEntry) => void;
+  popOverlay: () => void;
+  removeOverlay: (predicate: (entry: OverlayEntry) => boolean) => void;
+  clearOverlays: () => void;
   setAgents: (agents: AgentDto[]) => void;
   setPlugins: (plugins: PluginInfoDto[]) => void;
   setSessions: (sessions: SessionDto[]) => void;
   setActiveSession: (id: string | null) => void;
   setClientError: (message: string | null) => void;
+  /// Append an optimistic user message (role:"user") carrying the raw text and
+  /// file-mention badges. The SSE stream never produces a user message
+  /// (message_created hardcodes role:"assistant"), so the TUI must add it
+  /// itself. The client-generated id means a later server echo is deduped by
+  /// the message_created handler — preserving the FE badges.
+  addUserMessage: (sessionId: string, messageId: string, text: string, badges: FileBadge[]) => void;
 }
 
 // Sum two 4-decimal USD cost strings, returning a 4-decimal string. Used
@@ -199,6 +252,7 @@ export const useStore = create<State>((set) => ({
   clientError: null,
   planMode: {},
   view: { kind: "chat" },
+  overlays: [],
 
   setConn: (status, detail) =>
     set((s) => ({
@@ -209,7 +263,25 @@ export const useStore = create<State>((set) => ({
       },
     })),
 
-  setView: (view) => set({ view }),
+  // Transition shim: the slash-command registry still calls setView with modal
+  // kinds via CommandContext. Map those onto overlay pushes; only the chat kind
+  // stays a real route. Removed once commands push overlays directly (Phase 5).
+  setView: (view) =>
+    set((s) => {
+      const overlay = viewToOverlay(view);
+      if (!overlay) return { view };
+      const already = s.overlays.some(
+        (e) =>
+          e.kind === overlay.kind &&
+          (e.kind !== "permission" || e.askId === (overlay as { askId?: string }).askId),
+      );
+      return already ? {} : { overlays: s.overlays.concat(overlay) };
+    }),
+  pushOverlay: (entry) => set((s) => ({ overlays: s.overlays.concat(entry) })),
+  popOverlay: () => set((s) => ({ overlays: s.overlays.slice(0, -1) })),
+  removeOverlay: (predicate) =>
+    set((s) => ({ overlays: s.overlays.filter((e) => !predicate(e)) })),
+  clearOverlays: () => set({ overlays: [] }),
   setAgents: (agents) => set({ agents }),
   setPlugins: (plugins) => set({ plugins }),
   setSessions: (sessions) =>
@@ -218,6 +290,34 @@ export const useStore = create<State>((set) => ({
     })),
   setActiveSession: (id) => set({ activeSessionId: id }),
   setClientError: (message) => set({ clientError: message }),
+
+  addUserMessage: (sessionId, messageId, text, badges) =>
+    set((s) => {
+      const list = s.messages[sessionId] ?? [];
+      const userMsg: MessageView = {
+        id: messageId,
+        session_id: sessionId,
+        role: "user",
+        parts: [{ id: messageId, message_id: messageId, kind: "text", text, buffer: "", reasoning_buffer: "" }],
+        created_at: new Date().toISOString(),
+        badges: badges.length > 0 ? badges : undefined,
+      };
+      const idx = list.findIndex((m) => m.id === messageId);
+      if (idx >= 0) {
+        // The SSE `message_created` echo can arrive BEFORE this optimistic add
+        // (the server publishes the event before returning the prompt ack), and
+        // it inserts an empty placeholder with a hardcoded role:"assistant".
+        // Upgrade that placeholder in place rather than no-op'ing, so the user
+        // text + badges survive regardless of which side wins the race. Safe:
+        // the ack id is the user message's own id (the assistant reply gets a
+        // different id), and user parts are pre-supplied, never streamed, so no
+        // real streamed content is clobbered.
+        const next = list.slice();
+        next[idx] = userMsg;
+        return { messages: { ...s.messages, [sessionId]: next } };
+      }
+      return { messages: { ...s.messages, [sessionId]: list.concat(userMsg) } };
+    }),
 
   applyEvent: (ev) =>
     set((s) => {
@@ -276,9 +376,12 @@ export const useStore = create<State>((set) => ({
           const messages = updateMessageById(s.messages, ev.session_id, ev.message_id, (msg) =>
             updatePartById(msg, ev.part_id, (part) => ({
               ...part,
+              // Settle the streamed text buffer into the final text. Reasoning
+              // deltas accumulate in `reasoning_buffer` (not `buffer`), so it
+              // is preserved here — clearing it would erase a finished
+              // reasoning block, leaving the collapsed view with no content.
               text: (part.text ?? "") + part.buffer,
               buffer: "",
-              reasoning_buffer: "",
               status: "complete",
             })),
           );
@@ -315,19 +418,34 @@ export const useStore = create<State>((set) => ({
         }
 
         case "permission_asked": {
+          // Push a permission overlay carrying its askId so the reply targets
+          // the exact request. Multiple permissions can be pending at once
+          // (pendingPermissions is keyed by askId); a bare overlay kind would
+          // make ≥2 concurrent asks ambiguous. Skip a duplicate push if this
+          // askId is already on the stack (idempotent re-delivery).
+          const already = s.overlays.some(
+            (e) => e.kind === "permission" && e.askId === ev.request.ask_id,
+          );
           return {
             pendingPermissions: { ...s.pendingPermissions, [ev.request.ask_id]: ev.request },
-            view: { kind: "permission", askId: ev.request.ask_id },
+            overlays: already
+              ? s.overlays
+              : s.overlays.concat({ kind: "permission", askId: ev.request.ask_id }),
           };
         }
 
         case "permission_resolved": {
+          // Resolve BY askId, from anywhere in the stack — not a blind pop.
+          // An async resolve must not dismiss whatever overlay happens to be on
+          // top (e.g. a help overlay opened above the permission).
           const next = { ...s.pendingPermissions };
           delete next[ev.ask_id];
-          const view: ViewKind = s.view.kind === "permission" && s.view.askId === ev.ask_id
-            ? { kind: "chat" }
-            : s.view;
-          return { pendingPermissions: next, view };
+          return {
+            pendingPermissions: next,
+            overlays: s.overlays.filter(
+              (e) => !(e.kind === "permission" && e.askId === ev.ask_id),
+            ),
+          };
         }
 
         case "plugin_error": {

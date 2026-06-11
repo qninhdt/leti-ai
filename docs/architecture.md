@@ -13,7 +13,7 @@ openlet-plugin-registry   compile-time plugin list
 openlet-plugins/core-agents   built-in agent definitions (general, indexer)
 openlet-server       axum router, AppState, AuthN, audit subcommand
 openlet-test-mock-provider   in-process OpenAI-compat replay (parity tests)
-tui/                 Ink/React TUI client, ships as `openlet` on npm
+tui/                 SolidJS (@opentui) TUI client, ships as `openlet` on npm
 ```
 
 The runtime is split top-down: `openlet-core` knows nothing about HTTP or

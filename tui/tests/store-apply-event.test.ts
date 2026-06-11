@@ -60,7 +60,30 @@ describe("store applyEvent", () => {
     expect(part?.status).toBe("complete");
   });
 
-  it("permission_asked sets pending + flips view to permission", () => {
+  it("part_updated preserves reasoning_buffer so a finished thought keeps content", () => {
+    const s = useStore.getState();
+    const sid = "sid-r";
+    const mid = "mid-r";
+    const pid = "pid-r";
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    s.applyEvent({ kind: "part_created", session_id: sid, message_id: mid, part_id: pid, at: "" });
+    s.applyEvent({
+      kind: "part_delta",
+      session_id: sid,
+      message_id: mid,
+      part_id: pid,
+      delta_kind: "reasoning",
+      delta: "weighing options",
+    });
+    s.applyEvent({ kind: "part_updated", session_id: sid, message_id: mid, part_id: pid });
+    const part = useStore.getState().messages[sid]?.[0]?.parts[0];
+    // Reasoning deltas accumulate in reasoning_buffer, not buffer; finalizing
+    // must not wipe it or the collapsed "Thought" view renders empty.
+    expect(part?.reasoning_buffer).toBe("weighing options");
+    expect(part?.status).toBe("complete");
+  });
+
+  it("permission_asked sets pending + pushes a permission overlay carrying askId", () => {
     const s = useStore.getState();
     s.applyEvent({
       kind: "permission_asked",
@@ -74,13 +97,60 @@ describe("store applyEvent", () => {
     });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeDefined();
-    expect(state.view.kind).toBe("permission");
+    const top = state.overlays[state.overlays.length - 1];
+    expect(top).toEqual({ kind: "permission", askId: "ask-1" });
   });
 
-  it("permission_resolved clears pending + restores chat view", () => {
+  it("permission_resolved clears pending + removes the matching overlay by askId", () => {
     useStore.getState().applyEvent({ kind: "permission_resolved", ask_id: "ask-1", decision: "allow" });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeUndefined();
-    expect(state.view.kind).toBe("chat");
+    expect(state.overlays.some((e) => e.kind === "permission" && e.askId === "ask-1")).toBe(false);
+  });
+
+  it("resolves the correct permission when two are pending (no wrong-overlay dismissal)", () => {
+    const s = useStore.getState();
+    const ask = (id: string): EventDto => ({
+      kind: "permission_asked",
+      session_id: "sid-5",
+      request: { ask_id: id, session_id: "sid-5", permission: "edit:foo", tool_name: "edit" },
+    });
+    s.applyEvent(ask("ask-a"));
+    s.applyEvent(ask("ask-b"));
+    // Resolve the FIRST (lower in the stack) — a blind top-of-stack pop would
+    // wrongly drop ask-b's overlay instead.
+    s.applyEvent({ kind: "permission_resolved", ask_id: "ask-a", decision: "allow" });
+    const overlays = useStore.getState().overlays;
+    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-a")).toBe(false);
+    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-b")).toBe(true);
+  });
+
+  it("addUserMessage reconciles an SSE placeholder that arrived first (no dup, role=user, badges kept)", () => {
+    const s = useStore.getState();
+    const sid = "sid-opt";
+    const mid = "mid-opt";
+    // SSE echo wins the race: message_created inserts an empty role:"assistant"
+    // placeholder for this id BEFORE the optimistic add runs.
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    s.addUserMessage(sid, mid, "look at @src/app.tsx", [
+      { path: "src/app.tsx", kind: "text", unsupported: false, truncated: false },
+    ]);
+    const list = useStore.getState().messages[sid] ?? [];
+    expect(list.length).toBe(1);
+    expect(list[0]?.role).toBe("user");
+    expect(list[0]?.parts[0]?.text).toBe("look at @src/app.tsx");
+    expect(list[0]?.badges?.[0]?.path).toBe("src/app.tsx");
+  });
+
+  it("addUserMessage appends when no placeholder exists (add wins the race)", () => {
+    const s = useStore.getState();
+    const sid = "sid-opt2";
+    const mid = "mid-opt2";
+    s.addUserMessage(sid, mid, "hello", []);
+    // A later echo for the same id must dedupe, not duplicate.
+    s.applyEvent({ kind: "message_created", session_id: sid, message_id: mid, at: "" });
+    const list = useStore.getState().messages[sid] ?? [];
+    expect(list.length).toBe(1);
+    expect(list[0]?.role).toBe("user");
   });
 });

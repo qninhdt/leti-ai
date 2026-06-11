@@ -1,61 +1,336 @@
-import React from "react";
-import { Box, Text, useInput } from "ink";
+// The prompt editor, ported from OpenCode's `component/prompt/index.tsx` onto
+// Openlet's store. A left-bar (`┃`) bordered multiline <textarea> with the meta
+// row inside, the `╹`/`▀` shelf below, and the hint row under that. The
+// textarea owns its own keys while focused (cursor movement, mid-string edit,
+// wrapping) via the engine's focused-renderable dispatch; the global key router
+// only handles overlays, and this editor blurs when one opens so there is one
+// authoritative key path. Enter submits, Shift+Enter newlines (the engine's
+// defaults are flipped via keyBindings), Up/Down walk prompt history, Tab is a
+// Phase-6 autocomplete stub, and Esc arms the interrupt while a turn streams.
+
+import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 
 import { theme } from "../theme/index.js";
+import { useStore } from "../store/index.js";
+import { useStoreSelector } from "../render/store-bridge.js";
+import { useRuntime } from "../render/app-context.js";
+import { createPromptSubmit } from "../render/use-prompt-submit.js";
+import { PromptMetaRow } from "./prompt-meta-row.js";
+import { PromptShelf } from "./prompt-shelf.js";
+import { PromptHintRow } from "./prompt-hint-row.js";
+import { FileAutocomplete } from "../dialogs/file-autocomplete.js";
+import { PROMPT_BODY_BORDER } from "../utils/border-chars.js";
+import { formatTokens, formatUsd } from "../utils/format.js";
+import { placeholderText, randomPlaceholderIndex } from "../utils/placeholder-rotation.js";
+import { activeMention } from "../utils/mention-parser.js";
 
-export interface PromptEditorProps {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: (value: string) => void;
-  onHistoryUp: () => void;
-  onHistoryDown: () => void;
-  onTabComplete: () => void;
-  placeholder?: string;
-}
+import { Show } from "solid-js";
+import type { TextareaRenderable, KeyEvent, MouseEvent } from "@opentui/core";
+import type { MessageView } from "../store/index.js";
+import type { FileEntryDto } from "../api/types.js";
 
-// Multi-line editor on Ink's useInput. Shift+Enter inserts newline
-// (Option+Enter on macOS terminals that don't distinguish modifier on
-// Enter — documented in tui/README.md). Up at line 0 / Down at last
-// line walks history. Tab triggers completion via parent.
-export function PromptEditor(props: PromptEditorProps): React.ReactElement {
-  const { value, onChange, onSubmit, onHistoryUp, onHistoryDown, onTabComplete } = props;
+const PALETTE_SHORTCUT = process.platform === "darwin" ? "⌘K" : "ctrl+k";
+const INTERRUPT_RESET_MS = 5000;
+const EMPTY_MESSAGES: MessageView[] = [];
 
-  useInput((input, key) => {
-    if (key.return) {
-      if (key.shift || key.meta) {
-        onChange(value + "\n");
-        return;
-      }
-      const submission = value;
-      onChange("");
-      onSubmit(submission);
-      return;
+// History flips Enter/Shift+Enter relative to the engine defaults (which are
+// return->newline, meta+return->submit). Custom bindings override defaults.
+const PROMPT_KEY_BINDINGS = [
+  { name: "return", action: "submit" as const },
+  { name: "kpenter", action: "submit" as const },
+  { name: "linefeed", action: "submit" as const },
+  { name: "return", shift: true, action: "newline" as const },
+  { name: "kpenter", shift: true, action: "newline" as const },
+];
+
+export function PromptEditor() {
+  const oc = theme.oc;
+  const runtime = useRuntime();
+  const submit = createPromptSubmit(runtime);
+
+  let input: TextareaRenderable | undefined;
+  const [value, setValue] = createSignal("");
+  const [historyIdx, setHistoryIdx] = createSignal<number | null>(null);
+  const [interruptCount, setInterruptCount] = createSignal(0);
+  const [placeholderIdx, setPlaceholderIdx] = createSignal(randomPlaceholderIndex());
+  // @-mention autocomplete: query is the active `@token` path (null when no
+  // mention is under the cursor). files/index drive the inline popup. The popup
+  // is editor-local (not a modal overlay) so the textarea keeps focus and the
+  // user can refine the query as they type.
+  const [mentionQuery, setMentionQuery] = createSignal<string | null>(null);
+  const [acFiles, setAcFiles] = createSignal<FileEntryDto[]>([]);
+  const [acIndex, setAcIndex] = createSignal(0);
+  let interruptTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const sessions = useStoreSelector((s) => s.sessions);
+  const agents = useStoreSelector((s) => s.agents);
+  const messages = useStoreSelector((s) => {
+    const id = s.activeSessionId;
+    return id ? s.messages[id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
+  });
+  const overlayCount = useStoreSelector((s) => s.overlays.length);
+
+  const session = createMemo(() => {
+    const id = activeSessionId();
+    return id ? sessions()[id] ?? null : null;
+  });
+  // On the home route (no session) show the agent /new would pick so the meta
+  // row is populated; in a session show that session's agent.
+  const agent = createMemo(() => {
+    const s = session();
+    const list = agents();
+    return s ? list.find((a) => a.id === s.agent_id) ?? null : list[0] ?? null;
+  });
+  const model = createMemo(() => agent()?.model ?? "—");
+  const accent = createMemo(() => (agent() ? oc.borderActive : oc.border));
+  const streaming = createMemo(() => session()?.status === "running");
+
+  const usageText = createMemo(() => {
+    const list = messages();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const total = list[i]?.step_finish?.usage_total;
+      if (total && total > 0) return formatTokens(total);
     }
-    if (key.tab) {
-      onTabComplete();
-      return;
-    }
-    if (key.upArrow) {
-      onHistoryUp();
-      return;
-    }
-    if (key.downArrow) {
-      onHistoryDown();
-      return;
-    }
-    if (key.backspace || key.delete) {
-      onChange(value.slice(0, -1));
-      return;
-    }
-    if (key.ctrl || key.escape) return;
-    if (input) onChange(value + input);
+    return undefined;
+  });
+  const costText = createMemo(() => {
+    const raw = session()?.cost_decimal_str;
+    if (!raw) return undefined;
+    return Number.parseFloat(raw) > 0 ? formatUsd(raw) : undefined;
   });
 
-  const display = value || (props.placeholder ?? "Type a message — Enter to send, Shift+Enter for newline");
+  // Re-roll the placeholder when the session changes, like OpenCode.
+  createEffect(on(activeSessionId, () => setPlaceholderIdx(randomPlaceholderIndex()), { defer: true }));
+
+  // Disarm the interrupt whenever the turn stops streaming. Without this the
+  // arm count survives into the next turn (one started by a slash-command or a
+  // server retry, not this editor's Enter path), so a single Esc could abort
+  // it — breaking the esc→esc-again→abort contract.
+  createEffect(
+    on(
+      streaming,
+      (s) => {
+        if (!s) setInterruptCount(0);
+      },
+      { defer: true },
+    ),
+  );
+
+  // Focus the textarea when no overlay is open; blur it while one is, so the
+  // overlay (not the editor) owns the keyboard — matches OpenCode's dialog gate.
+  createEffect(() => {
+    if (!input || input.isDestroyed) return;
+    if (overlayCount() > 0) {
+      if (input.focused) input.blur();
+    } else if (!input.focused) {
+      input.focus();
+    }
+  });
+
+  onCleanup(() => {
+    if (interruptTimer) clearTimeout(interruptTimer);
+  });
+
+  function recallHistory(delta: -1 | 1): void {
+    const list = runtime.history.list();
+    if (list.length === 0) return;
+    const current = historyIdx();
+    // Down while not navigating is a no-op — there is nothing "below" the live
+    // buffer to recall. Only Up enters history from the idle state.
+    if (current === null && delta > 0) return;
+    const next = current === null ? list.length - 1 : current + delta;
+    if (next < 0 || next >= list.length) {
+      setHistoryIdx(null);
+      if (delta > 0) applyText("");
+      return;
+    }
+    setHistoryIdx(next);
+    applyText(list[next]!);
+  }
+
+  function applyText(text: string): void {
+    setValue(text);
+    if (!input || input.isDestroyed) return;
+    input.setText(text);
+    input.gotoBufferEnd();
+  }
+
+  function armInterrupt(): void {
+    const id = activeSessionId();
+    if (!streaming() || !id) return;
+    const next = interruptCount() + 1;
+    setInterruptCount(next);
+    if (interruptTimer) clearTimeout(interruptTimer);
+    interruptTimer = setTimeout(() => setInterruptCount(0), INTERRUPT_RESET_MS);
+    if (next >= 2) {
+      void runtime.client.abort(id).catch(() => {});
+      setInterruptCount(0);
+    }
+  }
+
+  // Recompute the active @-mention from the textarea's buffer + cursor; opens
+  // or closes the inline popup. Called on content/cursor change.
+  function refreshMention(): void {
+    if (!input || input.isDestroyed) {
+      setMentionQuery(null);
+      return;
+    }
+    const span = activeMention(input.plainText, input.cursorOffset);
+    setMentionQuery(span ? span.path : null);
+    if (span) setAcIndex(0);
+  }
+
+  // Debounced listFiles fetch driven by the active mention query.
+  createEffect(
+    on(mentionQuery, (q) => {
+      if (q === null) {
+        setAcFiles([]);
+        return;
+      }
+      const timer = setTimeout(() => {
+        void runtime.client
+          .listFiles(q)
+          .then((res) => {
+            if (mentionQuery() === q) setAcFiles(res.files);
+          })
+          .catch(() => setAcFiles([]));
+      }, 120);
+      onCleanup(() => clearTimeout(timer));
+    }),
+  );
+
+  const popupOpen = () => mentionQuery() !== null && acFiles().length > 0;
+
+  // Replace the active `@query` span with the chosen `@path` token in the
+  // textarea, then close the popup.
+  function acceptMention(path: string): void {
+    if (!input || input.isDestroyed) return;
+    const buffer = input.plainText;
+    const span = activeMention(buffer, input.cursorOffset);
+    if (!span) return;
+    const next = `${buffer.slice(0, span.start)}@${path} ${buffer.slice(span.end)}`;
+    input.setText(next);
+    input.cursorOffset = span.start + path.length + 2;
+    setValue(next);
+    setMentionQuery(null);
+  }
+
+  const onKeyDown = (event: KeyEvent): void => {
+    // When the file popup is open it captures navigation/accept/close keys.
+    if (popupOpen()) {
+      if (event.name === "up") {
+        event.preventDefault();
+        setAcIndex((i) => Math.max(0, i - 1));
+        return;
+      }
+      if (event.name === "down") {
+        event.preventDefault();
+        setAcIndex((i) => Math.min(acFiles().length - 1, i + 1));
+        return;
+      }
+      if (event.name === "return" || event.name === "tab") {
+        event.preventDefault();
+        const choice = acFiles()[acIndex()];
+        if (choice) acceptMention(choice.path);
+        return;
+      }
+      if (event.name === "escape") {
+        event.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
+    handleKey(event);
+  };
+
+  function handleKey(event: KeyEvent): void {
+    if (event.name === "k" && event.ctrl) {
+      // ⌘K / ctrl+k opens the command palette overlay; the editor blurs (the
+      // overlay-open effect) so the palette owns the keyboard.
+      event.preventDefault();
+      useStore.getState().pushOverlay({ kind: "command_palette" });
+      return;
+    }
+    if (event.name === "up" && (input?.cursorOffset ?? 0) === 0) {
+      event.preventDefault();
+      recallHistory(-1);
+      return;
+    }
+    if (event.name === "down" && input && input.cursorOffset === input.plainText.length) {
+      event.preventDefault();
+      recallHistory(1);
+      return;
+    }
+    if (event.name === "tab") {
+      // Autocomplete (@-files / commands) lands in Phase 6; swallow Tab so it
+      // does not insert a literal tab into the prompt in the meantime.
+      event.preventDefault();
+      return;
+    }
+    if (event.name === "escape") {
+      event.preventDefault();
+      armInterrupt();
+    }
+  }
+
+  function onSubmit(): void {
+    const text = input && !input.isDestroyed ? input.plainText : value();
+    setHistoryIdx(null);
+    setInterruptCount(0);
+    applyText("");
+    void submit(text);
+  }
+
   return (
-    <Box borderStyle="single" borderColor={theme.border.active} paddingX={1}>
-      <Text color={value ? theme.text.primary : theme.text.muted}>{display}</Text>
-      <Text color={theme.border.active}>▌</Text>
-    </Box>
+    <box flexShrink={0} flexDirection="column">
+      <box border={["left"]} borderColor={accent()} customBorderChars={PROMPT_BODY_BORDER}>
+        <box
+          flexGrow={1}
+          flexShrink={0}
+          paddingLeft={2}
+          paddingRight={2}
+          paddingTop={1}
+          backgroundColor={oc.backgroundElement}
+        >
+          <textarea
+            placeholder={placeholderText(placeholderIdx())}
+            placeholderColor={oc.textMuted}
+            textColor={oc.text}
+            focusedTextColor={oc.text}
+            backgroundColor={oc.backgroundElement}
+            focusedBackgroundColor={oc.backgroundElement}
+            cursorColor={oc.text}
+            minHeight={1}
+            maxHeight={6}
+            keyBindings={PROMPT_KEY_BINDINGS}
+            onContentChange={() => {
+              if (input && !input.isDestroyed) setValue(input.plainText);
+              refreshMention();
+            }}
+            onCursorChange={() => refreshMention()}
+            onKeyDown={onKeyDown}
+            onSubmit={onSubmit}
+            onMouseDown={(e: MouseEvent) => e.target?.focus()}
+            ref={(r: TextareaRenderable) => {
+              input = r;
+            }}
+          />
+          <PromptMetaRow agent={agent()} model={model()} accent={accent()} />
+        </box>
+      </box>
+      <Show when={popupOpen()}>
+        <FileAutocomplete query={mentionQuery() ?? ""} files={acFiles()} index={acIndex()} />
+      </Show>
+      <PromptShelf borderColor={accent()} />
+      <PromptHintRow
+        streaming={streaming()}
+        interruptArmed={interruptCount() > 0}
+        usage={usageText()}
+        cost={costText()}
+        paletteShortcut={PALETTE_SHORTCUT}
+        spinnerColor={accent()}
+      />
+    </box>
   );
 }

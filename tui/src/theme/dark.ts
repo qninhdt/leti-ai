@@ -2,7 +2,11 @@
 // chalk/Ink falls back to 256/16
 // on terminals that don't support truecolor.
 
+import { openCodeDark, type OpenCodePalette } from "./opencode-palette.js";
+
 export interface Theme {
+  /// OpenCode-style flat palette (new render layer reads these).
+  oc: OpenCodePalette;
   text: {
     primary: string;
     muted: string;
@@ -42,6 +46,7 @@ export interface Theme {
 // - diff.removed = #ff5f5f  (256:203)
 // - diff.added   = #5fa050  (256:70)
 export const dark: Theme = {
+  oc: openCodeDark,
   text: {
     primary: "#e0e0e0",
     muted: "#808080",
