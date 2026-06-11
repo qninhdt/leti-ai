@@ -42,6 +42,10 @@ impl ConversationRuntime {
     /// or halt; hard failures (turn error, empty/overflowing summary)
     /// propagate as `Err`.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        fields(session_id = %input.session_id, keep = keep)
+    )]
     pub(super) async fn run_compaction(
         &self,
         memory: &Arc<dyn MemoryStore>,

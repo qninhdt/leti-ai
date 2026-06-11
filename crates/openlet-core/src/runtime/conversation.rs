@@ -255,6 +255,10 @@ impl ConversationRuntime {
     /// immediately. Honors a server `Retry-After` over computed backoff;
     /// caps both attempt count and cumulative sleep. Cancellation aborts
     /// the wait between attempts.
+    #[tracing::instrument(
+        skip_all,
+        fields(session_id = %session_id, model = %req.model)
+    )]
     async fn chat_stream_with_retry(
         &self,
         session_id: SessionId,

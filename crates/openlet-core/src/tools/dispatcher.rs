@@ -140,6 +140,10 @@ pub async fn dispatch_batch(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    fields(session_id = %session_id, tool = %inv.name, call_id = %inv.call_id)
+)]
 async fn run_one_with_hooks(
     registry: &Arc<ToolRegistry>,
     permission: &Arc<dyn PermissionManager>,
