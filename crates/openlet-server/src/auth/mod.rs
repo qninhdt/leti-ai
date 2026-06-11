@@ -16,7 +16,9 @@ pub mod credential;
 pub mod layer;
 pub mod principal;
 
-pub use authenticator::{AuthError, Authenticator, LocalDevAuthenticator};
+pub use authenticator::{
+    AuthError, Authenticator, LocalDevAuthenticator, RuntimeProfile, authenticator_for_profile,
+};
 pub use credential::{
     CredentialError, CredentialProvider, NoopCredentialProvider, OutboundCredential,
 };

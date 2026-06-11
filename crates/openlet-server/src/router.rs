@@ -5,6 +5,8 @@
 //! routes by skipping ours and merging their own). [`build`] is kept as a
 //! thin wrapper for the reference binary + integration tests.
 
+use std::sync::Arc;
+
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use tower_http::cors::CorsLayer;
@@ -15,11 +17,14 @@ use utoipa_axum::routes;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::app_state::AppState;
+use crate::auth::{AuthLayer, Authenticator, LocalDevAuthenticator};
+use crate::middleware::WorkspaceRoutingLayer;
 use crate::openapi::ApiDoc;
 use crate::routes::{
     agent, attachments, cancel, diagnostics, event, health, message, model, permission, plugin,
     question, session,
 };
+use crate::workspace_resolver::StaticWorkspaceResolver;
 
 /// Fluent router composer. Call `with_*_routes()` to attach a feature
 /// group; call `build(state)` to finalize into an `axum::Router`.
@@ -150,17 +155,43 @@ impl RouterBuilder {
         self
     }
 
-    /// Finalize: attach trace+cors layers, mount Swagger UI from the
-    /// accumulated OpenAPI doc, bind the state.
+    /// Finalize with the local dev authenticator. Equivalent to
+    /// `build_with_auth(state, LocalDevAuthenticator::default())`. This is
+    /// the local-binary + integration-test entry point; cloud binaries
+    /// call [`build_with_auth`](Self::build_with_auth) with their own
+    /// verifier.
+    pub fn build(self, state: AppState) -> Router {
+        self.build_with_auth(state, Arc::new(LocalDevAuthenticator::default()))
+    }
+
+    /// Finalize: mount auth + workspace-routing, attach trace+cors layers,
+    /// mount Swagger UI from the accumulated OpenAPI doc, bind the state.
+    ///
+    /// Layer order (outermost → innermost as a request descends):
+    /// BodyLimit → CORS → Trace → `AuthLayer` → `WorkspaceRoutingLayer` →
+    /// handler. CORS sits OUTSIDE auth so browser `OPTIONS` preflight is
+    /// answered without a credential; the body limit caps the request
+    /// before auth runs. Auth runs before workspace routing so the
+    /// injected `AuthPrincipal` is present for the workspace gate.
     ///
     /// CORS defaults to a closed policy (no origins allowed). Set
     /// `OPENLET_CORS_ALLOW_ORIGINS` to a comma-separated origin list
     /// (e.g. `https://app.example.com,https://admin.example.com`) to
     /// allow cross-origin browsers; set `OPENLET_CORS_PERMISSIVE=1` for
     /// dev-only `Access-Control-Allow-Origin: *` (warns on boot).
-    pub fn build(self, state: AppState) -> Router {
+    pub fn build_with_auth(self, state: AppState, authenticator: Arc<dyn Authenticator>) -> Router {
+        // The workspace resolver stays single-tenant (Static) this phase;
+        // the dynamic/cloud resolver lands in a later phase. It resolves
+        // any well-formed id to the one shared state.
+        let workspace_layer =
+            WorkspaceRoutingLayer::new(StaticWorkspaceResolver::new(Arc::new(state.clone())));
+
         let (router, api) = self
             .inner
+            // Innermost of the middleware stack: workspace routing, then
+            // auth ABOVE it (auth runs first on the way in).
+            .layer(workspace_layer)
+            .layer(AuthLayer::new(authenticator))
             .layer(TraceLayer::new_for_http())
             .layer(build_cors_layer())
             // 2 MiB global body limit applies to ALL routes, not only

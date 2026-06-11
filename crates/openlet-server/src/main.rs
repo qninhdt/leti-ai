@@ -279,42 +279,50 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // as `set_runtime` — idempotent, fires once at boot.
     core_api_impl.set_active_turns(state.active_turns.clone());
 
-    // The local binary mounts no upstream auth layer, but the
-    // `question/answer` route requires an `AuthPrincipal` extension
-    // (cloud integrators attach a real one). Inject a stub so the
-    // `ask_user` rendezvous works out-of-the-box locally — otherwise
-    // every `ask_user` call hangs until timeout. Loopback-only +
-    // no-auth is the documented MVP posture, so a constant principal
-    // is the correct local behaviour.
-    let app = RouterBuilder::default()
-        .build(state.clone())
-        .layer(axum::Extension(openlet_server::AuthPrincipal::user(
-            "local-dev",
-        )));
+    // Resolve the inbound authenticator from the runtime profile. Local
+    // profile → dev authenticator (admits a fixed principal, no auth
+    // server). Cloud profile → fail-closed: openlet-ai ships no real
+    // verifier, so boot refuses to start (the cloud binary builds its own
+    // and calls `RouterBuilder::build_with_auth`). The mounted AuthLayer
+    // now injects the principal the `ask_user` question route requires —
+    // no post-hoc Extension layer needed.
+    let profile = openlet_server::auth::RuntimeProfile::from_env()?;
+    let authenticator = openlet_server::auth::authenticator_for_profile(profile)?;
+    let authenticator_is_dev = authenticator.is_dev();
+    let app = RouterBuilder::default().build_with_auth(state.clone(), authenticator);
     let listener = TcpListener::bind(&config.bind_addr)
         .await
         .with_context(|| format!("binding {}", config.bind_addr))?;
     let local_addr = listener.local_addr().ok();
 
-    // Refuse non-loopback binds without explicit operator opt-in via
-    // OPENLET_ALLOW_NON_LOOPBACK=1. The MVP threat model assumes no auth
-    // in front of the API; binding to a routable address would expose
-    // every endpoint (incl. permission auto-approve) to the network.
+    // Refuse non-loopback binds unless BOTH an explicit operator opt-in
+    // (OPENLET_ALLOW_NON_LOOPBACK=1) AND a non-dev authenticator are in
+    // place. A dev authenticator admits every request as the same
+    // principal, so exposing it beyond loopback would hand the whole API
+    // to the network — a warn is not access control. Fail-closed.
     if let Some(addr) = local_addr {
         let allow_non_loopback = std::env::var("OPENLET_ALLOW_NON_LOOPBACK")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        if !addr.ip().is_loopback() && !allow_non_loopback {
-            anyhow::bail!(
-                "refusing to bind non-loopback address {addr} without OPENLET_ALLOW_NON_LOOPBACK=1; \
-                 the MVP server has no built-in auth and must not be exposed beyond loopback",
-            );
-        }
         if !addr.ip().is_loopback() {
+            if !allow_non_loopback {
+                anyhow::bail!(
+                    "refusing to bind non-loopback address {addr} without \
+                     OPENLET_ALLOW_NON_LOOPBACK=1",
+                );
+            }
+            if authenticator_is_dev {
+                anyhow::bail!(
+                    "refusing to bind non-loopback address {addr} with the dev authenticator; \
+                     it admits every request as one principal. Run with \
+                     OPENLET_RUNTIME_PROFILE=cloud and a real Authenticator before exposing \
+                     beyond loopback",
+                );
+            }
             tracing::warn!(
                 bind = %addr,
-                "bound NON-LOOPBACK address — every endpoint is exposed without auth; \
-                 ensure an authenticating reverse-proxy fronts this listener"
+                "bound NON-LOOPBACK address with a non-dev authenticator; \
+                 ensure the deployment fronts this listener appropriately"
             );
         } else {
             info!(bind = %addr, "bound loopback at http://{addr}");

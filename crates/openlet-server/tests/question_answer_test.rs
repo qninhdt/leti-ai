@@ -6,19 +6,35 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{HeaderMap, Request, StatusCode};
 use openlet_core::runtime::{QuestionId, QuestionRegistry};
 use openlet_protocol::dto::QuestionAnswerDto;
+use openlet_server::{AuthError, AuthPrincipal, Authenticator, RouterBuilder};
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
 mod support;
 
+/// Authenticator that rejects every request — stands in for "no valid
+/// credential presented" so we can exercise the 401 path now that the
+/// default router always mounts the admitting dev authenticator.
+struct RejectingAuthenticator;
+
+#[async_trait]
+impl Authenticator for RejectingAuthenticator {
+    async fn authenticate(&self, _headers: &HeaderMap) -> Result<AuthPrincipal, AuthError> {
+        Err(AuthError::MissingCredential)
+    }
+}
+
 #[tokio::test]
 async fn question_answer_without_auth_principal_returns_401() {
-    let harness = support::TestHarness::new().await;
-    let app = harness.router();
+    let state = support::TestHarness::raw_state().await;
+    // Mount a rejecting authenticator so no AuthPrincipal is injected →
+    // the auth layer short-circuits with 401 before the route runs.
+    let app = RouterBuilder::default().build_with_auth(state, Arc::new(RejectingAuthenticator));
 
     let body = serde_json::to_vec(&QuestionAnswerDto {
         question_id: Uuid::now_v7(),
