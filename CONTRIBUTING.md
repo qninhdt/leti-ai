@@ -11,8 +11,9 @@ cargo audit
 ( cd tui && npm run typecheck && npm test && npm pack --dry-run )
 ```
 
-All six must pass before opening a PR. The CI mirror is in
-`.github/workflows/` (added by Phase 8).
+All six must pass before opening a PR. CI mirrors them on every PR via
+`.github/workflows/ci.yml` (rust fmt/clippy/test/deny/audit + TUI
+typecheck/test/pack + an OpenAPI→types contract-drift guard).
 
 ## Code style
 

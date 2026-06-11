@@ -1,5 +1,5 @@
 # cargo-deny config — license + advisory + bans policy.
-# Run via `cargo deny check`. Wired in CI per Phase 8.
+# Run via `cargo deny check`; gated on every PR by .github/workflows/ci.yml.
 
 [graph]
 all-features = false
@@ -12,6 +12,9 @@ feature-depth = 1
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
+# Two transitive advisories are ignored with a documented rationale +
+# review date. Re-evaluate at each review; drop the ignore once the
+# upstream dep migrates. REVIEW BY: 2026-09-01.
 ignore = [
     # paste 1.x — unmaintained. Transitive via utoipa-axum's macros.
     # No security impact; expansion-only proc-macro. Drop when utoipa-axum migrates.
@@ -49,10 +52,16 @@ expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [bans]
+# Duplicate versions of the same crate are flagged. `deny` would fail the
+# build on any duplicate in the tree; we keep `warn` because the transitive
+# graph legitimately carries a few (e.g. windows-sys majors) we don't
+# control — but the CI job surfaces them so a NEW duplicate is visible in
+# review rather than silent.
 multiple-versions = "warn"
-# Workspace path-deps surface as wildcards in cargo-deny; that's expected for
-# intra-workspace crates. We only forbid wildcards for external crates.io deps.
-wildcards = "allow"
+# Forbid wildcard (`*`) version requirements on EXTERNAL crates.io deps —
+# a `*` lets a typosquat/unexpected major slip in. Intra-workspace path
+# deps legitimately resolve as wildcards, so those stay allowed.
+wildcards = "deny"
 allow-wildcard-paths = true
 highlight = "all"
 workspace-default-features = "allow"

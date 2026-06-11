@@ -1,0 +1,68 @@
+# Nightly + manual real-LLM acceptance. NEVER runs on PRs (cost + secret).
+# Gated by OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY (an Actions secret), so a
+# missing secret skips cleanly rather than failing the dashboard.
+name: nightly
+
+on:
+  schedule:
+    # 07:13 UTC — off the top-of-hour to avoid the scheduler stampede.
+    - cron: "13 7 * * *"
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "OpenRouter model id (cheapest by default)"
+        required: false
+        default: "openai/gpt-4o-mini"
+
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  live-acceptance:
+    name: real-LLM acceptance (gated, cost-bounded)
+    runs-on: ubuntu-latest
+    # Only run when a key is configured — keeps forks + key-less repos green.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.OPENLET_NIGHTLY_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup show
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Run gated acceptance suite
+        env:
+          OPENLET_LIVE_E2E: "1"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENLET_LIVE_E2E_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o-mini' }}
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::notice::OPENROUTER_API_KEY not set — skipping live acceptance (CI stays green)."
+            exit 0
+          fi
+          # The #[ignore]'d live tests only run under --ignored AND the env gate.
+          cargo test -p openlet-server -- --ignored
+
+      # Evidence is written to gitignored plans/**/evidence/. It is scrubbed
+      # at write time by the Phase 12 evidence scrubber (sk- keys, bearer,
+      # OPEN{ROUTER,AI}_* assignments, emails) — never raw transcripts.
+      - name: Upload scrubbed evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-evidence
+          path: plans/**/evidence/**
+          if-no-files-found: ignore
+          retention-days: 7

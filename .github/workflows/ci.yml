@@ -1,0 +1,123 @@
+# PR + push CI — the documented pre-PR checklist, automated. Keyless:
+# runs the mock-backed e2e only, so forks + no-secret runs stay green.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  rust:
+    name: rust (fmt / clippy / test / deny / audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test (workspace; mock-backed e2e only — no key)
+        run: cargo test --workspace
+
+      - name: Install cargo-deny + cargo-audit
+        run: |
+          cargo install cargo-deny --locked || true
+          cargo install cargo-audit --locked || true
+
+      - name: Supply-chain — cargo deny
+        run: cargo deny check
+
+      - name: Supply-chain — cargo audit
+        run: cargo audit
+
+  tui:
+    name: tui (typecheck / test / pack)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tui/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm pack --dry-run
+
+  contract-drift:
+    name: contract-drift (OpenAPI → types.ts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup show
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Cache cargo + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Boot the server (mock provider, ephemeral) and dump its OpenAPI doc,
+      # then regenerate the TS schema and fail if it diverges from the
+      # committed copy — prevents the TUI contract-mismatch class of bug.
+      - name: Boot server + capture OpenAPI
+        run: |
+          OPENLET_BIND=127.0.0.1:8787 \
+          OPENLET_DATA_DIR="$(mktemp -d)" \
+            cargo run -p openlet-server -- serve &
+          SERVER_PID=$!
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8787/v1/doc/openapi.json -o /tmp/openapi.json
+          kill "$SERVER_PID" 2>/dev/null || true
+
+      - name: Regenerate TS schema + diff
+        working-directory: tui
+        run: |
+          npm ci
+          npx openapi-typescript /tmp/openapi.json -o src/api/schema.d.ts
+          if ! git diff --quiet -- src/api/schema.d.ts; then
+            echo "::error::tui/src/api/schema.d.ts is stale vs the server OpenAPI doc. Run 'npm run codegen' and commit."
+            git --no-pager diff -- src/api/schema.d.ts
+            exit 1
+          fi

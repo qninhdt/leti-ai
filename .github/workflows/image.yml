@@ -1,0 +1,78 @@
+# Build the Phase-13 Docker image on merge to main (and tags), then smoke
+# the container's healthcheck. Push is gated behind a configured registry —
+# without one it builds + smokes only, so the workflow is green out of the box.
+name: image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    name: build image + healthcheck smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load into local docker)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: openlet-server:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Container healthcheck smoke
+        run: |
+          # Run the image with the in-process mock model so no key is needed,
+          # bound loopback inside the container; poll /v1/health from the host
+          # via the published port.
+          docker run -d --name openlet-smoke \
+            -p 127.0.0.1:8787:8787 \
+            -e OPENLET_DEFAULT_MODEL=mock/model-small \
+            openlet-server:ci
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then
+              ok=1; break
+            fi
+            sleep 2
+          done
+          docker logs openlet-smoke || true
+          docker rm -f openlet-smoke || true
+          if [ "$ok" != "1" ]; then
+            echo "::error::container failed /v1/health smoke"
+            exit 1
+          fi
+
+      # Push only when a registry is configured (secrets present). Skipped
+      # cleanly otherwise so the default workflow stays green.
+      - name: Log in to registry
+        if: ${{ env.REGISTRY != '' && secrets.REGISTRY_TOKEN != '' }}
+        env:
+          REGISTRY: ${{ vars.REGISTRY }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY }}
+          username: ${{ vars.REGISTRY_USER }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Push image
+        if: ${{ vars.REGISTRY != '' && secrets.REGISTRY_TOKEN != '' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ vars.REGISTRY }}/openlet-server:latest
+          cache-from: type=gha

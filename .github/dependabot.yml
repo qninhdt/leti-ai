@@ -1,0 +1,26 @@
+# Dependabot — keep dependencies current so cargo-audit/cargo-deny don't
+# accumulate drift between manual bumps. Weekly, grouped to limit PR noise.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      rust-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: "/tui"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tui-deps:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
