@@ -230,9 +230,27 @@ impl ConversationRuntime {
             }
             let outcome = self.run_turn(input.clone(), cancel.clone()).await?;
             model_steps += 1;
+            // turns_total counts model steps (each LLM call), the unit a
+            // dashboard reasons about. No-op until a recorder is installed.
+            metrics::counter!("openlet_turns_total").increment(1);
             last_assistant_id = Some(outcome.assistant_message_id);
             if let Some(u) = outcome.usage.as_ref() {
                 last_actual_tokens = Some(u.input_tokens as usize);
+                // Canonical token/cost emit point — `outcome.usage`/`cost_usd`
+                // is the single source the cost path reads. No `workspace`
+                // label (M16): the open scrape stays tenant-aggregate.
+                metrics::counter!("openlet_tokens_total", "kind" => "prompt")
+                    .increment(u.input_tokens);
+                metrics::counter!("openlet_tokens_total", "kind" => "completion")
+                    .increment(u.output_tokens);
+                if let Some(cost) = outcome.cost_usd {
+                    use rust_decimal::prelude::ToPrimitive;
+                    if let Some(c) = cost.to_f64() {
+                        // Fractional USD → a monotonically-incrementing gauge
+                        // (counters are u64-only in the metrics facade).
+                        metrics::gauge!("openlet_cost_usd_total").increment(c);
+                    }
+                }
                 // Anchor the unsent-tail boundary: these are the messages
                 // whose tokens `provider_actual` now accounts for. Tool
                 // results appended after this turn fall beyond the boundary

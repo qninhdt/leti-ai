@@ -32,6 +32,7 @@ tokio-util = { workspace = true, features = ["rt"] }
 utoipa.workspace = true
 walkdir.workspace = true
 tracing.workspace = true
+metrics.workspace = true
 uuid.workspace = true
 
 # Attachments pipeline (Phase 3). `image` re-exports a default-features
@@ -53,3 +54,4 @@ workspace = true
 openlet-adapters = { path = "../openlet-adapters" }
 rstest.workspace = true
 proptest.workspace = true
+metrics-util = "0.19"

@@ -150,6 +150,9 @@ impl ConversationRuntime {
             original_tokens,
         )
         .await?;
+        // Compaction committed durably — count it here, after the part is
+        // persisted, so a rolled-back/failed attempt above isn't counted.
+        metrics::counter!("openlet_compactions_total").increment(1);
         // Re-project so the next turn sees the summary in place of the
         // compacted messages.
         input.messages = project_session_messages(memory, session_id).await?;

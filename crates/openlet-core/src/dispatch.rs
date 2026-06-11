@@ -212,6 +212,11 @@ pub async fn publish_fault_if_any<I>(
         ..
     } = outcome
     {
+        metrics::counter!(
+            "openlet_plugin_faults_total",
+            "hook" => format!("{:?}", fault.hook),
+        )
+        .increment(1);
         let _ = events
             .publish(
                 plugin_error_event(session_id, fault),

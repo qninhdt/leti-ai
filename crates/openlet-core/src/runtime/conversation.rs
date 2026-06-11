@@ -291,6 +291,7 @@ impl ConversationRuntime {
                     if slept.saturating_add(backoff) > cfg.total_deadline {
                         return Err(CoreError::Provider(e));
                     }
+                    metrics::counter!("openlet_provider_retries_total").increment(1);
                     tracing::warn!(
                         session_id = %session_id,
                         attempt,

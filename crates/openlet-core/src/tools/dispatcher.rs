@@ -99,6 +99,12 @@ pub async fn dispatch_batch(
         });
     }
     while let Some((idx, inv, result)) = futs.next().await {
+        metrics::counter!(
+            "openlet_tool_executions_total",
+            "tool" => inv.name.clone(),
+            "outcome" => if result.is_ok() { "ok" } else { "error" },
+        )
+        .increment(1);
         out[idx] = Some(ToolDispatchResult {
             call_id: inv.call_id,
             name: inv.name,
@@ -120,6 +126,12 @@ pub async fn dispatch_batch(
             &inv,
         )
         .await;
+        metrics::counter!(
+            "openlet_tool_executions_total",
+            "tool" => inv.name.clone(),
+            "outcome" => if result.is_ok() { "ok" } else { "error" },
+        )
+        .increment(1);
         out[idx] = Some(ToolDispatchResult {
             call_id: inv.call_id,
             name: inv.name,
