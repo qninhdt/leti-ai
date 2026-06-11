@@ -20,14 +20,7 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-/// Live traffic opt-in: real key present AND explicit flag. Keeps a
-/// keyless CI green even under `--ignored`.
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 /// Poll the workspace for a predicate until true or the deadline passes.
 async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
@@ -45,15 +38,31 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// create → read → edit → delete, asserting on-disk state after each. This
 /// is the true zero-mock proof of the FS agent: the model decides the next
 /// tool call from the prior tool result.
+///
+/// Two-tier: tier-2 (live) lets a real model advance the CRUD sequence; tier-1
+/// (mock) scripts write→read→edit→bash(rm). Both dispatch the real
+/// write/read/edit/bash tools against the real fs + shell, so the
+/// create-then-delete on-disk assertion holds on either tier.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_does_full_fs_crud() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: the full CRUD tool sequence. The write creates the file,
+    // edit mutates it, bash(rm) deletes it — all real tools, both tiers.
+    let script = vec![
+        tool_turn(
+            "w1",
+            "write",
+            r#"{"path":"notes.txt","content":"alpha\n"}"#,
+        ),
+        tool_turn("r1", "read", r#"{"path":"notes.txt"}"#),
+        tool_turn(
+            "e1",
+            "edit",
+            r#"{"path":"notes.txt","find":"alpha","replace":"alpha beta"}"#,
+        ),
+        tool_turn("d1", "bash", r#"{"command":"rm notes.txt"}"#),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
     let file = ws.join("notes.txt");
 

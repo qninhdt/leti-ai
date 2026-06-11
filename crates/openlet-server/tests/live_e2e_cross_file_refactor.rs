@@ -24,12 +24,7 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 /// Poll a predicate over the workspace until true or the deadline passes.
 async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
@@ -47,15 +42,37 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// NOT told which files or lines — it must `grep` to discover them, then `edit`
 /// each. The assertion is the refactor invariant on disk: the old name appears
 /// in ZERO files, the new name appears in all three.
+///
+/// Two-tier: tier-2 (live) lets a real model discover + rename; tier-1 (mock)
+/// scripts grep→edit×3→grep. Both dispatch the real grep/edit tools against the
+/// real fs, so the on-disk refactor invariant is meaningful on either tier.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_renames_symbol_across_files() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: discover with grep, rename each file with edit
+    // (replace_all since report.py/main.py carry `get_total` twice — import +
+    // call site), verify with a final grep. The edits carry the REAL rename and
+    // run on both tiers, so this drives the same wiring it asserts.
+    let script = vec![
+        tool_turn("g1", "grep", r#"{"pattern":"get_total"}"#),
+        tool_turn(
+            "e1",
+            "edit",
+            r#"{"path":"calc.py","find":"get_total","replace":"compute_sum","replace_all":true}"#,
+        ),
+        tool_turn(
+            "e2",
+            "edit",
+            r#"{"path":"report.py","find":"get_total","replace":"compute_sum","replace_all":true}"#,
+        ),
+        tool_turn(
+            "e3",
+            "edit",
+            r#"{"path":"main.py","find":"get_total","replace":"compute_sum","replace_all":true}"#,
+        ),
+        tool_turn("g2", "grep", r#"{"pattern":"get_total"}"#),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
 
     // Seed a tiny codebase: one definition + two call sites of `get_total`.

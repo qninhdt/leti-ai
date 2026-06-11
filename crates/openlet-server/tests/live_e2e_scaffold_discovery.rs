@@ -22,12 +22,7 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
+use live_support::{LiveServer, text_turn, tool_turn};
 
 async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
     let start = std::time::Instant::now();
@@ -45,15 +40,42 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// write `MANIFEST.txt` listing the function names it found. The assertion
 /// checks: the files landed in the subdir, AND the manifest names the three
 /// functions — proving the discovery half actually read the tree back.
+///
+/// Two-tier: tier-2 (live) lets a real model scaffold + discover + summarize;
+/// tier-1 (mock) scripts write×3→glob→grep→write-manifest. Both dispatch the
+/// real write/glob/grep tools, so the on-disk structure + manifest assertions
+/// are meaningful on either tier.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn real_model_scaffolds_then_discovers_and_summarizes() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
-    let srv = LiveServer::with_openrouter().await;
+    // Tier-1 script: scaffold three modules under src/, glob + grep to
+    // "discover" them, then write the manifest. The writes carry the real
+    // content the assertions check; all tools execute on both tiers.
+    let script = vec![
+        tool_turn(
+            "w1",
+            "write",
+            r#"{"path":"src/alpha.py","content":"def handle_alpha():\n    return 'alpha'\n"}"#,
+        ),
+        tool_turn(
+            "w2",
+            "write",
+            r#"{"path":"src/beta.py","content":"def handle_beta():\n    return 'beta'\n"}"#,
+        ),
+        tool_turn(
+            "w3",
+            "write",
+            r#"{"path":"src/gamma.py","content":"def handle_gamma():\n    return 'gamma'\n"}"#,
+        ),
+        tool_turn("gl", "glob", r#"{"pattern":"src/*.py"}"#),
+        tool_turn("gr", "grep", r#"{"pattern":"def handle_"}"#),
+        tool_turn(
+            "wm",
+            "write",
+            r#"{"path":"MANIFEST.txt","content":"handle_alpha\nhandle_beta\nhandle_gamma\n"}"#,
+        ),
+        text_turn("DONE"),
+    ];
+    let srv = LiveServer::for_scenario(script).await;
     let ws = srv.workspace_root().to_path_buf();
 
     let sid = srv.create_session().await;
