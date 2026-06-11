@@ -22,15 +22,10 @@
 use std::time::Duration;
 
 mod live_support;
-use live_support::LiveServer;
+use live_support::{LiveServer, text_turn};
 
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
-
-fn live_enabled() -> bool {
-    std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
-}
 
 /// Scan every persisted part of the session for a `Part::Compaction`, proving
 /// the runtime genuinely compacted (not merely that the model rambled). Reads
@@ -82,18 +77,31 @@ async fn last_assistant_text_lower(srv: &LiveServer, sid: &str) -> String {
 /// the compaction threshold of the small-window agent), then ask the model to
 /// recall the fact. Assert BOTH: compaction actually fired, and the fact
 /// survived into the post-compaction answer.
+///
+/// Two-tier: tier-1 (mock) proves compaction FIRES (durable Part::Compaction)
+/// and the post-compaction answer is plumbed through — its scripted turns all
+/// carry the sentinel (incl. the drained-queue fallback, since compaction
+/// inserts extra summarization turns), so recall is preserved by construction.
+/// tier-2 (live) additionally proves a REAL model recalls the fact across a
+/// real summarization turn. Same body, both meaningful.
 #[tokio::test]
-#[ignore = "live OpenRouter; run with OPENLET_LIVE_E2E=1 -- --ignored"]
 async fn fact_survives_real_compaction() {
-    if !live_enabled() {
-        eprintln!("skipping: set OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY to run");
-        return;
-    }
-
+    // Tier-1: only the first turn (plant ack) is scripted; EVERY subsequent
+    // turn — fillers, the compaction summarization turns (unpredictable count),
+    // and the final recall — falls through to the sentinel-bearing fallback.
+    // This removes turn-alignment fragility (compaction inserts extra model
+    // calls), and the assertion still meaningfully checks compaction FIRED and
+    // the answer plumbed through. Recall-correctness is tier-2's job.
+    let sentinel_line = "the project codename is GREENFINCH-42";
+    let script = vec![text_turn(&format!("noted: {sentinel_line}"))];
     // Very small window so even a couple of short turns trip
-    // `context_window * 0.5` (= 50 tokens ≈ 200 chars). Diagnostic-aggressive:
-    // if compaction doesn't fire at this size, the agent isn't resolving.
-    let srv = LiveServer::with_openrouter_small_window(100).await;
+    // `context_window * 0.5` (= 50 tokens ≈ 200 chars).
+    let srv = LiveServer::for_scenario_small_window(
+        100,
+        script,
+        Some("The codename is GREENFINCH-42.".to_string()),
+    )
+    .await;
     let sid = srv.create_session().await;
 
     // Turn 1: plant the fact. Distinctive token so recall can't be a lucky

@@ -92,6 +92,7 @@ impl LiveServer {
             false,
             Vec::new(),
             false,
+            None,
         )
         .await
     }
@@ -112,6 +113,7 @@ impl LiveServer {
             false,
             Vec::new(),
             false,
+            None,
         )
         .await
     }
@@ -119,7 +121,7 @@ impl LiveServer {
     /// Boot against real OpenRouter. Reads `OPENROUTER_API_KEY` from env;
     /// callers must gate on its presence + `OPENLET_LIVE_E2E=1`.
     pub async fn with_openrouter() -> Self {
-        Self::with_openrouter_inner(None, false, Vec::new()).await
+        Self::with_openrouter_inner(None, false, Vec::new(), None).await
     }
 
     /// Two-tier scenario boot: tier-2 (real OpenRouter) when `OPENLET_LIVE_E2E=1`
@@ -127,21 +129,28 @@ impl LiveServer {
     /// The SAME scenario body (drive + on-disk assert) runs on both tiers; only
     /// the LLM backend differs. `script` is the tier-1 tool/text turn sequence.
     pub async fn for_scenario(script: Vec<ScriptedTurn>) -> Self {
-        Self::with_openrouter_inner(None, false, script).await
+        Self::with_openrouter_inner(None, false, script, None).await
     }
 
     /// `for_scenario` with the REAL subagent spawner wired in (for the subagent
     /// scenario: tier-2 lets a live model decide to spawn; tier-1 scripts the
     /// `subagent_task` call).
     pub async fn for_scenario_with_subagents(script: Vec<ScriptedTurn>) -> Self {
-        Self::with_openrouter_inner(None, true, script).await
+        Self::with_openrouter_inner(None, true, script, None).await
     }
 
     /// `for_scenario` with a small compaction window (compaction-continuity
     /// scenario). Tier-1 still exercises the wiring; tier-2 proves a real model
-    /// recalls across a real summarization turn.
-    pub async fn for_scenario_small_window(window: u32, script: Vec<ScriptedTurn>) -> Self {
-        Self::with_openrouter_inner(Some(window), false, script).await
+    /// recalls across a real summarization turn. `fallback` is the text served
+    /// once the scripted queue drains — compaction inserts extra summarization
+    /// turns, so the fallback carries the scenario's sentinel to keep the run
+    /// (and the recall) coherent past the scripted turns.
+    pub async fn for_scenario_small_window(
+        window: u32,
+        script: Vec<ScriptedTurn>,
+        fallback: Option<String>,
+    ) -> Self {
+        Self::with_openrouter_inner(Some(window), false, script, fallback).await
     }
 
     /// Boot against real OpenRouter with a deliberately small agent context
@@ -151,7 +160,7 @@ impl LiveServer {
     /// is `None` and compaction never fires. Used by the compaction-continuity
     /// live test.
     pub async fn with_openrouter_small_window(context_window: u32) -> Self {
-        Self::with_openrouter_inner(Some(context_window), false, Vec::new()).await
+        Self::with_openrouter_inner(Some(context_window), false, Vec::new(), None).await
     }
 
     /// Boot against real OpenRouter with the REAL subagent spawner wired in
@@ -159,13 +168,14 @@ impl LiveServer {
     /// `subagent_task` call drives an actual child run_loop. Used by the
     /// subagent live test.
     pub async fn with_openrouter_subagents() -> Self {
-        Self::with_openrouter_inner(None, true, Vec::new()).await
+        Self::with_openrouter_inner(None, true, Vec::new(), None).await
     }
 
     async fn with_openrouter_inner(
         compaction_window: Option<u32>,
         enable_subagents: bool,
         scripted_turns: Vec<ScriptedTurn>,
+        scripted_fallback: Option<String>,
     ) -> Self {
         // On the live tier the key is REQUIRED; on the mock tier (tier-1) the
         // key is absent, so fall back to a placeholder (the scripted provider
@@ -182,6 +192,7 @@ impl LiveServer {
             enable_subagents,
             scripted_turns,
             true,
+            scripted_fallback,
         )
         .await
     }
@@ -197,6 +208,7 @@ impl LiveServer {
         enable_subagents: bool,
         scripted_turns: Vec<ScriptedTurn>,
         tier_scenario: bool,
+        scripted_fallback: Option<String>,
     ) -> Self {
         let (data_root, owned_tempdir) = match data_dir {
             Some(d) => (d, None),
@@ -242,6 +254,7 @@ impl LiveServer {
         } else {
             Arc::new(ScriptedProvider {
                 turns: Mutex::new(scripted_turns.into()),
+                fallback: scripted_fallback.clone(),
             })
         };
 
@@ -806,6 +819,9 @@ pub fn tool_turn(call_id: &str, name: &str, args_json: &str) -> ScriptedTurn {
 /// deltas so a tripped token yields a synthetic `Cancelled` finish.
 struct ScriptedProvider {
     turns: Mutex<VecDeque<ScriptedTurn>>,
+    /// Text for a synthetic turn served once the queue drains (compaction
+    /// over-run guard). `None` → an empty stream when exhausted.
+    fallback: Option<String>,
 }
 
 #[async_trait]
@@ -815,7 +831,21 @@ impl ModelProvider for ScriptedProvider {
         _req: ChatRequest,
         cancel: CancellationToken,
     ) -> Result<ChatStream, ProviderError> {
-        let deltas = self.turns.lock().unwrap().pop_front().unwrap_or_default();
+        // Pop the next scripted turn. When the queue drains, emit a fresh text
+        // turn built from `fallback` (if set) — compaction inserts extra
+        // summarization turns unpredictably, and an over-run must not strand the
+        // run on an empty stream. The fallback carries the scenario's sentinel
+        // (e.g. the recalled fact) so every served turn preserves it.
+        let deltas = {
+            let popped = self.turns.lock().unwrap().pop_front();
+            match popped {
+                Some(t) => t,
+                None => match &self.fallback {
+                    Some(text) => text_turn(text),
+                    None => Vec::new(),
+                },
+            }
+        };
         let stream = stream::unfold(
             (deltas.into_iter(), cancel, false),
             |(mut iter, cancel, done)| async move {
