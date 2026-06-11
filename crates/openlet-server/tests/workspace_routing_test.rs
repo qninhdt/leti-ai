@@ -30,7 +30,11 @@ struct ConditionalResolver {
 
 #[async_trait]
 impl WorkspaceResolver for ConditionalResolver {
-    async fn resolve(&self, workspace_id: &str) -> Result<Arc<AppState>, WorkspaceError> {
+    async fn resolve(
+        &self,
+        _principal: &AuthPrincipal,
+        workspace_id: &str,
+    ) -> Result<Arc<AppState>, WorkspaceError> {
         if workspace_id == "missing" {
             return Err(WorkspaceError::NotFound(workspace_id.to_string()));
         }

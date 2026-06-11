@@ -31,6 +31,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::app_state::AppState;
+use crate::auth::AuthPrincipal;
 
 /// Errors surfaced by [`WorkspaceResolver::resolve`]. Mapped to HTTP
 /// status by the routing middleware.
@@ -47,13 +48,26 @@ pub enum WorkspaceError {
     /// lookup error). 503.
     #[error("workspace lookup failed: {0}")]
     LookupFailed(String),
+    /// Caller authenticated but does not own / is not authorized for the
+    /// target workspace. 403.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 /// Resolver interface. The default impl ([`StaticWorkspaceResolver`])
 /// always returns the same state; cloud impls read from a control plane.
+///
+/// The authenticated [`AuthPrincipal`] is passed so the resolver can
+/// enforce ownership — a caller may only resolve a workspace they own or
+/// are authorized for. The local single-tenant impl ignores it; cloud
+/// impls return [`WorkspaceError::Forbidden`] on a mismatch.
 #[async_trait]
 pub trait WorkspaceResolver: Send + Sync + 'static {
-    async fn resolve(&self, workspace_id: &str) -> Result<Arc<AppState>, WorkspaceError>;
+    async fn resolve(
+        &self,
+        principal: &AuthPrincipal,
+        workspace_id: &str,
+    ) -> Result<Arc<AppState>, WorkspaceError>;
 }
 
 /// Single-tenant resolver — local binary uses this so the existing
@@ -72,9 +86,14 @@ impl StaticWorkspaceResolver {
 
 #[async_trait]
 impl WorkspaceResolver for StaticWorkspaceResolver {
-    async fn resolve(&self, _workspace_id: &str) -> Result<Arc<AppState>, WorkspaceError> {
-        // Single-tenant: any well-formed id resolves to the same state.
-        // Cloud deployments override this with a real lookup.
+    async fn resolve(
+        &self,
+        _principal: &AuthPrincipal,
+        _workspace_id: &str,
+    ) -> Result<Arc<AppState>, WorkspaceError> {
+        // Single-tenant: one owner, any well-formed id resolves to the
+        // same state. Ownership is trivially satisfied locally. Cloud
+        // deployments override this with a real lookup + ownership check.
         Ok(self.state.clone())
     }
 }

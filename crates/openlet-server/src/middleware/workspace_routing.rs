@@ -149,11 +149,11 @@ where
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         // Gate: assert auth ran before resolver lookup. Absence
         // of AuthPrincipal in extensions → 401, no resolver call.
-        if req.extensions().get::<AuthPrincipal>().is_none() {
+        let Some(principal) = req.extensions().get::<AuthPrincipal>().cloned() else {
             return Box::pin(async move {
                 Ok((StatusCode::UNAUTHORIZED, "authentication required").into_response())
             });
-        }
+        };
 
         let resolver = self.resolver.clone();
         let mut inner = self.inner.clone();
@@ -165,7 +165,7 @@ where
             .to_string();
 
         Box::pin(async move {
-            match resolver.resolve(&workspace_id).await {
+            match resolver.resolve(&principal, &workspace_id).await {
                 Ok(state) => {
                     req.extensions_mut().insert(state);
                     inner.call(req).await
@@ -175,6 +175,9 @@ where
                 }
                 Err(WorkspaceError::NotFound(msg)) => {
                     Ok((StatusCode::NOT_FOUND, msg).into_response())
+                }
+                Err(WorkspaceError::Forbidden(msg)) => {
+                    Ok((StatusCode::FORBIDDEN, msg).into_response())
                 }
                 Err(WorkspaceError::LookupFailed(msg)) => {
                     Ok((StatusCode::SERVICE_UNAVAILABLE, msg).into_response())
