@@ -69,7 +69,10 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: tui/package-lock.json
-      - run: npm ci
+      # opentui-spinner declares a stale @opentui/core peer (^0.1.49) vs the
+      # pinned ^0.2.x — benign, but npm ci fails strict peer resolution without
+      # this. (The Solid migration author's chosen dep set.)
+      - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
       - run: npm test
       - run: npm pack --dry-run
@@ -114,7 +117,7 @@ jobs:
       - name: Regenerate TS schema + diff
         working-directory: tui
         run: |
-          npm ci
+          npm ci --legacy-peer-deps
           npx openapi-typescript /tmp/openapi.json -o src/api/schema.d.ts
           if ! git diff --quiet -- src/api/schema.d.ts; then
             echo "::error::tui/src/api/schema.d.ts is stale vs the server OpenAPI doc. Run 'npm run codegen' and commit."

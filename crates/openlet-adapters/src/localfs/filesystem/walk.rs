@@ -71,7 +71,7 @@ pub(crate) async fn glob(
         }
         match opts.sort {
             GlobSort::PathAsc => hits.sort_by(|a, b| a.0.cmp(&b.0)),
-            GlobSort::MtimeDesc => hits.sort_by(|a, b| b.1.cmp(&a.1)),
+            GlobSort::MtimeDesc => hits.sort_by_key(|b| std::cmp::Reverse(b.1)),
         }
         hits.truncate(opts.max_results);
         hits.into_iter().map(|(p, _)| p).collect()
