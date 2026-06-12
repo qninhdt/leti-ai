@@ -1,4 +1,4 @@
-//! Integration tests for `POST /v1/sessions/:id/question/answer`.
+//! Integration tests for `POST /v1/session/:id/question/answer`.
 //!
 //! Auth: route requires an `AuthPrincipal` extension on the request;
 //! tests assert the route responds with 401 when none is attached, and
@@ -44,7 +44,7 @@ async fn question_answer_without_auth_principal_returns_401() {
 
     let resp = app
         .oneshot(
-            Request::post(format!("/v1/sessions/{}/question/answer", Uuid::now_v7()))
+            Request::post(format!("/v1/session/{}/question/answer", Uuid::now_v7()))
                 .header("content-type", "application/json")
                 .body(Body::from(body))
                 .unwrap(),
@@ -68,7 +68,7 @@ async fn question_answer_unknown_id_with_auth_returns_404() {
 
     let resp = app
         .oneshot(
-            Request::post(format!("/v1/sessions/{}/question/answer", Uuid::now_v7()))
+            Request::post(format!("/v1/session/{}/question/answer", Uuid::now_v7()))
                 .header("content-type", "application/json")
                 .body(Body::from(body))
                 .unwrap(),
@@ -99,13 +99,10 @@ async fn question_answer_resolves_registered_id() {
 
     let resp = app
         .oneshot(
-            Request::post(format!(
-                "/v1/sessions/{}/question/answer",
-                session.as_uuid()
-            ))
-            .header("content-type", "application/json")
-            .body(Body::from(body))
-            .unwrap(),
+            Request::post(format!("/v1/session/{}/question/answer", session.as_uuid()))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap(),
         )
         .await
         .expect("dispatch");

@@ -14,9 +14,8 @@ use openlet_core::adapters::model_provider::{
 };
 use openlet_core::error::ProviderError;
 
-use crate::openai::detect_quirks;
-use crate::openai::pricing::pricing_for;
 use crate::openai::provider::build_chat_body;
+use crate::openai::shared_provider::{shared_capabilities, shared_list_models, shared_pricing};
 use crate::openai::transport::HttpTransport;
 
 use super::config::OpenRouterConfig;
@@ -129,14 +128,14 @@ impl ModelProvider for OpenRouterProvider {
     }
 
     fn pricing(&self, model: &str) -> Option<ModelPricing> {
-        pricing_for(model)
+        shared_pricing(model)
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        self.transport.list_models().await
+        shared_list_models(&self.transport).await
     }
 
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
-        detect_quirks(model)
+        shared_capabilities(model)
     }
 }

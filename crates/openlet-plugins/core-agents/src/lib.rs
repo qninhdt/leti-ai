@@ -1,5 +1,5 @@
-//! `core-agents` plugin — ships the general assistant + indexer reference
-//! agent. Built-in agents register through the
+//! `core-agents` plugin — ships the general assistant, plan-mode, and
+//! indexer agents. Built-in agents register through the
 //! plugin surface so external Cloud agents can extend or replace them
 //! without forking core.
 
@@ -15,7 +15,7 @@ use semver::Version;
 
 pub use general::{GENERAL_CACHEABLE, general_agent};
 pub use indexer::indexer_agent;
-pub use plan::plan_agent;
+pub use plan::{PLAN_CACHEABLE, plan_agent};
 
 /// `core-agents` plugin entry point.
 pub struct CoreAgentsPlugin {
@@ -32,17 +32,13 @@ impl CoreAgentsPlugin {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            manifest: PluginManifest {
-                id: "core-agents".into(),
-                name: "Openlet Core Agents".into(),
-                version: Version::new(0, 1, 0),
-                description: "Ships the general assistant + indexer + plan-mode agents.".into(),
-                author: Some("Openlet".into()),
-                capabilities: vec![Capability::Agent],
-                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
-                default_priority: 50,
-                config_schema: None,
-            },
+            manifest: PluginManifest::builder("core-agents", "Openlet Core Agents")
+                .version(Version::new(0, 1, 0))
+                .description("Ships the general assistant + indexer + plan-mode agents.")
+                .author("Openlet")
+                .capabilities(vec![Capability::Agent])
+                .default_priority(50)
+                .build(),
         }
     }
 }

@@ -8,12 +8,14 @@
 //! the traceback. The deterministic mock cannot do this — only a real model
 //! reacts to a tool result it couldn't predict.
 //!
-//! Gated identically to the other live tiers (`#[ignore]` +
-//! `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`).
+//! Gated identically to the other live tiers: the runtime env gate
+//! (`OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`) selects the real provider;
+//! unset, the harness falls back to the scripted mock so `cargo test` makes no
+//! network calls.
 //!
-//! Run:
-//!   OPENLET_LIVE_E2E=1 cargo test -p openlet-server --test \
-//!     live_e2e_debug_fix_verify -- --ignored
+//! Run against real OpenRouter:
+//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!     cargo test -p openlet-server --test live_e2e_debug_fix_verify
 //!
 //! Zero mocks: real `LocalShellExecutor` runs the actual `python3`, real
 //! `LocalFilesystem` holds the source, real permission mgr in Danger mode.

@@ -30,8 +30,7 @@ concrete adapters into the runtime and exposes REST + SSE.
 | `ArtifactStore` | `LocalFsArtifactStore` | per-session blobs; **streaming** + optional **presign** | `get_stream`/`put_stream`/`presign` |
 | `EventSink` | `BroadcastBus` (+ sqlite repo) | SSE channel + replay; **routing key** + **delivery semantics** | `publish_routed`, `delivery_semantics()` |
 | `PermissionManager` | `ConfigPermissionMgr` | always/ask/never rulesets, deferred resolution | async, opaque AskId |
-| `ToolExecutor` | `LocalShellToolExecutor` + registry | bash/file ops/grep/glob | fs behind `ToolCtx::fs` seam |
-| `Filesystem` | `LocalFilesystem` | workspace file IO | swappable for remote workspace |
+| `Filesystem` | `LocalFilesystem` | workspace file IO (read/write/glob/grep), jailed to workspace root | swappable for remote workspace |
 | `WorkspaceResolver` | `StaticWorkspaceResolver` | caller+id → workspace AppState, ownership 403 | takes the principal |
 | `Authenticator` | `LocalDevAuthenticator` | inbound identity (zero-trust) | cloud JWKS impl plugs in |
 | `CredentialProvider` | `NoopCredentialProvider` | outbound SA credential | cloud SA issuer plugs in |
@@ -51,7 +50,7 @@ client ── POST /v1/session/:id/prompt_async ──► route (auth → worksp
                                           │     deltas → Processor → Parts
                                           │     part.delta (transient) → SSE
                                           ├─ on tool_use: dispatcher  [dispatch span]
-                                          │     permission.check → ToolExecutor.run
+                                          │     permission.check → ToolRegistry.dispatch
                                           │     before/after hook chains
                                           ├─ append tool results, continue
                                           └─ under pressure: run_compaction [span]

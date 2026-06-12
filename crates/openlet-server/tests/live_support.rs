@@ -11,8 +11,11 @@
 //! - `LiveServer::with_mock()` — points the provider at the in-process
 //!   `MockOpenAiService` (deterministic, network-free, default CI path).
 //! - `LiveServer::with_openrouter()` — points at real OpenRouter using
-//!   `OPENROUTER_API_KEY`. Only constructed by `#[ignore]`d, env-gated
-//!   tests so a keyless CI stays green.
+//!   `OPENROUTER_API_KEY`. Reached only when the runtime env gate
+//!   (`OPENLET_LIVE_E2E=1` + key present) is satisfied; otherwise scenario
+//!   boots transparently fall back to the scripted mock so a keyless CI
+//!   stays green. No `#[ignore]` — the env gate is the single source of
+//!   truth.
 
 #![allow(dead_code)]
 
@@ -28,7 +31,7 @@ use futures::stream::{self, StreamExt};
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
-use openlet_adapters::localshell::{LocalShellExecutor, LocalShellToolExecutor};
+use openlet_adapters::localshell::LocalShellExecutor;
 use openlet_adapters::openrouter::OpenRouterProvider;
 use openlet_adapters::sqlite::event_repo::SqliteEventRepo;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory, open_pool, run_migrations};
@@ -37,7 +40,7 @@ use openlet_core::config::{Config, LogFormat, PluginsConfig};
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_api::context::CoreApi;
-use openlet_plugin_registry::{PluginRegistry, install_all};
+use openlet_plugin_registry::{PluginHandles, install_all};
 use rust_decimal::Decimal;
 use secrecy::SecretString;
 use serde_json::Value;
@@ -316,7 +319,7 @@ impl LiveServer {
 
         // Populate the plugin registry the same way the binary does so
         // `GET /v1/plugin*` serves the real registered set, not an empty one.
-        let mut plugin_registry = PluginRegistry::new();
+        let mut plugin_registry = PluginHandles::new();
         for plugin in installed.plugins {
             plugin_registry.push(plugin);
         }
@@ -350,7 +353,7 @@ impl LiveServer {
                 description: String::new(),
                 prompt_segments: Some(PromptSegments::default()),
                 tool_allowlist: Vec::new(),
-                model_id: model.to_string(),
+                model_id: Some(model.to_string()),
                 default_temperature: 0.0,
                 context_window: window,
                 compaction_threshold: 0.5,
@@ -367,7 +370,6 @@ impl LiveServer {
             .provider(provider)
             .memory(memory.clone())
             .artifacts(artifacts.clone())
-            .tools(Arc::new(LocalShellToolExecutor::new()))
             .tool_registry(tool_registry)
             .events(events)
             .permission(Arc::new(ConfigPermissionMgr::new()))
@@ -376,6 +378,7 @@ impl LiveServer {
             .runtime(runtime)
             .agents(agents)
             .default_agent_id(default_agent_id)
+            .workspace_root(workspace_root.clone())
             .agent_registry(Arc::new(agent_registry))
             .build()
             .expect("build app state");
@@ -454,7 +457,7 @@ impl LiveServer {
         meta.id.to_string()
     }
 
-    /// `POST /v1/sessions/:id/question/answer` — resolve a pending `ask_user`
+    /// `POST /v1/session/:id/question/answer` — resolve a pending `ask_user`
     /// question by id with the chosen option indices. Returns the status code
     /// so the caller can assert acceptance (200) vs not-found (404).
     pub async fn answer_question(
@@ -465,7 +468,7 @@ impl LiveServer {
     ) -> reqwest::StatusCode {
         self.http
             .post(format!(
-                "{}/v1/sessions/{session_id}/question/answer",
+                "{}/v1/session/{session_id}/question/answer",
                 self.base_url
             ))
             .json(&serde_json::json!({

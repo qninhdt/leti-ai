@@ -1,10 +1,8 @@
-// Shared keyboard navigation for overlay list pickers (agents, sessions),
-// ported from the Ink `use-list-navigation` hook to a Solid primitive. Returns
-// a reactive cursor index plus a KeyHandler the dialog installs through the key
-// router's overlay seam (`setOverlayHandler`). The handler consumes Up/Down/
-// Enter (returns true) and lets Escape fall through (returns false) so the
-// router's own Esc-pops-overlay path closes the picker — one authoritative key
-// path, no second `useKeyboard` binding competing with the global dispatcher.
+// Shared keyboard navigation for overlay list pickers (agents, sessions).
+// Returns a reactive cursor index plus a KeyHandler the dialog installs through
+// the key router's overlay seam (`setOverlayHandler`). The handler consumes
+// Up/Down/Enter (returns true) and lets Escape fall through (returns false) so
+// the router's own Esc-pops-overlay path closes the picker.
 
 import { createSignal, type Accessor } from "solid-js";
 

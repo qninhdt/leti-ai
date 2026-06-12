@@ -207,6 +207,16 @@ impl From<DeltaKind> for DeltaKindDto {
     }
 }
 
+/// Wire-shape token usage summary.
+///
+/// Lossy conversion notes:
+/// - `cache_write_tokens` is the **sum** of the domain type's
+///   `cache_write_tokens` + `cache_creation_input_tokens`. Both represent
+///   cache-write billing; combining them gives consumers a single number
+///   matching what was actually charged.
+/// - `cost_usd` from the domain `Usage` is intentionally dropped here.
+///   Per-step cost surfaces via `StepFinished.cost_decimal_str` instead,
+///   keeping this struct purely about token counts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct UsageDto {
     pub input_tokens: u64,
@@ -222,6 +232,11 @@ pub struct UsageDto {
 /// `tag = "outcome"` serde shape so allow / deny / pending remain
 /// distinguishable, AND `Deny.feedback` reaches the SSE consumer
 /// (previously collapsed to a bare `"deny"` label).
+///
+/// Note: the `Pending` variant is technically unreachable in
+/// `PermissionResolved` events — those only fire after a decision is
+/// made. It exists here for exhaustive mapping of the domain enum and
+/// to avoid a `panic!` / `unreachable!()` in the conversion path.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum PermissionDecisionDto {

@@ -140,13 +140,7 @@ impl PermissionManager for ConfigPermissionMgr {
                 decision: None,
             };
             match dispatch(&chains.on_permission_ask, hook_ctx).await {
-                DispatchOutcome::Completed(c) => {
-                    if let Some(decision) = c.decision {
-                        return Ok(decision);
-                    }
-                    c.request.unwrap_or(req)
-                }
-                DispatchOutcome::Stopped(c) => {
+                DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => {
                     if let Some(decision) = c.decision {
                         return Ok(decision);
                     }

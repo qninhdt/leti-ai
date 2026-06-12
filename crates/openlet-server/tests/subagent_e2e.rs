@@ -19,7 +19,6 @@ use futures::stream::{self, StreamExt};
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
-use openlet_adapters::localshell::LocalShellToolExecutor;
 use openlet_adapters::sqlite::event_repo::SqliteEventRepo;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory};
 use openlet_core::adapters::ModelProvider;
@@ -203,7 +202,6 @@ impl Harness {
             .provider(provider)
             .memory(memory.clone())
             .artifacts(artifacts.clone())
-            .tools(Arc::new(LocalShellToolExecutor::new()))
             .tool_registry(openlet_core::tools::ToolRegistry::builder().build())
             .events(events.clone())
             .permission(permission.clone())
@@ -211,6 +209,7 @@ impl Harness {
             .runtime(runtime)
             .agents(agents)
             .default_agent_id(parent_agent_id)
+            .workspace_root(workspace_root.clone())
             .agent_registry(agent_registry.clone())
             .task_registry(task_registry.clone())
             .build()

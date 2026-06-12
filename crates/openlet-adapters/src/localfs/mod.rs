@@ -9,8 +9,10 @@
 
 pub mod artifact_store;
 pub mod filesystem;
+pub mod redactor;
 pub mod session_log;
 
 pub use artifact_store::LocalFsArtifactStore;
 pub use filesystem::LocalFilesystem;
-pub use session_log::{SecretRedactor, SessionLogger};
+pub use redactor::SecretRedactor;
+pub use session_log::SessionLogger;

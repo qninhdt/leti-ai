@@ -21,9 +21,13 @@ use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_an
 use crate::error::{CoreError, ProviderError};
 use crate::hooks::io::{OnChatParamsCtx, OnCostTickCtx};
 use crate::projection::LlmMessage;
+use crate::runtime::chat_hooks::{
+    build_messages_ctx, run_chat_headers, run_chat_messages, run_chat_params,
+};
 use crate::runtime::cost::{compute_cost, format_usd};
 use crate::runtime::processor::{Processor, ProcessorState};
 use crate::runtime::prompt::compose_system_prompt;
+use crate::runtime::retry::RetryConfig;
 use crate::runtime::turn_stream::StreamingPartTracker;
 use crate::types::event::{AgentEvent, Usage};
 use crate::types::message::{MessageId, Role};
@@ -52,39 +56,6 @@ impl RuntimeConfig {
     }
 }
 
-/// Bounded retry policy for the runtime↔provider boundary. Retries only
-/// transient failures (rate-limit, network/5xx); auth/decode/4xx bubble
-/// immediately. Honors a server `Retry-After` over the computed backoff.
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    /// Max chat-stream open attempts (1 = no retry). Default 4.
-    pub max_attempts: u32,
-    /// Base backoff; attempt `n` waits `base * 2^(n-1)` plus jitter,
-    /// unless the error carried a `Retry-After`. Default 250ms.
-    pub base_delay: Duration,
-    /// Hard ceiling on cumulative sleep across all retries. Default 30s.
-    pub total_deadline: Duration,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        let env_u64 = |k: &str, d: u64| {
-            std::env::var(k)
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-                .unwrap_or(d)
-        };
-        Self {
-            max_attempts: env_u64("OPENLET_PROVIDER_RETRY_MAX_ATTEMPTS", 4) as u32,
-            base_delay: Duration::from_millis(env_u64("OPENLET_PROVIDER_RETRY_BASE_MS", 250)),
-            total_deadline: Duration::from_millis(env_u64(
-                "OPENLET_PROVIDER_RETRY_TOTAL_MS",
-                30_000,
-            )),
-        }
-    }
-}
-
 /// Caller-supplied turn description. The runtime owns request building
 /// because (a) `tools` materialization needs the registry, (b) `messages`
 /// is the projected conversation, not raw `Part`s.
@@ -108,12 +79,12 @@ pub struct TurnOutcome {
 }
 
 pub struct ConversationRuntime {
-    provider: Arc<dyn ModelProvider>,
-    memory: Arc<dyn MemoryStore>,
-    events: Arc<dyn EventSink>,
-    config: RuntimeConfig,
+    pub(crate) provider: Arc<dyn ModelProvider>,
+    pub(crate) memory: Arc<dyn MemoryStore>,
+    pub(crate) events: Arc<dyn EventSink>,
+    pub(crate) config: RuntimeConfig,
     session_costs: Arc<DashMap<SessionId, Decimal>>,
-    hook_chains: Arc<HookChains>,
+    pub(crate) hook_chains: Arc<HookChains>,
 }
 
 impl ConversationRuntime {
@@ -181,7 +152,7 @@ impl ConversationRuntime {
 
         // OnChatParams — plugins mutate model / max_tokens / temperature.
         // O(1) skip when no plugin registered the chain.
-        let params = crate::runtime::chat_hooks::run_chat_params(
+        let params = run_chat_params(
             &self.hook_chains,
             &self.events,
             session_id,
@@ -202,15 +173,11 @@ impl ConversationRuntime {
             input.system_prompt.as_deref(),
             &params.model,
         ));
-        let messages = crate::runtime::chat_hooks::run_chat_messages(
+        let messages = run_chat_messages(
             &self.hook_chains,
             &self.events,
             session_id,
-            crate::runtime::chat_hooks::build_messages_ctx(
-                params.model.clone(),
-                composed_system_prompt,
-                input.messages,
-            ),
+            build_messages_ctx(params.model.clone(), composed_system_prompt, input.messages),
         )
         .await?;
 
@@ -218,13 +185,8 @@ impl ConversationRuntime {
         // return header pairs (e.g. service-account auth, trace ids); the
         // provider merges them over the request, filtering reserved
         // auth-bearing names so a plugin can't hijack upstream credentials.
-        let plugin_headers = crate::runtime::chat_hooks::run_chat_headers(
-            &self.hook_chains,
-            &self.events,
-            session_id,
-            &params.model,
-        )
-        .await;
+        let plugin_headers =
+            run_chat_headers(&self.hook_chains, &self.events, session_id, &params.model).await;
 
         let req = ChatRequest {
             model: params.model.clone(),
@@ -246,67 +208,6 @@ impl ConversationRuntime {
             Err(e) => {
                 self.publish_error(session_id, &e).await;
                 Err(e)
-            }
-        }
-    }
-
-    /// Open a chat stream with bounded retry on transient provider
-    /// failures (rate-limit, network/5xx). Auth/decode/4xx errors bubble
-    /// immediately. Honors a server `Retry-After` over computed backoff;
-    /// caps both attempt count and cumulative sleep. Cancellation aborts
-    /// the wait between attempts.
-    #[tracing::instrument(
-        skip_all,
-        fields(session_id = %session_id, model = %req.model)
-    )]
-    async fn chat_stream_with_retry(
-        &self,
-        session_id: SessionId,
-        req: ChatRequest,
-        cancel: CancellationToken,
-    ) -> Result<crate::adapters::model_provider::ChatStream, CoreError> {
-        let cfg = &self.config.retry;
-        let mut slept = Duration::ZERO;
-        let mut attempt: u32 = 0;
-        loop {
-            attempt += 1;
-            match self.provider.chat_stream(req.clone(), cancel.clone()).await {
-                Ok(stream) => return Ok(stream),
-                Err(e) => {
-                    let last = attempt >= cfg.max_attempts;
-                    if last || !e.is_retryable() {
-                        return Err(CoreError::Provider(e));
-                    }
-                    // Prefer the server's Retry-After; else exponential
-                    // backoff (base * 2^(attempt-1)) with ±25% jitter.
-                    let backoff = match e.retry_after_ms() {
-                        Some(ms) => Duration::from_millis(ms),
-                        None => {
-                            let exp = cfg.base_delay.saturating_mul(1u32 << (attempt - 1).min(16));
-                            jittered(exp)
-                        }
-                    };
-                    // Respect the cumulative deadline: if this sleep would
-                    // breach it, stop retrying and surface the error.
-                    if slept.saturating_add(backoff) > cfg.total_deadline {
-                        return Err(CoreError::Provider(e));
-                    }
-                    metrics::counter!("openlet_provider_retries_total").increment(1);
-                    tracing::warn!(
-                        session_id = %session_id,
-                        attempt,
-                        backoff_ms = backoff.as_millis() as u64,
-                        class = e.class().as_str(),
-                        "provider call failed; retrying after backoff"
-                    );
-                    tokio::select! {
-                        () = cancel.cancelled() => {
-                            return Err(CoreError::Provider(ProviderError::Cancelled));
-                        }
-                        () = tokio::time::sleep(backoff) => {}
-                    }
-                    slept = slept.saturating_add(backoff);
-                }
             }
         }
     }
@@ -466,23 +367,4 @@ impl ConversationRuntime {
             )
             .await;
     }
-}
-
-/// Apply ±25% jitter to a backoff duration so concurrent retriers don't
-/// resynchronize into a thundering herd. Cheap nanosecond-clock entropy —
-/// no `rand` dependency for a non-cryptographic spread.
-fn jittered(base: Duration) -> Duration {
-    let nanos = base.as_nanos() as u64;
-    if nanos == 0 {
-        return base;
-    }
-    let spread = nanos / 2; // full jitter band = 50% of base (±25%).
-    let seed = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(0);
-    let offset = seed % spread.max(1);
-    // Center the band: base - 25% + offset(0..50%).
-    let low = nanos.saturating_sub(spread / 2);
-    Duration::from_nanos(low.saturating_add(offset))
 }

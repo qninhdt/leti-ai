@@ -1,7 +1,6 @@
-// Single global key dispatcher. Replaces the scattered per-view useInput
-// handlers from the Ink build. Precedence: an open overlay consumes keys
+// Single global key dispatcher. Precedence: an open overlay consumes keys
 // first (Esc pops it), then the active route. Per-surface handlers register
-// via `setRouteHandler`; the prompt editor (Phase 3) and dialogs (Phase 5)
+// via `setRouteHandler`; the prompt editor and dialogs
 // install their own handlers through the same registry so there is one
 // authoritative key path and no dead-end views.
 

@@ -24,9 +24,10 @@ use crate::app_state::AppState;
 use crate::auth::{AuthLayer, Authenticator, LocalDevAuthenticator};
 use crate::middleware::WorkspaceRoutingLayer;
 use crate::openapi::ApiDoc;
+use crate::routes::files;
 use crate::routes::{
-    agent, attachments, cancel, diagnostics, event, files, health, message, model, permission,
-    plugin, question, session,
+    agent, attachments, cancel, diagnostics, event, health, message, model, permission, plugin,
+    question, session,
 };
 use crate::workspace_resolver::StaticWorkspaceResolver;
 
@@ -97,7 +98,7 @@ impl RouterBuilder {
         self
     }
 
-    /// `GET /v1/session/:id/events` (SSE stream).
+    /// `GET /v1/event?session=` (SSE stream).
     #[must_use]
     pub fn with_event_routes(mut self) -> Self {
         self.inner = self.inner.routes(routes!(event::stream));
@@ -111,7 +112,7 @@ impl RouterBuilder {
         self
     }
 
-    /// `POST /v1/sessions/:id/question/answer`.
+    /// `POST /v1/session/:id/question/answer`.
     #[must_use]
     pub fn with_question_routes(mut self) -> Self {
         self.inner = self.inner.routes(routes!(question::answer));
@@ -150,7 +151,7 @@ impl RouterBuilder {
         self
     }
 
-    /// `POST /v1/sessions/:id/attachments` — multipart upload. Body is
+    /// `POST /v1/session/:id/attachments` — multipart upload. Body is
     /// capped at 25MB via [`attachments::body_limit_layer`], a
     /// route-specific `RequestBodyLimitLayer` that disables the global
     /// 2MB cap.
@@ -164,7 +165,8 @@ impl RouterBuilder {
     }
 
     /// `GET /v1/files` + `GET /v1/files/content` — workspace file listing +
-    /// content for the TUI @-mention feature (mock data this phase).
+    /// content for the TUI @-mention feature, backed by the default agent's
+    /// filesystem adapter.
     #[must_use]
     pub fn with_files_routes(mut self) -> Self {
         self.inner = self

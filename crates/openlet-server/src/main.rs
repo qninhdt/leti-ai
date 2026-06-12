@@ -4,34 +4,27 @@
 //! `AppState` with stub adapters → serve axum on `Config::bind_addr` with
 //! graceful Ctrl+C shutdown.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
 use clap::Parser;
-use futures::FutureExt;
-use openlet_adapters::{
-    bus::BroadcastBus,
-    config_perm::ConfigPermissionMgr,
-    localfs::{LocalFilesystem, LocalFsArtifactStore},
-    localshell::{LocalShellExecutor, LocalShellToolExecutor},
-    openrouter::{OpenRouterConfig, OpenRouterProvider},
-    sqlite::SqliteMemoryStore,
-};
+use openlet_adapters::config_perm::ConfigPermissionMgr;
+use openlet_adapters::openrouter::OpenRouterProvider;
 use openlet_core::adapters::hooked_event_sink::HookedEventSink;
 use openlet_core::adapters::hooked_memory_store::HookedMemoryStore;
 use openlet_core::config::{Config, LogFormat};
 use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
-use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_api::context::CoreApi;
-use openlet_plugin_registry::{FinalizedRegistry, install_all};
+use openlet_server::boot::{
+    build_tool_registry, install_plugins, openrouter_config_from_env, resolve_model_base_url,
+    resolve_workspace_root, single_default_agent,
+};
 use openlet_server::{
-    AgentResources, AppStateBuilder, RouterBuilder,
+    AppStateBuilder, RouterBuilder,
     cli::{Cli, Command},
 };
 use tokio::net::TcpListener;
-use tokio::signal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
@@ -93,49 +86,35 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         None => None,
     };
 
-    let db_path = config.data_dir.join("db.sqlite");
-    let artifact_root = config.data_dir.join("artifacts");
+    let stack = openlet_server::adapter_stack::AdapterStack::build(
+        openlet_server::adapter_stack::AdapterStackConfig {
+            config: &config,
+            provider: Arc::new(OpenRouterProvider::new(
+                resolve_model_base_url(),
+                config.openrouter_api_key.clone(),
+                openrouter_config_from_env(),
+            )),
+            workspace_root: resolve_workspace_root(&config),
+            pool_size: 8,
+            strict_dirs: true,
+        },
+    )
+    .await?;
+
     let session_log_root = config.data_dir.join("sessions");
-
-    let pool = openlet_adapters::sqlite::open_pool(&db_path, 8)
-        .await
-        .with_context(|| format!("opening sqlite at {}", db_path.display()))?;
-    openlet_adapters::sqlite::run_migrations(&pool)
-        .await
-        .context("running sqlite migrations")?;
-
-    tokio::fs::create_dir_all(&artifact_root)
-        .await
-        .with_context(|| format!("create artifact dir {}", artifact_root.display()))?;
     tokio::fs::create_dir_all(&session_log_root)
         .await
         .with_context(|| format!("create session log dir {}", session_log_root.display()))?;
 
-    let base_url = resolve_model_base_url();
-    info!(model_base_url = %base_url, "model backend endpoint");
-    let provider = OpenRouterProvider::new(
-        base_url,
-        config.openrouter_api_key.clone(),
-        openrouter_config_from_env(),
-    );
+    info!(model_base_url = %resolve_model_base_url(), "model backend endpoint");
 
-    let provider: Arc<dyn openlet_core::adapters::ModelProvider> = Arc::new(provider);
-    let inner_memory: Arc<dyn openlet_core::adapters::MemoryStore> =
-        Arc::new(SqliteMemoryStore::new(pool.clone()));
-    let event_repo = openlet_adapters::sqlite::event_repo::SqliteEventRepo::new(pool.clone());
-    let inner_events: Arc<dyn openlet_core::adapters::EventSink> =
-        Arc::new(BroadcastBus::with_repo(event_repo));
-
-    // Workspace + shell built BEFORE install_plugins so `core-tools`
-    // can take ownership of the shell at registration time.
-    let workspace_root = resolve_workspace_root(&config);
-    tokio::fs::create_dir_all(&workspace_root)
-        .await
-        .with_context(|| format!("create workspace dir {}", workspace_root.display()))?;
-
-    let shell_exec = Arc::new(LocalShellExecutor::new(workspace_root.clone()));
-    let fs_adapter = Arc::new(LocalFilesystem::new(workspace_root.clone()));
-    let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = shell_exec.clone();
+    let provider = stack.provider;
+    let inner_memory = stack.memory;
+    let inner_events = stack.events;
+    let workspace_root = stack.workspace_root;
+    let fs_adapter = stack.fs;
+    let shell = stack.shell;
+    let artifacts = stack.artifacts;
 
     // Drain every plugin's registrations through `install_all`. Returns
     // sorted hook chains, agents, tools, and an optional provider. The
@@ -243,10 +222,10 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             .context("inserting plugin-drained agent definition")?;
     }
 
-    // Materialize the plugin registry that backs `/v1/plugin*`. The
-    // handles are `Arc`, so cloning into the registry leaves
-    // `installed.plugins` intact for the shutdown loop below.
-    let mut plugin_registry = openlet_plugin_registry::PluginRegistry::new();
+    // Materialize the plugin registry that backs `/v1/plugin*` and the
+    // graceful shutdown loop. The handles are `Arc`, so cloning into the
+    // registry is cheap.
+    let mut plugin_registry = openlet_plugin_registry::PluginHandles::new();
     for plugin in &installed.plugins {
         plugin_registry.push(plugin.clone());
     }
@@ -254,11 +233,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     let state = AppStateBuilder::new()
         .provider(provider)
         .memory(memory)
-        .artifacts(Arc::new(LocalFsArtifactStore::new(
-            artifact_root,
-            pool.clone(),
-        )))
-        .tools(Arc::new(LocalShellToolExecutor::new()))
+        .artifacts(artifacts)
         .tool_registry(tool_registry)
         .events(events)
         .permission(Arc::new(
@@ -270,6 +245,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .runtime(runtime)
         .agents(agents)
         .default_agent_id(default_agent_id)
+        .workspace_root(workspace_root)
         .agent_registry(Arc::new(agent_registry))
         .questions(Arc::new(QuestionRegistry::new()))
         .task_registry(task_registry.clone())
@@ -350,198 +326,25 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     }
 
     let serve_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(openlet_server::shutdown::shutdown_signal())
         .await
         .context("serving axum");
 
-    // Drain in-flight turn drivers before plugin shutdown. `axum::serve`
-    // returns once HTTP handlers stop, but `prompt_async` spawns the
-    // actual turn loop with `tokio::spawn` and returns 202 immediately —
-    // those tasks are still billing, writing parts, and emitting events.
-    // Tearing plugins down underneath them risks panics on disposed
-    // handles. Trip each turn's cancel token, then await its `exited`
-    // Notify (signalled by the driver's Drop guard) under a single 25s
-    // budget — leaving ~5s for plugin shutdown inside the k8s default
-    // terminationGracePeriodSeconds=30.
-    let in_flight: Vec<_> = state
-        .active_turns
-        .iter()
-        .map(|e| e.value().clone())
-        .collect();
-    if !in_flight.is_empty() {
-        info!(count = in_flight.len(), "draining in-flight turns");
-        let drain = async {
-            let waits = in_flight.into_iter().map(|h| async move {
-                // Enable the Notified future BEFORE tripping cancel so the
-                // driver's `notify_waiters()` (fired from its Drop guard
-                // once it observes the cancel) can't slip through the gap
-                // between subscribe and await — `notify_waiters` wakes
-                // only currently-registered waiters.
-                let n = h.exited.notified();
-                tokio::pin!(n);
-                n.as_mut().enable();
-                h.cancel.cancel();
-                n.await;
-            });
-            futures::future::join_all(waits).await;
-        };
-        if tokio::time::timeout(std::time::Duration::from_secs(25), drain)
-            .await
-            .is_err()
-        {
-            tracing::warn!(
-                "turn drain timed out (25s); some in-flight turns may not have finished cleanly"
-            );
-        }
-    }
+    // Drain in-flight turn drivers before plugin shutdown.
+    openlet_server::shutdown::drain_in_flight_turns(
+        &state.active_turns,
+        std::time::Duration::from_secs(25),
+    )
+    .await;
 
-    // Drive Plugin::shutdown after axum returns. Plugins holding
-    // resources (sockets, billing-flush state, audit handles) get a
-    // chance to drain before the process exits. Per-plugin shutdown is
-    // panic-isolated so a buggy plugin can't strand the others.
-    // Run shutdowns in parallel under a single
-    // 5s timeout so total wall time stays bounded by ONE timeout window
-    // (not 5s × N plugins). Fits k8s default terminationGracePeriodSeconds=30.
-    let shutdowns = installed.plugins.iter().map(|plugin| {
-        let id = plugin.manifest().id.clone();
-        async move {
-            let result = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                std::panic::AssertUnwindSafe(plugin.shutdown()).catch_unwind(),
-            )
-            .await;
-            match result {
-                Ok(Ok(Ok(()))) => {}
-                Ok(Ok(Err(e))) => {
-                    tracing::warn!(plugin = %id, error = %e, "plugin shutdown returned error");
-                }
-                Ok(Err(_)) => {
-                    tracing::warn!(plugin = %id, "plugin shutdown panicked");
-                }
-                Err(_) => {
-                    tracing::warn!(plugin = %id, "plugin shutdown timed out (5s)");
-                }
-            }
-        }
-    });
-    futures::future::join_all(shutdowns).await;
+    // Drive Plugin::shutdown after axum returns.
+    openlet_server::shutdown::shutdown_plugins(
+        &state.plugin_registry,
+        std::time::Duration::from_secs(5),
+    )
+    .await;
 
     serve_result?;
     info!("openlet-server stopped");
     Ok(())
-}
-
-/// Install all compile-time plugins via `install_all` and return the
-/// fully-drained registry. Called once during boot. The returned chains
-/// are sorted; provider/agents/tools are ready to plumb into AppState.
-///
-/// `core_api` is the late-bound `CoreApiImpl` constructed before this
-/// call: its `runtime` slot is filled by [`CoreApiImpl::set_runtime`]
-/// after the conversation runtime is built. Plugin hook closures
-/// receive `Arc<dyn CoreApi>` and only invoke it from inside dispatch
-/// sites, well after boot has bound the runtime.
-pub(crate) async fn install_plugins(
-    core_api: Arc<dyn CoreApi>,
-    shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
-    memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
-    task_registry: Arc<openlet_core::runtime::subagent::TaskRegistry>,
-    spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner>,
-) -> anyhow::Result<FinalizedRegistry> {
-    let plugins = openlet_plugin_registry::all_plugins(shell, memory, task_registry, spawner);
-    let configs = std::collections::HashMap::new();
-    install_all(plugins, &configs, core_api)
-        .await
-        .context("draining plugin registrations")
-}
-
-/// Resolve the agent workspace root: `OPENLET_WORKSPACE` if set,
-/// otherwise `<data_dir>/workspace`. Pure — the caller creates the
-/// directory with whatever error handling its boot path needs.
-pub(crate) fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
-    std::env::var("OPENLET_WORKSPACE")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| config.data_dir.join("workspace"))
-}
-
-/// Resolve the model API base URL: `OPENLET_MODEL_BASE_URL` if set, else
-/// the OpenAI-compat default (OpenRouter). Lets one binary target real
-/// OpenRouter, a self-hosted gateway, or the in-process mock without code
-/// edits. A single trailing `/` is trimmed so callers can pass `…/v1` or
-/// `…/v1/` interchangeably without producing `//chat/completions`. The
-/// env-var name is owned by the doctor probe and imported here so the
-/// serve path and the diagnostics path can never disagree.
-pub(crate) fn resolve_model_base_url() -> String {
-    let raw = std::env::var(openlet_server::diagnostics::MODEL_BASE_URL_ENV)
-        .unwrap_or_else(|_| openlet_adapters::openrouter::DEFAULT_BASE_URL.to_string());
-    raw.strip_suffix('/').unwrap_or(&raw).to_string()
-}
-
-/// Build OpenRouter request-enrichment config from env. All optional —
-/// unset values send a vanilla OpenAI-shaped request. `HTTP-Referer` /
-/// `X-Title` are the app-attribution headers OpenRouter shows on its
-/// dashboards; they are non-secret.
-pub(crate) fn openrouter_config_from_env() -> OpenRouterConfig {
-    OpenRouterConfig {
-        referer: std::env::var("OPENLET_OPENROUTER_REFERER").ok(),
-        title: std::env::var("OPENLET_OPENROUTER_TITLE").ok(),
-        routing: None,
-        models_fallback: Vec::new(),
-    }
-}
-
-/// Build the tool registry from plugin-drained handles. Shared by the
-/// `serve` and `doctor` boot paths so both materialize tools the same
-/// way.
-pub(crate) fn build_tool_registry(
-    tools: Vec<openlet_core::tools::ToolHandle>,
-) -> Arc<openlet_core::tools::ToolRegistry> {
-    let mut tool_builder = openlet_core::tools::ToolRegistry::builder();
-    for tool in tools {
-        tool_builder = tool_builder.register_erased(tool);
-    }
-    tool_builder.build()
-}
-
-/// Wire the single default agent (one workspace → one fs + shell) that
-/// MVP boot registers. Returns the generated id alongside the
-/// one-entry `agents` map both boot paths hand to `AppStateBuilder`.
-pub(crate) fn single_default_agent(
-    workspace_root: std::path::PathBuf,
-    fs: Arc<dyn openlet_core::adapters::Filesystem>,
-    shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
-) -> (AgentId, HashMap<AgentId, AgentResources>) {
-    let default_agent_id = AgentId::new();
-    let agent_spec = AgentSpec::new(default_agent_id, workspace_root, "default");
-    let mut agents = HashMap::new();
-    agents.insert(
-        default_agent_id,
-        AgentResources {
-            spec: agent_spec,
-            fs,
-            shell,
-        },
-    );
-    (default_agent_id, agents)
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c().await.expect("install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let term = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let term = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => info!("received Ctrl+C, shutting down"),
-        () = term => info!("received SIGTERM, shutting down"),
-    }
 }

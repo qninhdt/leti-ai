@@ -12,22 +12,19 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::adapters::artifact_store::ArtifactStore;
-use crate::adapters::event_sink::{EventSink, Persistence};
-use crate::adapters::filesystem::Filesystem;
+use crate::adapters::event_sink::Persistence;
 use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::model_provider::FinishReason;
-use crate::adapters::permission_manager::PermissionManager;
 use crate::adapters::tool_executor::ToolCtx;
-use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
+use crate::dispatch::{DispatchOutcome, dispatch, publish_fault_if_any};
 use crate::error::CoreError;
 use crate::hooks::io::{AfterTurnCtx, BeforeTurnCtx, OnStepFinishCtx};
 use crate::runtime::agent_allowlist::{
     merge_with_denied, partition_by_allowlist, resolve_allowlist,
 };
 use crate::runtime::doom_guard::{self, DoomVerdict, TurnSummary as DoomTurnSummary};
-use crate::runtime::question_registry::QuestionRegistry;
-use crate::tools::{ReadHistory, ToolInvocation, ToolRegistry, dispatch_batch};
+use crate::runtime::handles::RuntimeHandles;
+use crate::tools::{ReadHistory, ToolInvocation, dispatch_batch};
 use crate::types::agent::AgentId;
 use crate::types::event::AgentEvent;
 use crate::types::message::MessageId;
@@ -44,11 +41,8 @@ use super::turn_loop_helpers::{
 #[derive(Clone)]
 pub struct LoopContext {
     pub agent_id: AgentId,
-    pub fs: Arc<dyn Filesystem>,
-    pub permission: Arc<dyn PermissionManager>,
-    pub events: Arc<dyn EventSink>,
-    pub artifacts: Arc<dyn ArtifactStore>,
-    pub registry: Arc<ToolRegistry>,
+    /// Shared adapter handles (filesystem, permissions, events, etc.).
+    pub handles: RuntimeHandles,
     pub read_history: ReadHistory,
     pub mode: PermissionMode,
     pub max_steps: usize,
@@ -56,29 +50,6 @@ pub struct LoopContext {
     /// at the top of each loop iteration once projected tokens cross
     /// `agent.context_window * agent.compaction_threshold`.
     pub agent: Option<Arc<crate::agent::AgentDefinition>>,
-    /// Sorted plugin hook chains. `Arc::new(HookChains::new())` when no
-    /// plugins register hooks — dispatch is O(1) skip on empty chains.
-    pub hook_chains: Arc<HookChains>,
-    /// Question rendezvous map. Forwarded into each tool's `ToolCtx` so
-    /// `ask_user` can register a oneshot before suspending on the receiver.
-    pub questions: Arc<QuestionRegistry>,
-    /// Memory store handle. Forwarded into each tool's `ToolCtx` so
-    /// session-aware tools (e.g. `ask_user` capability gate) can read
-    /// session metadata without an extra adapter wired through every
-    /// caller.
-    pub memory: Arc<dyn MemoryStore>,
-    /// In-process subagent task registry. Threaded through `ToolCtx`
-    /// so `subagent_task` / `task_status` find their bookkeeping.
-    pub task_registry: Arc<crate::runtime::subagent::TaskRegistry>,
-    /// Resolves the session's current agent slug to an
-    /// `AgentDefinition` at every tool dispatch (NOT once per turn).
-    /// Wired through so plan-mode swaps the active profile
-    /// MID-TURN and the next dispatch sees the new allowlist
-    /// — no race window where a write tool sneaks past the gate
-    /// because the loop snapshotted "general" before EnterPlanMode
-    /// flipped the slug. Same handle the runtime uses to compact +
-    /// spawn nested subagents.
-    pub agent_registry: Arc<crate::agent::AgentRegistry>,
 }
 
 /// Outcome of a `run_loop` invocation.
@@ -199,13 +170,13 @@ impl ConversationRuntime {
             // BeforeTurn hook chain — Stop halts the loop with finish_reason=Halted;
             // Deny short-circuits via a synthetic tool-result on the next turn.
             // O(1) skip when empty.
-            if !loop_ctx.hook_chains.before_turn.is_empty() {
+            if !loop_ctx.handles.hook_chains.before_turn.is_empty() {
                 let before_ctx = BeforeTurnCtx {
                     session_id: Some(session_id),
                     turn_index: model_steps as u32,
                     message_count: input.messages.len(),
                 };
-                match dispatch(&loop_ctx.hook_chains.before_turn, before_ctx).await {
+                match dispatch(&loop_ctx.handles.hook_chains.before_turn, before_ctx).await {
                     DispatchOutcome::Completed(_) => {}
                     DispatchOutcome::Stopped(_) => {
                         return Ok(halted_outcome(model_steps, last_assistant_id));
@@ -216,7 +187,7 @@ impl ConversationRuntime {
                         plugin_fault,
                     } => {
                         crate::dispatch::publish_denied_warn(
-                            &loop_ctx.events,
+                            &loop_ctx.handles.events,
                             Some(session_id),
                             "before_turn",
                             &reason,
@@ -263,7 +234,7 @@ impl ConversationRuntime {
 
             // AfterTurn hook chain — observation only; does not change loop control flow.
             // O(1) skip when empty.
-            if !loop_ctx.hook_chains.after_turn.is_empty() {
+            if !loop_ctx.handles.hook_chains.after_turn.is_empty() {
                 let after_ctx = AfterTurnCtx {
                     session_id: Some(session_id),
                     turn_index: model_steps as u32,
@@ -271,23 +242,27 @@ impl ConversationRuntime {
                     usage: outcome.usage.clone(),
                     cost_usd: outcome.cost_usd,
                 };
-                let after_outcome = dispatch(&loop_ctx.hook_chains.after_turn, after_ctx).await;
-                publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome).await;
+                let after_outcome =
+                    dispatch(&loop_ctx.handles.hook_chains.after_turn, after_ctx).await;
+                publish_fault_if_any(&loop_ctx.handles.events, Some(session_id), &after_outcome)
+                    .await;
             }
 
             // OnStepFinish — fires once per loop iteration so audit/quota
             // plugins can roll up usage even when the model continues
             // with a tool turn (AfterTurn fires too, but observers may
             // care about the per-step granularity). O(1) skip when empty.
-            if !loop_ctx.hook_chains.on_step_finish.is_empty() {
+            if !loop_ctx.handles.hook_chains.on_step_finish.is_empty() {
                 let step_ctx = OnStepFinishCtx {
                     session_id: Some(session_id),
                     step_index: model_steps as u32,
                     finish_reason: Some(outcome.finish_reason),
                     usage: outcome.usage.clone(),
                 };
-                let step_outcome = dispatch(&loop_ctx.hook_chains.on_step_finish, step_ctx).await;
-                publish_fault_if_any(&loop_ctx.events, Some(session_id), &step_outcome).await;
+                let step_outcome =
+                    dispatch(&loop_ctx.handles.hook_chains.on_step_finish, step_ctx).await;
+                publish_fault_if_any(&loop_ctx.handles.events, Some(session_id), &step_outcome)
+                    .await;
             }
 
             if !matches!(outcome.finish_reason, FinishReason::ToolUse) {
@@ -322,34 +297,34 @@ impl ConversationRuntime {
                 agent_id: lc.agent_id,
                 message_id: assistant_msg_id,
                 call_id: inv.call_id.clone(),
-                fs: Arc::clone(&lc.fs),
+                fs: Arc::clone(&lc.handles.fs),
                 mode: lc.mode,
-                permission: Arc::clone(&lc.permission),
-                events: Arc::clone(&lc.events),
-                artifacts: Arc::clone(&lc.artifacts),
+                permission: Arc::clone(&lc.handles.permission),
+                events: Arc::clone(&lc.handles.events),
+                artifacts: Arc::clone(&lc.handles.artifacts),
                 read_history: lc.read_history.clone(),
                 cancel: cancel_for_ctx.clone(),
-                questions: Arc::clone(&lc.questions),
-                memory: Arc::clone(&lc.memory),
-                task_registry: Arc::clone(&lc.task_registry),
-                agent_registry: Arc::clone(&lc.agent_registry),
+                questions: Arc::clone(&lc.handles.questions),
+                memory: Arc::clone(&lc.handles.memory),
+                task_registry: Arc::clone(&lc.handles.task_registry),
+                agent_registry: Arc::clone(&lc.handles.agent_registry),
             };
             // Snapshot the active agent slug RIGHT BEFORE dispatch
             // (not at turn start). A previous tool in the same loop may
             // have swapped the agent (EnterPlanMode), so the next batch
             // must see the new allowlist.
             let allowlist_outcome =
-                resolve_allowlist(memory, session_id, Some(&loop_ctx.agent_registry)).await;
+                resolve_allowlist(memory, session_id, Some(&loop_ctx.handles.agent_registry)).await;
             let (allowed, denied) =
                 partition_by_allowlist(&invocations, allowlist_outcome.as_ref());
             let dispatched_results = if allowed.is_empty() {
                 Vec::new()
             } else {
                 dispatch_batch(
-                    &loop_ctx.registry,
-                    &loop_ctx.permission,
-                    &loop_ctx.hook_chains,
-                    &loop_ctx.events,
+                    &loop_ctx.handles.registry,
+                    &loop_ctx.handles.permission,
+                    &loop_ctx.handles.hook_chains,
+                    &loop_ctx.handles.events,
                     session_id,
                     ctx_for,
                     perm_ctx,
@@ -382,6 +357,7 @@ impl ConversationRuntime {
             {
                 tracing::warn!(session_id = %session_id, "doom-loop detected; halting");
                 let _ = loop_ctx
+                    .handles
                     .events
                     .publish(
                         AgentEvent::Error {
@@ -400,7 +376,7 @@ impl ConversationRuntime {
             }
 
             // Append a tool-role message holding all results.
-            append_tool_message(memory, &loop_ctx.events, session_id, &results).await?;
+            append_tool_message(memory, &loop_ctx.handles.events, session_id, &results).await?;
             // Project all messages so far into the next LLM input.
             input.messages = project_session_messages(memory, session_id).await?;
         }

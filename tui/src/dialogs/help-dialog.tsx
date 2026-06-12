@@ -1,7 +1,6 @@
-// Help overlay content, ported from the Ink `HelpView`. Lists slash commands
-// grouped by category plus the keyboard reference. Pure content — it registers
-// no overlay key handler, so the router's Esc-pops-overlay path closes it
-// (fixing the old view's dead-end where Esc did nothing).
+// Help overlay content. Lists slash commands grouped by category plus the
+// keyboard reference. Pure content — it registers no overlay key handler, so
+// the router's Esc-pops-overlay path closes it.
 
 import { For } from "solid-js";
 
@@ -10,7 +9,6 @@ import { commands, type Command } from "../commands/registry.js";
 
 const KEYBINDINGS: Array<[string, string]> = [
   ["Up/Down", "History"],
-  ["Tab", "Complete commands"],
   ["Enter", "Send · Shift+Enter newline"],
   ["Esc", "Interrupt / close overlay"],
   ["⌘K / ctrl+k", "Command palette"],

@@ -1,24 +1,32 @@
 //! `/v1/files*` — workspace file listing + content for the TUI's @-mention
 //! feature.
 //!
-//! **Mock data for now.** These endpoints return a fixed file list + synthetic
-//! content so the TUI's autocomplete + embedding can be built and tested before
-//! real filesystem wiring lands. The response *shape* is locked here (and in the
-//! OpenAPI doc) so the real FS implementation is a drop-in behind the same
-//! contract.
-//!
-//! Security (enforced even on mock data, so the contract is correct from day
-//! one): absolute paths and `..` traversal are rejected with 400, and secret
-//! file patterns (`.env*`, `*.pem`, `id_rsa*`, `*.key`, `credentials*`,
-//! `*.pfx`) are excluded from both listing and content. When real FS wiring
-//! lands it must additionally enforce a realpath workspace-root jail.
+//! Backed by the default agent's `Filesystem` adapter: listing is a
+//! gitignore-aware recursive walk of the workspace, content is a jailed
+//! read. Absolute paths and `..` traversal are rejected with 400, and
+//! secret file patterns (`.env*`, `*.pem`, `id_rsa*`, `*.key`,
+//! `credentials*`, `*.pfx`) are excluded from both listing and content so
+//! a secret can never leak through the @-mention surface. The adapter
+//! enforces the realpath workspace-root jail underneath; this layer adds
+//! the request-shape validation + secret filter on top.
 
 use axum::Json;
-use axum::extract::Query;
+use axum::extract::{Query, State};
+use openlet_core::adapters::filesystem::{ByteRange, GlobOpts, GlobSort};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use utoipa::{IntoParams, ToSchema};
 
+use crate::app_state::AppState;
 use crate::error::AppError;
+
+/// Recursive glob cap. Bounds the workspace walk so a huge repo can't
+/// stall the @-mention list; the TUI filters client-side over this set.
+const MAX_FILES: usize = 500;
+
+/// Content read cap (256 KiB). Larger files are clamped and flagged
+/// `truncated` so the embed path never pulls an unbounded blob.
+const MAX_CONTENT_BYTES: u64 = 256 * 1024;
 
 /// File classification surfaced to the client (drives badge styling + whether
 /// content is embeddable). `text` is embeddable; `image`/`pdf` are badge-only.
@@ -60,7 +68,7 @@ pub struct FileContentDto {
 
 #[derive(Debug, Deserialize, IntoParams)]
 pub struct FileListQuery {
-    /// Case-insensitive substring filter over the mock file list.
+    /// Case-insensitive substring filter over workspace-relative paths.
     #[serde(default)]
     pub query: String,
 }
@@ -70,17 +78,6 @@ pub struct FileContentQuery {
     /// Workspace-relative path of the file to read.
     pub path: String,
 }
-
-// Mock workspace file list. Stands in for a real FS walk until that lands.
-const MOCK_FILES: &[(&str, FileKindDto)] = &[
-    ("src/app.tsx", FileKindDto::Text),
-    ("src/store/index.ts", FileKindDto::Text),
-    ("src/api/client.ts", FileKindDto::Text),
-    ("README.md", FileKindDto::Text),
-    ("Cargo.toml", FileKindDto::Text),
-    ("docs/logo.png", FileKindDto::Image),
-    ("docs/spec.pdf", FileKindDto::Pdf),
-];
 
 // Secret patterns excluded from listing + content, mirroring the TUI/plan
 // guard. Matched against the path's final component, split on BOTH separators
@@ -128,7 +125,24 @@ fn validate_relative_path(path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// `GET /v1/files?query=` — list/search workspace files (mock).
+/// Classify a path by extension. `text` is embeddable; `image`/`pdf` are
+/// badge-only (content is never read as text for them). The extension is
+/// taken from the final path component so a dotted directory name can't
+/// misclassify an extensionless file.
+fn classify(path: &str) -> FileKindDto {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => FileKindDto::Image,
+        "pdf" => FileKindDto::Pdf,
+        _ => FileKindDto::Text,
+    }
+}
+
+/// `GET /v1/files?query=` — list/search workspace files.
 #[utoipa::path(
     get,
     path = "/v1/files",
@@ -136,21 +150,50 @@ fn validate_relative_path(path: &str) -> Result<(), AppError> {
     params(FileListQuery),
     responses((status = 200, description = "Matching workspace files", body = FileListDto))
 )]
-pub async fn list(Query(q): Query<FileListQuery>) -> Json<FileListDto> {
+pub async fn list(
+    State(state): State<AppState>,
+    Query(q): Query<FileListQuery>,
+) -> Result<Json<FileListDto>, AppError> {
+    let agent = state
+        .agents
+        .get(&state.default_agent_id)
+        .ok_or_else(|| AppError::internal("agent_unavailable", "default agent not registered"))?;
+    let fs = &agent.fs;
+
+    let paths = fs
+        .glob(
+            "**/*",
+            GlobOpts {
+                respect_gitignore: true,
+                max_results: MAX_FILES,
+                sort: GlobSort::PathAsc,
+            },
+        )
+        .await?;
+
     let needle = q.query.to_lowercase();
-    let files = MOCK_FILES
-        .iter()
-        .filter(|(path, _)| !is_secret_path(path))
-        .filter(|(path, _)| needle.is_empty() || path.to_lowercase().contains(&needle))
-        .map(|(path, kind)| FileEntryDto {
-            path: (*path).to_string(),
-            kind: *kind,
-        })
-        .collect();
-    Json(FileListDto { files })
+    let mut files = Vec::new();
+    for abs in &paths {
+        // The trait returns absolute paths; the TUI + `/content` contract
+        // speak workspace-relative, so strip the root we threaded into state.
+        let rel = abs
+            .strip_prefix(&state.workspace_root)
+            .unwrap_or(abs)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if is_secret_path(&rel) {
+            continue;
+        }
+        if !needle.is_empty() && !rel.to_lowercase().contains(&needle) {
+            continue;
+        }
+        let kind = classify(&rel);
+        files.push(FileEntryDto { path: rel, kind });
+    }
+    Ok(Json(FileListDto { files }))
 }
 
-/// `GET /v1/files/content?path=` — read a workspace file's content (mock).
+/// `GET /v1/files/content?path=` — read a workspace file's content.
 #[utoipa::path(
     get,
     path = "/v1/files/content",
@@ -162,29 +205,61 @@ pub async fn list(Query(q): Query<FileListQuery>) -> Json<FileListDto> {
         (status = 404, description = "File not found"),
     )
 )]
-pub async fn content(Query(q): Query<FileContentQuery>) -> Result<Json<FileContentDto>, AppError> {
+pub async fn content(
+    State(state): State<AppState>,
+    Query(q): Query<FileContentQuery>,
+) -> Result<Json<FileContentDto>, AppError> {
     validate_relative_path(&q.path)?;
     if is_secret_path(&q.path) {
         // Treat as not-found rather than confirming the secret file exists.
         return Err(AppError::not_found("file_not_found", "file not found"));
     }
-    let Some((path, kind)) = MOCK_FILES.iter().find(|(p, _)| *p == q.path) else {
-        return Err(AppError::not_found("file_not_found", "file not found"));
-    };
-    if *kind != FileKindDto::Text {
+
+    let kind = classify(&q.path);
+    if kind != FileKindDto::Text {
+        // Binary types are badge-only — never read their bytes.
         return Ok(Json(FileContentDto {
-            path: (*path).to_string(),
-            kind: *kind,
+            path: q.path,
+            kind,
             content: None,
             truncated: false,
             unsupported: true,
         }));
     }
+
+    let agent = state
+        .agents
+        .get(&state.default_agent_id)
+        .ok_or_else(|| AppError::internal("agent_unavailable", "default agent not registered"))?;
+    let fs = &agent.fs;
+
+    // Read one byte past the cap so we can tell a clamped file from one that
+    // exactly fills it. `len = 0` would mean "to end", so request cap+1.
+    let range = ByteRange {
+        start: 0,
+        len: MAX_CONTENT_BYTES + 1,
+    };
+    let bytes = match fs.read(Path::new(&q.path), Some(range)).await {
+        Ok(b) => b,
+        Err(openlet_core::error::FsError::NotFound(_)) => {
+            return Err(AppError::not_found("file_not_found", "file not found"));
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    let truncated = bytes.len() as u64 > MAX_CONTENT_BYTES;
+    let slice = if truncated {
+        &bytes[..MAX_CONTENT_BYTES as usize]
+    } else {
+        &bytes[..]
+    };
+    let text = String::from_utf8_lossy(slice).into_owned();
+
     Ok(Json(FileContentDto {
-        path: (*path).to_string(),
-        kind: *kind,
-        content: Some(format!("// mock content for {path}\n")),
-        truncated: false,
+        path: q.path,
+        kind,
+        content: Some(text),
+        truncated,
         unsupported: false,
     }))
 }

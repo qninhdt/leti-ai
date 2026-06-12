@@ -220,7 +220,7 @@ mod tests {
             description: String::new(),
             prompt_segments: Some(PromptSegments::default()),
             tool_allowlist: Vec::new(),
-            model_id: "test/model".into(),
+            model_id: Some("test/model".into()),
             default_temperature: 0.0,
             context_window: 1000,
             compaction_threshold: 0.8,

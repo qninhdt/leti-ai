@@ -14,7 +14,7 @@ full-screen terminal UI with an OpenCode-style prompt, overlay dialogs, and
 cd tui
 bun install
 # Server must be running locally on http://127.0.0.1:8787
-npm run codegen   # regenerate src/api/schema.d.ts from /v1/doc/openapi.json
+npm run codegen   # regenerate src/api/schema.d.ts from /doc/openapi.json
 npm run build
 bun dist/cli.mjs
 ```

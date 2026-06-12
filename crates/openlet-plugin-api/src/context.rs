@@ -230,6 +230,13 @@ impl PluginContext {
 /// Per-hook registration — generated for all 15 hook kinds via the
 /// macro below. Each method signature is identical except for the
 /// closure context type and the chain it pushes into.
+///
+/// Adding a new hook kind requires updating N sites:
+///   1. `HookKind` enum variant (openlet-core/src/hooks.rs)
+///   2. `HookChains` struct field + `merge()` + `sort_all!` (openlet-core/src/dispatch.rs)
+///   3. `PluginContext` struct field + `into_registrations()` chain (this file, above)
+///   4. `impl_on_hook!` invocation (this file, below)
+///   5. `io` module context struct (openlet-core/src/hooks/io.rs)
 macro_rules! impl_on_hook {
     ($method:ident, $field:ident, $kind:expr, $ctx:ty) => {
         impl PluginContext {

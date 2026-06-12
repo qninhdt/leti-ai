@@ -71,7 +71,7 @@ fn make_agent(slug: &str, allow: Vec<String>) -> AgentDefinition {
         description: String::new(),
         prompt_segments: None,
         tool_allowlist: allow,
-        model_id: "stub".to_string(),
+        model_id: Some("stub".to_string()),
         default_temperature: 0.0,
         context_window: 128_000,
         compaction_threshold: 0.8,

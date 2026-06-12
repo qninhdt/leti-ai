@@ -17,11 +17,9 @@ use tokio_util::sync::CancellationToken;
 use super::chunk_decoder::decode_chunk;
 use super::sse::SseParser;
 
-/// Idle timeout while waiting for the next byte chunk. Mirrors
-/// `STREAM_IDLE_TIMEOUT_MS` in `provider.rs`.
+/// Idle timeout while waiting for the next byte chunk.
 const STREAM_IDLE_TIMEOUT_MS: u64 = 60_000;
-/// Backpressure cap for the decoded delta channel. Mirrors
-/// `DELTA_CHANNEL_CAPACITY` in `provider.rs`.
+/// Backpressure cap for the decoded delta channel.
 const DELTA_CHANNEL_CAPACITY: usize = 64;
 
 /// Spawn a decoder task: reads `reqwest::Response::bytes_stream`, runs

@@ -13,7 +13,7 @@ services in MVP — OpenRouter is the one network dependency.
 
 The TUI (`openlet`, npm) is a separate process that talks to the server
 over loopback HTTP + SSE. The TUI is optional — anything that speaks the
-OpenAPI shape (see `/v1/doc/openapi.json`) works.
+OpenAPI shape (see `/doc/openapi.json`) works.
 
 ## Environment variables
 

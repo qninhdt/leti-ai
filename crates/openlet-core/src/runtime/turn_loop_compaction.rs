@@ -74,8 +74,9 @@ impl ConversationRuntime {
             message_count: pre_msg_count,
             autocontinue: true,
         };
-        let before_outcome = dispatch(&loop_ctx.hook_chains.on_compaction, before_ctx).await;
-        publish_fault_if_any(&loop_ctx.events, Some(session_id), &before_outcome).await;
+        let before_outcome =
+            dispatch(&loop_ctx.handles.hook_chains.on_compaction, before_ctx).await;
+        publish_fault_if_any(&loop_ctx.handles.events, Some(session_id), &before_outcome).await;
         if matches!(
             before_outcome,
             DispatchOutcome::Stopped(_) | DispatchOutcome::Denied { .. }
@@ -91,7 +92,8 @@ impl ConversationRuntime {
         // summary in its place — otherwise the next turn would see the
         // literal "Summarize the conversation history above" prompt it
         // never issued.
-        let synth_id = append_synthetic_request(memory, &loop_ctx.events, session_id).await?;
+        let synth_id =
+            append_synthetic_request(memory, &loop_ctx.handles.events, session_id).await?;
         // Build a one-shot compaction projection and run a turn. The
         // result text becomes Part::Compaction.
         let mut compact_input = input.clone();
@@ -107,7 +109,7 @@ impl ConversationRuntime {
             Err(e) => {
                 let _ = append_compaction_part(
                     memory,
-                    &loop_ctx.events,
+                    &loop_ctx.handles.events,
                     session_id,
                     String::new(),
                     vec![synth_id],
@@ -127,7 +129,7 @@ impl ConversationRuntime {
         if summary.trim().is_empty() {
             let _ = append_compaction_part(
                 memory,
-                &loop_ctx.events,
+                &loop_ctx.handles.events,
                 session_id,
                 String::new(),
                 vec![synth_id, outcome.assistant_message_id],
@@ -143,7 +145,7 @@ impl ConversationRuntime {
         superseded.push(outcome.assistant_message_id);
         let _comp_id = append_compaction_part(
             memory,
-            &loop_ctx.events,
+            &loop_ctx.handles.events,
             session_id,
             summary,
             superseded,
@@ -170,8 +172,8 @@ impl ConversationRuntime {
             message_count: input.messages.len(),
             autocontinue: true,
         };
-        let after_outcome = dispatch(&loop_ctx.hook_chains.on_compaction, after_ctx).await;
-        publish_fault_if_any(&loop_ctx.events, Some(session_id), &after_outcome).await;
+        let after_outcome = dispatch(&loop_ctx.handles.hook_chains.on_compaction, after_ctx).await;
+        publish_fault_if_any(&loop_ctx.handles.events, Some(session_id), &after_outcome).await;
         // Honor the autocontinue toggle: when a plugin returns Replace
         // with autocontinue=false from the After phase, skip the synthetic
         // resume turn, signal the pause via SessionStatus::Idle, and exit
@@ -180,6 +182,7 @@ impl ConversationRuntime {
         if let DispatchOutcome::Completed(ref ctx) = after_outcome {
             if !ctx.autocontinue {
                 let _ = loop_ctx
+                    .handles
                     .events
                     .publish(
                         AgentEvent::SessionStatus {

@@ -1,4 +1,4 @@
-//! `POST /v1/sessions/:id/attachments` — multipart upload route.
+//! `POST /v1/session/:id/attachments` — multipart upload route.
 //!
 //! Pipeline:
 //!   1. Body limit layer (`RequestBodyLimitLayer::new(25MB)`) — applied
@@ -59,7 +59,7 @@ pub struct AttachmentAck {
 
 #[utoipa::path(
     post,
-    path = "/v1/sessions/{id}/attachments",
+    path = "/v1/session/{id}/attachments",
     tag = "session",
     params(("id" = Uuid, Path, description = "Session id")),
     request_body(content = String, content_type = "multipart/form-data"),

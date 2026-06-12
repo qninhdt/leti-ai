@@ -1,4 +1,4 @@
-// Session picker overlay content, ported from the Ink `SessionPicker` view.
+// Session picker overlay content. Lists sessions sorted by updated_at
 // Lists sessions sorted by updated_at (newest first) as `shortId · status ·
 // permission_mode` rows; selecting one makes it active and closes the overlay.
 // Navigation runs through the shared list-nav helper on the key router's

@@ -23,7 +23,7 @@ fn agent_with(context_window: u32, threshold: f32) -> AgentDefinition {
         description: String::new(),
         prompt_segments: None,
         tool_allowlist: Vec::new(),
-        model_id: "test/model".into(),
+        model_id: Some("test/model".into()),
         default_temperature: 0.0,
         context_window,
         compaction_threshold: threshold,

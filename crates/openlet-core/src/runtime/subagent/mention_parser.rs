@@ -66,7 +66,7 @@ mod tests {
                 description: String::new(),
                 prompt_segments: None,
                 tool_allowlist: Vec::new(),
-                model_id: "test-model".to_string(),
+                model_id: Some("test-model".to_string()),
                 default_temperature: 0.0,
                 context_window: 128_000,
                 compaction_threshold: 0.8,

@@ -11,7 +11,7 @@ fn agent_with_window(window: u32, threshold: f32) -> AgentDefinition {
         description: String::new(),
         prompt_segments: Some(PromptSegments::default()),
         tool_allowlist: Vec::new(),
-        model_id: "test".into(),
+        model_id: Some("test".into()),
         default_temperature: 0.0,
         context_window: window,
         compaction_threshold: threshold,

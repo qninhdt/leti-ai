@@ -1,6 +1,6 @@
 # Nightly + manual real-LLM acceptance. NEVER runs on PRs (cost + secret).
-# Gated by OPENLET_LIVE_E2E=1 + OPENROUTER_API_KEY (an Actions secret), so a
-# missing secret skips cleanly rather than failing the dashboard.
+# Gated by vars.OPENLET_NIGHTLY_ENABLED == 'true' (an Actions variable), so a
+# missing variable skips cleanly rather than failing the dashboard.
 name: nightly
 
 on:
@@ -14,6 +14,9 @@ on:
         required: false
         default: "openai/gpt-4o-mini"
 
+permissions:
+  contents: read
+
 concurrency:
   group: nightly
   cancel-in-progress: true
@@ -25,6 +28,7 @@ jobs:
   live-acceptance:
     name: real-LLM acceptance (gated, cost-bounded)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Only run when a key is configured — keeps forks + key-less repos green.
     if: ${{ github.event_name == 'workflow_dispatch' || vars.OPENLET_NIGHTLY_ENABLED == 'true' }}
     steps:
@@ -39,7 +43,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Run gated acceptance suite

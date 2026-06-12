@@ -15,12 +15,9 @@ pub mod tool_executor;
 pub use artifact_store::{ArtifactRef, ArtifactStore};
 pub use event_sink::{EventSink, Persistence};
 pub use filesystem::{
-    ByteRange, DirEntry as FsDirEntry, FileMeta, Filesystem, GlobOpts, GlobSort,
-    GrepArgs as FsGrepArgs, GrepHit as FsGrepHit, WriteOpts,
+    ByteRange, DirEntry, FileMeta, Filesystem, GlobOpts, GlobSort, GrepArgs, GrepHit, WriteOpts,
 };
 pub use memory_store::MemoryStore;
 pub use model_provider::{ChatDelta, ChatRequest, ModelInfo, ModelPricing, ModelProvider};
 pub use permission_manager::PermissionManager;
-pub use tool_executor::{
-    BashCommand, BashOutput, DirEntry, FileBlob, GrepArgs, GrepHit, ToolCtx, ToolExecutor,
-};
+pub use tool_executor::ToolCtx;

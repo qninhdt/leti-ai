@@ -1,4 +1,4 @@
-// Plugins overlay content, ported from the Ink `PluginsView`. Lists installed
+// Plugins overlay content. Lists installed
 // plugins with enabled state, version, and capabilities. Pure content — no key
 // handler, so the router's Esc-pops-overlay path closes it (the old view had no
 // exit). Plugin *errors* surface separately as toasts (see toast-host).

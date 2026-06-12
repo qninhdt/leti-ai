@@ -7,8 +7,6 @@
 //! integrators construct this from their JWKS-verified token; the local
 //! binary's `LocalDevAuthenticator` constructs a fixed dev principal.
 
-use openlet_core::types::agent::AgentId;
-
 /// Who is making the request. Carried through the auth layer into request
 /// extensions; the workspace resolver consults it for ownership checks.
 ///
@@ -47,17 +45,4 @@ pub enum PrincipalType {
     /// A service account (machine-to-machine). Reserved for the cloud
     /// contract.
     Service,
-}
-
-/// The agent's sandbox a request acts upon. One agent owns exactly one
-/// workspace; `owner_principal_id` is the principal allowed to act on it.
-/// The workspace resolver maps `(principal, workspace_id)` → this, and
-/// rejects when the caller is not the owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentWorkspace {
-    pub agent_id: AgentId,
-    pub workspace_root: std::path::PathBuf,
-    /// `AuthPrincipal::caller_id` of the workspace owner. The resolver
-    /// compares the request principal against this for the 403 gate.
-    pub owner_principal_id: String,
 }
