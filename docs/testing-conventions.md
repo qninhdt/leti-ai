@@ -27,9 +27,20 @@ never mocked — in these tiers.
 | Tier | File(s) | Gate | Run |
 |---|---|---|---|
 | Mock-LLM (default) | `live_e2e_server_core`, `live_e2e_plugin_agent`, `live_e2e_fs_write`, `live_e2e_session_persist` | none — runs on plain `cargo test` | `cargo test --workspace` |
-| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud` | `#[ignore]` + `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY` | `OPENLET_LIVE_E2E=1 cargo test -p openlet-server -- --ignored` |
+| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud`, and the other `live_e2e_*` scenario files | runtime env only: `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY` (no `#[ignore]`) | `OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... cargo test -p openlet-server` |
 | TUI Node wire-double (default) | `tui/tests/e2e/tui-live-e2e.test.tsx` | none | `cd tui && npm test` |
 | TUI real-binary (gated) | `tui/tests/e2e/tui-real-binary-e2e.test.tsx` | `OPENLET_TUI_REAL_E2E=1` (+ `OPENLET_LIVE_E2E=1` + key for the OpenRouter sub-tier) | `cd tui && npm run test:e2e:real` |
+
+The real-OpenRouter scenario files (`live_e2e_*`) carry **no `#[ignore]`
+attribute**. They are gated purely at RUNTIME through the shared harness:
+`LiveServer::for_scenario` (and its variants) use the real
+`OpenRouterProvider` only when `OPENLET_LIVE_E2E=1` AND `OPENROUTER_API_KEY`
+are both set. Unset (the keyless CI default), the harness transparently
+falls back to the in-process scripted mock driving the SAME test body — so
+`cargo test` makes no network calls and the scenarios still exercise the
+full transport/sqlite/plugin wiring. There is no `cargo test -- --ignored`
+step; the env vars are the single source of truth.
+
 
 The TUI real-binary tier spawns the prebuilt `openlet-server` +
 `mock-openai-service`; build them first (`cargo build -p openlet-server
@@ -61,7 +72,7 @@ The rule of thumb is **mock the boundary, never the logic under test**.
 | **Unit** | inline `#[cfg(test)]` | the logic under test | I/O, time, provider, stores | cost math, compaction decision, token estimate, doom guard, dispatch fault synthesis |
 | **Integration** | `crates/*/tests/` | local adapters (sqlite `:memory:`, localfs, bus) | model provider only | sqlite paging, bus replay, `plugin_fault_observability` |
 | **E2E (mock-LLM)** | `live_e2e_*` / `subagent_e2e` | full wiring over loopback TCP or in-proc AppState | LLM responses (scripted/`MockOpenAiService`) | session persist, fs write, `subagent_e2e` |
-| **E2E (real-LLM)** | `#[ignore]` + `OPENLET_LIVE_E2E=1` + key | everything incl. the model | nothing | `live_e2e_openrouter_gated` (Phase 12) |
+| **E2E (real-LLM)** | `live_e2e_*`, runtime-gated by `OPENLET_LIVE_E2E=1` + key | everything incl. the model | nothing | `live_e2e_openrouter_gated` |
 
 - The **mock-LLM e2e layer is the default keyless CI path** — it exercises real transport/sqlite/plugins with deterministic model output.
 - **Never mock a store to dodge a contract** (e.g. sqlite's monotonic `seq`): use the real local adapter — its rich suite is the cloud-impl reference (Phase 7 contract spec).
@@ -85,6 +96,10 @@ async fn close_pgroup_on_clean_exit() { ... }
 A test added with `#[ignore]` MUST cite either an open issue or a
 follow-up plan path. CI reports ignored count; unexplained growth fails
 review.
+
+Note: `#[ignore]` is **not** how the live-LLM tiers are gated — those use
+the runtime env-var fallback described under "Live E2E tiers". Reserve
+`#[ignore]` for tests that genuinely cannot run yet (a documented blocker).
 
 ## Race tests
 

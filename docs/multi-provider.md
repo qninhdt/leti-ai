@@ -57,13 +57,13 @@ Cloud deployments serve multiple workspaces from a single binary. Each workspace
 1. **`WorkspaceResolver`** trait (in `openlet-server::workspace_resolver`) maps an incoming workspace id to an `Arc<AppState>`.
 2. Each `AppState` carries its own `MultiProvider` constructed from the workspace's BYOK keys.
 3. The HTTP middleware (`workspace_routing`) reads `x-openlet-workspace` from the request, resolves it via the trait, and inserts the resolved state into request extensions.
-4. Handlers extract the per-workspace state via the `WorkspaceRoutingGuard` extractor.
+4. Handlers extract the per-workspace state via `State<AppState>` (the layer inserts the resolved `Arc<AppState>` into request extensions; there is no separate extractor).
 
 Single-tenant deployments use `StaticWorkspaceResolver`, which always returns the same state — so the local binary keeps booting unchanged.
 
 ### Auth ordering contract (F5.1)
 
-The `WorkspaceRoutingGuard` and the routing layer both refuse to proceed unless an `AuthPrincipal` extension is already present in the request. **Mount order MUST be:** auth middleware → workspace_routing middleware → handler. Violating this order produces 401 on every request — loud-fail by design, because skipping auth before workspace lookup is a cross-tenant data exposure.
+The `WorkspaceRoutingLayer` refuses to proceed unless an `AuthPrincipal` extension is already present in the request. **Mount order MUST be:** auth middleware → workspace_routing middleware → handler. Violating this order produces 401 on every request — loud-fail by design, because skipping auth before workspace lookup is a cross-tenant data exposure.
 
 ## Cache markers
 

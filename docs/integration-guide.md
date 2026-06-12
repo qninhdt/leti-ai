@@ -37,9 +37,8 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // 2. Build AppState with the integrator's adapter mix.
-    //    Plugins land via PluginRegistry once phase 3 wires register_tool /
-    //    register_provider / hooks. For now, .plugin_registry(_) carries
-    //    the registry into AppState; agents drain via install_agents.
+    //    Plugins land via PluginHandles; agents drain via install_all into
+    //    InstalledPlugins, which is plumbed into AppState.plugin_registry.
     let state = AppStateBuilder::new()
         .provider(provider)
         .memory(memory)
@@ -90,7 +89,7 @@ These are the types integrators import. Everything else is internal.
 | `routes::*` | `openlet_server` | Each handler is `pub async fn` — re-mount one at a time when overriding |
 | `Plugin`, `PluginContext`, `PluginManifest` | `openlet_plugin_api` | Author plugins for tools/agents/hooks |
 | `CoreApi` | `openlet_plugin_api` | Back-channel for plugins (read-only into core) — body lands in phase 4 |
-| `MemoryStore`, `EventSink`, `ModelProvider`, `PermissionManager`, `ArtifactStore`, `Filesystem`, `ToolExecutor` | `openlet_core::adapters` | Six-trait adapter split — swap any backend |
+| `MemoryStore`, `EventSink`, `ModelProvider`, `PermissionManager`, `ArtifactStore`, `Filesystem` | `openlet_core::adapters` | Six-trait adapter split — swap any backend |
 | `EventSink::subscribe(EventFilter)` | `openlet_core::adapters` | Out-of-band event tap for billing/audit/SIEM |
 | `POST /v1/session/:id/abort` | HTTP | Cancels the active turn — already cascades into the running loop |
 
@@ -207,11 +206,13 @@ impl WorkspaceResolver for cloud::CloudResolver {
 auth middleware → WorkspaceRoutingLayer → handler
 ```
 
-`WorkspaceRoutingLayer` and the `WorkspaceRoutingGuard` extractor BOTH
-refuse to proceed unless an `AuthPrincipal` is already in the request
-extensions. Mounting workspace routing before auth produces 401 on
-every request — loud-fail by design, because skipping auth before
-workspace lookup is a cross-tenant data exposure.
+`WorkspaceRoutingLayer` refuses to proceed unless an `AuthPrincipal` is
+already in the request extensions, and inserts the resolved `Arc<AppState>`
+into request extensions for the handler. Mounting workspace routing before
+auth produces 401 on every request — loud-fail by design, because skipping
+auth before workspace lookup is a cross-tenant data exposure. Handlers
+receive the resolved state via `State<AppState>`; there is no separate
+extractor.
 
 ```rust
 let resolver = cloud::CloudResolver::new(control_plane);
@@ -285,37 +286,6 @@ The `AuthLayer` runs before the workspace layer and injects the
 dev authenticator; `cloud` makes `authenticator_for_profile` fail closed —
 the cloud binary MUST build its own `Authenticator` and call
 `build_with_auth` rather than relying on the default.
-
-### Outbound: `CredentialProvider`
-
-When an agent tool calls an openlet service, it carries openlet-ai's own
-service-account credential scoped to the agent workspace (external SA, not a
-per-turn user token). The trait + a `NoopCredentialProvider` default (returns
-`Ok(None)`) live in `openlet_server::auth`; the holder is on
-`AppState::credential_provider` (set via `AppStateBuilder::credential_provider`).
-
-```rust
-use openlet_server::{CredentialProvider, OutboundCredential, AgentWorkspace};
-
-#[async_trait::async_trait]
-impl CredentialProvider for cloud::SaIssuer {
-    async fn workspace_credential(
-        &self,
-        ws: &AgentWorkspace,
-    ) -> Result<Option<OutboundCredential>, openlet_server::CredentialError> {
-        Ok(Some(self.mint_sa_token(ws).await?))
-    }
-}
-```
-
-**Threading status:** the seam is built and held, but NOT yet wired into any
-tool call — core has no outbound HTTP tool today (every builtin is local:
-bash/edit/read/write/glob/grep/list/todo/ask_user/plan_mode/subagent_task/
-task_status). **Plug-in point:** when a real outbound tool lands, it reads
-`AppState::credential_provider`, calls `workspace_credential(agent_workspace)`,
-and attaches the returned bearer as `Authorization: Bearer <token>` on its
-outbound request. Until then the noop default keeps the local binary
-credential-free.
 
 ## Adapter contract spec (cloud impl conformance)
 

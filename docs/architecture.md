@@ -29,9 +29,14 @@ and exposes the result as REST + SSE.
 | `ModelProvider` | `openai_compat::OpenAiCompatProvider` | Streamed `chat_stream` against OpenRouter |
 | `MemoryStore` | `sqlite::SqliteMemoryStore` | Sessions, messages, parts (durable) |
 | `ArtifactStore` | `localfs::LocalFsArtifactStore` | Per-session blob bucket (sha256-keyed) |
-| `ToolExecutor` | `localshell::LocalShellToolExecutor` + tool registry | Bash, file ops, grep, glob |
+| `Filesystem` | `LocalFilesystem` | Workspace file IO — read/write/glob/grep, jailed to the workspace root |
 | `EventSink` | `bus::BroadcastBus` (with sqlite `event_repo`) | Live SSE channel + replay-from-table |
 | `PermissionManager` | `config_perm::ConfigPermissionMgr` | Always/ask/never rulesets, deferred resolution |
+
+Tool execution is not an adapter trait. Tools implement the `Tool` /
+`ErasedTool` contract and register into a `ToolRegistry`; built-in tools
+(bash, file ops, grep, glob) reach the workspace through the per-agent
+`Filesystem` handle (`AgentResources.fs`).
 
 A new deployment swaps adapters wholesale (e.g. cloud impl for `MemoryStore`)
 without touching `openlet-core` or routes.
@@ -39,7 +44,7 @@ without touching `openlet-core` or routes.
 ## Data flow — single turn
 
 ```
-TUI ── POST /v1/sessions/:id/turns ──► axum route
+TUI ── POST /v1/session/:id/prompt_async ──► axum route
                                           │
                                           ▼
                                 ConversationRuntime::run_turn
@@ -52,12 +57,13 @@ TUI ── POST /v1/sessions/:id/turns ──► axum route
                                           │   Processor: SseFrame → ChatDelta → Part
                                           ├─ EventSink.publish(part_created, …)  ─► SSE channel
                                           ├─ Tool dispatch → PermissionManager.check
-                                          ├─ ToolExecutor.run → tool result Part
+                                          ├─ ToolRegistry.dispatch → tool result Part
                                           └─ MemoryStore.append(assistant message)
 ```
 
 Every event the SSE channel emits is also persisted to `events` so a
-disconnected client can `GET /v1/sessions/:id/events?after=N` to catch up.
+disconnected client can `GET /v1/event?session=<uuid>` with a `Last-Event-ID`
+header to catch up.
 
 ## Error flow
 
