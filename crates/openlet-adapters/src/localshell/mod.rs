@@ -7,8 +7,6 @@
 //! provider API key.
 
 mod executor;
-mod legacy_stub;
 mod output_capture;
 
 pub use executor::LocalShellExecutor;
-pub use legacy_stub::LocalShellToolExecutor;

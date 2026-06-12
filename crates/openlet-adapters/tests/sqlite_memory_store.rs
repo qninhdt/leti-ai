@@ -291,6 +291,40 @@ async fn list_sessions_paged_walks_pages() {
 }
 
 #[tokio::test]
+async fn list_parts_scoped_to_session() {
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+
+    let agent = AgentId::new();
+    let session_a = store.create_session(agent, None).await.unwrap();
+    let session_b = store.create_session(agent, None).await.unwrap();
+
+    let mid = MessageId::new();
+    let msg = Message {
+        id: mid,
+        session_id: session_a,
+        role: Role::Assistant,
+        created_at: Utc::now(),
+    };
+    store.append_message(session_a, msg).await.unwrap();
+
+    let pid = PartId::new();
+    let part = Part::Text {
+        id: pid,
+        text: "hello".into(),
+    };
+    store.append_part(mid, part).await.unwrap();
+
+    // Correct session returns the part.
+    let parts = store.list_parts(session_a, mid).await.unwrap();
+    assert_eq!(parts.len(), 1);
+
+    // Wrong session returns empty — the message belongs to session_a, not session_b.
+    let empty = store.list_parts(session_b, mid).await.unwrap();
+    assert!(empty.is_empty(), "list_parts must enforce session scoping");
+}
+
+#[tokio::test]
 async fn list_messages_paged_matches_unbounded_order() {
     let pool = open_in_memory().await.expect("pool");
     let store = SqliteMemoryStore::new(pool);

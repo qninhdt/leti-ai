@@ -14,7 +14,7 @@ use openlet_core::adapters::model_provider::{
 use openlet_core::error::ProviderError;
 
 use super::prefix_shaping::{apply_request_shaping, detect_quirks};
-use super::pricing::pricing_for;
+use super::shared_provider::{shared_capabilities, shared_list_models, shared_pricing};
 use super::transport::HttpTransport;
 use super::wire::to_wire;
 
@@ -82,18 +82,14 @@ impl ModelProvider for OpenAiProvider {
     }
 
     fn pricing(&self, model: &str) -> Option<ModelPricing> {
-        pricing_for(model)
+        shared_pricing(model)
     }
 
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        self.transport.list_models().await
+        shared_list_models(&self.transport).await
     }
 
     fn capabilities(&self, model: &str) -> ProviderCapabilities {
-        // Capabilities mirror the prefix-shaper detection so callers
-        // (projector, request builder) get a single source of truth for
-        // quirk flags. Vision is OFF by default — the base adapter is the
-        // catch-all and shouldn't claim multimodal support unilaterally.
-        detect_quirks(model)
+        shared_capabilities(model)
     }
 }

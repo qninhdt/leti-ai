@@ -20,6 +20,7 @@ use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, Sessio
 use super::codec::{
     decode_json, encode_json, map_io, mode_str, now_ms, part_kind, role_str, status_str,
 };
+use super::memory_queries::session_filter_clause;
 use super::rows::{row_to_message, row_to_session};
 
 #[derive(Debug, Clone)]
@@ -136,24 +137,13 @@ impl MemoryStore for SqliteMemoryStore {
              current_agent_slug, previous_agent_slug, depth, model \
              FROM sessions WHERE 1=1",
         );
-        if !filter.include_deleted {
-            sql.push_str(" AND deleted_at IS NULL");
-        }
-        if filter.status.is_some() {
-            sql.push_str(" AND status = ?");
-        }
-        if filter.agent_id.is_some() {
-            sql.push_str(" AND agent_id = ?");
-        }
+        let (clauses, binds) = session_filter_clause(&filter);
+        sql.push_str(&clauses);
         sql.push_str(" ORDER BY created_at DESC");
 
         let mut q = sqlx::query(&sql);
-        if let Some(s) = filter.status {
-            q = q.bind(status_str(s));
-        }
-        let agent_str = filter.agent_id.as_ref().map(|a| a.to_string());
-        if let Some(a) = agent_str.as_deref() {
-            q = q.bind(a);
+        for b in &binds {
+            q = q.bind(b);
         }
 
         let rows = q.fetch_all(&self.pool).await.map_err(map_io)?;
@@ -182,24 +172,13 @@ impl MemoryStore for SqliteMemoryStore {
              current_agent_slug, previous_agent_slug, depth, model \
              FROM sessions WHERE 1=1",
         );
-        if !filter.include_deleted {
-            sql.push_str(" AND deleted_at IS NULL");
-        }
-        if filter.status.is_some() {
-            sql.push_str(" AND status = ?");
-        }
-        if filter.agent_id.is_some() {
-            sql.push_str(" AND agent_id = ?");
-        }
+        let (clauses, binds) = session_filter_clause(&filter);
+        sql.push_str(&clauses);
         sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query(&sql);
-        if let Some(s) = filter.status {
-            q = q.bind(status_str(s));
-        }
-        let agent_str = filter.agent_id.as_ref().map(|a| a.to_string());
-        if let Some(a) = agent_str.as_deref() {
-            q = q.bind(a);
+        for b in &binds {
+            q = q.bind(b);
         }
         q = q.bind(limit as i64 + 1).bind(offset as i64);
 
@@ -507,15 +486,20 @@ impl MemoryStore for SqliteMemoryStore {
 
     async fn list_parts(
         &self,
-        _session: SessionId,
+        session: SessionId,
         msg: MessageId,
     ) -> Result<Vec<Part>, MemoryError> {
-        let rows =
-            sqlx::query(r#"SELECT payload FROM parts WHERE message_id = ? ORDER BY seq ASC"#)
-                .bind(msg.to_string())
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_io)?;
+        let rows = sqlx::query(
+            r#"SELECT p.payload FROM parts p
+               INNER JOIN messages m ON m.id = p.message_id
+               WHERE p.message_id = ? AND m.session_id = ?
+               ORDER BY p.seq ASC"#,
+        )
+        .bind(msg.to_string())
+        .bind(session.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
 
         let mut out = Vec::with_capacity(rows.len());
         for row in rows {

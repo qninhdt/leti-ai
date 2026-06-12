@@ -5,6 +5,7 @@
 
 pub(crate) mod codec;
 pub mod event_repo;
+pub(crate) mod memory_queries;
 pub mod memory_store;
 pub mod permission_repo;
 pub mod pool;

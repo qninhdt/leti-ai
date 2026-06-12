@@ -15,6 +15,7 @@ pub mod chunk_decoder;
 pub mod prefix_shaping;
 pub mod pricing;
 pub mod provider;
+pub(crate) mod shared_provider;
 pub mod sse;
 pub(crate) mod stream;
 pub mod transport;
