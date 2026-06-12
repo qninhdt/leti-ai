@@ -65,20 +65,17 @@ impl CoreToolsPlugin {
         spawner: Arc<dyn SubagentSpawner>,
     ) -> Self {
         Self {
-            manifest: PluginManifest {
-                id: "core-tools".into(),
-                name: "Openlet Core Tools".into(),
-                version: Version::new(0, 1, 0),
-                description: "Ships the core built-in tools (read, list, glob, grep, write, edit, \
+            manifest: PluginManifest::builder("core-tools", "Openlet Core Tools")
+                .version(Version::new(0, 1, 0))
+                .description(
+                    "Ships the core built-in tools (read, list, glob, grep, write, edit, \
                      bash, todo, ask_user, enter_plan_mode, exit_plan_mode, subagent_task, \
-                     task_status) through the plugin extension surface."
-                    .into(),
-                author: Some("Openlet".into()),
-                capabilities: vec![Capability::Tool],
-                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
-                default_priority: 50,
-                config_schema: None,
-            },
+                     task_status) through the plugin extension surface.",
+                )
+                .author("Openlet")
+                .capabilities(vec![Capability::Tool])
+                .default_priority(50)
+                .build(),
             shell,
             memory,
             task_registry,

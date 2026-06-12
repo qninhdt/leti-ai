@@ -49,16 +49,16 @@ pub fn all_plugins(
     ]
 }
 
-/// Registry of resolved plugin handles + sorted hook chains.
+/// Wrapper over the list of active plugin handles.
 ///
 /// Built once at server boot from the result of `all_plugins()` after
 /// applying the operator's enabled/disabled config.
 #[derive(Default)]
-pub struct PluginRegistry {
+pub struct PluginHandles {
     plugins: Vec<Arc<dyn Plugin>>,
 }
 
-impl PluginRegistry {
+impl PluginHandles {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -87,7 +87,7 @@ impl PluginRegistry {
 
 /// Output of [`install_all`] — every plugin's drained registrations
 /// merged + chains canonically sorted, ready to plumb into `AppState`.
-pub struct FinalizedRegistry {
+pub struct InstalledPlugins {
     pub plugins: Vec<Arc<dyn Plugin>>,
     pub manifests: Vec<PluginManifest>,
     pub agents: Vec<AgentDefinition>,
@@ -97,7 +97,7 @@ pub struct FinalizedRegistry {
 }
 
 /// Drive every plugin's `install` hook, drain its [`PluginContext`],
-/// merge into a single [`FinalizedRegistry`], and sort all hook chains.
+/// merge into a single [`InstalledPlugins`], and sort all hook chains.
 ///
 /// `configs` maps `manifest.id -> per-plugin config block`. Plugins
 /// without an entry receive `serde_json::Value::Null`. The first
@@ -108,7 +108,7 @@ pub async fn install_all(
     plugins: Vec<Arc<dyn Plugin>>,
     configs: &std::collections::HashMap<String, serde_json::Value>,
     core_api: Arc<dyn CoreApi>,
-) -> Result<FinalizedRegistry, PluginError> {
+) -> Result<InstalledPlugins, PluginError> {
     let mut manifests = Vec::with_capacity(plugins.len());
     let mut agents = Vec::new();
     let mut tools = Vec::new();
@@ -207,32 +207,14 @@ pub async fn install_all(
             tools.push(tool);
         }
 
-        chains.before_turn.extend(regs.chains.before_turn);
-        chains.after_turn.extend(regs.chains.after_turn);
-        chains.on_chat_params.extend(regs.chains.on_chat_params);
-        chains.on_chat_messages.extend(regs.chains.on_chat_messages);
-        chains.on_chat_headers.extend(regs.chains.on_chat_headers);
-        chains.before_tool_call.extend(regs.chains.before_tool_call);
-        chains.after_tool_call.extend(regs.chains.after_tool_call);
-        chains
-            .on_permission_ask
-            .extend(regs.chains.on_permission_ask);
-        chains.on_message.extend(regs.chains.on_message);
-        chains.on_cost_tick.extend(regs.chains.on_cost_tick);
-        chains.on_step_finish.extend(regs.chains.on_step_finish);
-        chains.on_compaction.extend(regs.chains.on_compaction);
-        chains
-            .on_session_status
-            .extend(regs.chains.on_session_status);
-        chains.on_event.extend(regs.chains.on_event);
-        chains.notification.extend(regs.chains.notification);
+        chains.merge(regs.chains);
 
         manifests.push(manifest.clone());
     }
 
     chains.sort_all();
 
-    Ok(FinalizedRegistry {
+    Ok(InstalledPlugins {
         plugins,
         manifests,
         agents,

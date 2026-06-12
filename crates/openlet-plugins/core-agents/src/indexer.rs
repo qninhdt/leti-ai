@@ -22,6 +22,5 @@ pub fn indexer_agent() -> AgentDefinition {
         cacheable: INDEXER_CACHEABLE.to_owned(),
         dynamic: Arc::new(|_| String::new()),
         tool_allowlist: TOOL_ALLOWLIST,
-        model_id: "anthropic/claude-3.5-haiku",
     })
 }

@@ -13,7 +13,11 @@ use openlet_core::agent::AgentDefinition;
 
 use crate::builder::{AgentBlueprint, build};
 
-const PLAN_CACHEABLE: &str = include_str!("../assets/plan_mode.md");
+/// Cacheable system prompt for the plan-mode agent. Hashed in
+/// `tests/plan_prompt_cache_hash.rs` — silently editing this
+/// file invalidates the prompt cache for every active session, so the
+/// `# version: N` header must increment alongside changes.
+pub const PLAN_CACHEABLE: &str = include_str!("../assets/plan_mode.md");
 
 // web_search / web_fetch may not be registered yet (sibling agent owns
 // those tools). Listing them here is harmless: the dispatch-time check
@@ -40,6 +44,5 @@ pub fn plan_agent() -> AgentDefinition {
         cacheable: PLAN_CACHEABLE.to_owned(),
         dynamic: Arc::new(|_| String::new()),
         tool_allowlist: TOOL_ALLOWLIST,
-        model_id: "anthropic/claude-3.5-sonnet",
     })
 }

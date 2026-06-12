@@ -57,22 +57,19 @@ impl QuotaStubPlugin {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            manifest: PluginManifest {
-                id: "test-quota-stub".into(),
-                name: "Test Quota Stub".into(),
-                version: Version::new(0, 1, 0),
-                description: "Reference quota plugin — stops the loop when a per-user budget is \
-                              exhausted. Integrators fork this into their billing service."
-                    .into(),
-                author: Some("Openlet".into()),
-                capabilities: vec![
+            manifest: PluginManifest::builder("test-quota-stub", "Test Quota Stub")
+                .version(Version::new(0, 1, 0))
+                .description(
+                    "Reference quota plugin — stops the loop when a per-user budget is \
+                     exhausted. Integrators fork this into their billing service.",
+                )
+                .author("Openlet")
+                .capabilities(vec![
                     Capability::Hook(HookKind::OnCostTick),
                     Capability::Hook(HookKind::BeforeTurn),
-                ],
-                core_version_req: openlet_plugin_api::manifest::core_version_req_v0_1(),
-                default_priority: 50,
-                config_schema: None,
-            },
+                ])
+                .default_priority(50)
+                .build(),
         }
     }
 }

@@ -3,8 +3,7 @@
 //! `general`, `indexer`, and `plan` share identical window / compaction /
 //! temperature tuning. Centralizing it here keeps a single source of truth
 //! and removes the triplicated `AgentDefinition` struct literals — only the
-//! distinguishing fields (slug, prompt, allowlist, model) live at each call
-//! site.
+//! distinguishing fields (slug, prompt, allowlist) live at each call site.
 
 use openlet_core::agent::{AgentDefinition, AgentSlug, DynamicSegmentFn, PromptSegments};
 
@@ -26,11 +25,11 @@ pub(crate) struct AgentBlueprint {
     pub cacheable: String,
     pub dynamic: DynamicSegmentFn,
     pub tool_allowlist: &'static [&'static str],
-    pub model_id: &'static str,
 }
 
 /// Assemble an [`AgentDefinition`] from a blueprint, applying the tuning
-/// constants every built-in agent shares.
+/// constants every built-in agent shares. `model_id` is left as `None` so
+/// the runtime resolves from `RuntimeConfig::default_model`.
 pub(crate) fn build(bp: AgentBlueprint) -> AgentDefinition {
     let def = AgentDefinition {
         slug: AgentSlug::new(bp.slug).expect("static slug"),
@@ -41,7 +40,7 @@ pub(crate) fn build(bp: AgentBlueprint) -> AgentDefinition {
             dynamic: bp.dynamic,
         }),
         tool_allowlist: bp.tool_allowlist.iter().map(|s| (*s).to_owned()).collect(),
-        model_id: bp.model_id.into(),
+        model_id: None,
         default_temperature: DEFAULT_TEMPERATURE,
         context_window: CONTEXT_WINDOW,
         compaction_threshold: COMPACTION_THRESHOLD,

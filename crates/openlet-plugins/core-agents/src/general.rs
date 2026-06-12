@@ -26,7 +26,6 @@ pub fn general_agent() -> AgentDefinition {
         cacheable: GENERAL_CACHEABLE.to_owned(),
         dynamic: Arc::new(dynamic_segment),
         tool_allowlist: TOOL_ALLOWLIST,
-        model_id: "anthropic/claude-3.5-sonnet",
     })
 }
 
