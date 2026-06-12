@@ -2016,6 +2016,7 @@ dependencies = [
  "async-trait",
  "openlet-core",
  "openlet-plugin-api",
+ "rust_decimal",
  "semver",
  "serde",
  "serde_json",
@@ -2032,10 +2033,14 @@ dependencies = [
  "openlet-plugin-api",
  "openlet-plugin-core-agents",
  "openlet-plugin-core-tools",
+ "rust_decimal",
+ "schemars",
  "semver",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -2061,6 +2066,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "openlet-core",
+ "rust_decimal",
  "schemars",
  "serde",
  "serde_json",

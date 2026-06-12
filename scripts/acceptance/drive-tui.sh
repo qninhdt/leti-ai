@@ -24,7 +24,7 @@ set -euo pipefail
 _DRV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _DRV_REPO="$(cd "$_DRV_ROOT/../.." && pwd)"
 ACC_TMUX_SESSION="${ACC_TMUX_SESSION:-openlet-acc}"
-ACC_EVIDENCE_DIR="${ACC_EVIDENCE_DIR:-$_DRV_REPO/plans/20260610-0209-real-llm-acceptance-product-ship/evidence}"
+ACC_EVIDENCE_DIR="${ACC_EVIDENCE_DIR:-$_DRV_REPO/plans/evidence}"
 mkdir -p "$ACC_EVIDENCE_DIR"
 
 # Scrub secrets from any captured text before it lands on disk. Matches
