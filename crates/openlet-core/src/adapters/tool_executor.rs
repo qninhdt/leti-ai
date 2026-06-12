@@ -1,13 +1,8 @@
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use bytes::Bytes;
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentRegistry;
-use crate::error::ToolError;
 use crate::runtime::question_registry::QuestionRegistry;
 use crate::runtime::subagent::TaskRegistry;
 use crate::tools::read_history::ReadHistory;
@@ -58,71 +53,4 @@ pub struct ToolCtx {
     /// `subagent_type` against this registry; a slug not found here
     /// returns `subagent_type_not_found` without admitting quota.
     pub agent_registry: Arc<AgentRegistry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BashCommand {
-    pub command: String,
-    pub timeout_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BashOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub timed_out: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileBlob {
-    pub path: PathBuf,
-    pub bytes: Vec<u8>,
-    pub line_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DirEntry {
-    pub path: PathBuf,
-    pub is_dir: bool,
-    pub size: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrepArgs {
-    pub pattern: String,
-    pub path: Option<PathBuf>,
-    pub case_insensitive: bool,
-    pub regex: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GrepHit {
-    pub path: PathBuf,
-    pub line: u64,
-    pub text: String,
-}
-
-/// Six built-in tool methods, implemented with workspace canonicalization.
-///
-/// Cloud-readiness (adapter-contract audit): the trait takes `&Path`
-/// arguments but makes NO assumption that the path resolves on the local
-/// filesystem — path canonicalization + sandboxing live behind the
-/// `ToolCtx::fs` (`Arc<dyn Filesystem>`) seam, so a remote-workspace impl
-/// swaps the filesystem backing without changing this trait. The
-/// outbound service-account credential + agent workspace identity
-/// (`CredentialProvider`/`AgentWorkspace`, server-side) are NOT threaded
-/// through `ToolCtx` yet: no core tool makes authenticated outbound calls
-/// today, and those types live in `openlet-server` (core can't depend on
-/// server). Plug-in point when a real outbound tool lands: read the
-/// credential from app state in the server-side executor — see the
-/// integration guide.
-#[async_trait]
-pub trait ToolExecutor: Send + Sync + 'static {
-    async fn run_bash(&self, ctx: ToolCtx, cmd: BashCommand) -> Result<BashOutput, ToolError>;
-    async fn read_file(&self, ctx: ToolCtx, path: &Path) -> Result<FileBlob, ToolError>;
-    async fn write_file(&self, ctx: ToolCtx, path: &Path, bytes: Bytes) -> Result<(), ToolError>;
-    async fn list_dir(&self, ctx: ToolCtx, path: &Path) -> Result<Vec<DirEntry>, ToolError>;
-    async fn glob(&self, ctx: ToolCtx, pattern: &str) -> Result<Vec<PathBuf>, ToolError>;
-    async fn grep(&self, ctx: ToolCtx, args: GrepArgs) -> Result<Vec<GrepHit>, ToolError>;
 }

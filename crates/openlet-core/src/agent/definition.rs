@@ -46,7 +46,7 @@ pub struct AgentDefinition {
     /// Tool names the agent may invoke (gating happens in `ConfigPermissionMgr`
     /// — this list is the *first* filter; permission rules are the second).
     pub tool_allowlist: Vec<String>,
-    pub model_id: String,
+    pub model_id: Option<String>,
     pub default_temperature: f32,
     pub context_window: u32,
     /// Fraction of `context_window` at which compaction triggers. Default 0.8.
@@ -115,7 +115,7 @@ mod validate_tests {
             description: String::new(),
             prompt_segments: Some(PromptSegments::default()),
             tool_allowlist: Vec::new(),
-            model_id: "test/model".into(),
+            model_id: Some("test/model".into()),
             default_temperature: 0.0,
             context_window: 1000,
             compaction_threshold: t,

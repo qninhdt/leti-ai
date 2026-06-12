@@ -204,7 +204,7 @@ pub enum NotificationLevel {
 /// `PluginContext::emit_notification`. Other notification hooks
 /// observe; SSE event `NotificationEmitted` fans out to clients.
 ///
-/// `body` is redacted by [`crate::redactor::SecretRedactor`] before
+/// `body` is redacted by the `SecretRedactor` (in `openlet-adapters`) before
 /// SSE emission. Per-session rate limiting (10/sec cumulative across
 /// plugins) caps misbehaving plugins from flooding the channel —
 /// overflow drops the notification and emits a tracing warn.

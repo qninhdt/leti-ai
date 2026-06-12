@@ -60,7 +60,7 @@ impl<I> std::fmt::Debug for HookEntry<I> {
 }
 
 /// Sorted hook chains, one per [`HookKind`]. Built by
-/// `PluginRegistry::install_all` after every plugin's `install` returns.
+/// `install_all` after every plugin's `install` returns.
 #[derive(Default, Debug)]
 pub struct HookChains {
     pub before_turn: Vec<HookEntry<BeforeTurnCtx>>,
@@ -84,6 +84,26 @@ impl HookChains {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Extend every chain from `other`, consuming it. Replaces the
+    /// 15-line hand-written extend block in the plugin registry.
+    pub fn merge(&mut self, other: HookChains) {
+        self.before_turn.extend(other.before_turn);
+        self.after_turn.extend(other.after_turn);
+        self.on_chat_params.extend(other.on_chat_params);
+        self.on_chat_messages.extend(other.on_chat_messages);
+        self.on_chat_headers.extend(other.on_chat_headers);
+        self.before_tool_call.extend(other.before_tool_call);
+        self.after_tool_call.extend(other.after_tool_call);
+        self.on_permission_ask.extend(other.on_permission_ask);
+        self.on_message.extend(other.on_message);
+        self.on_cost_tick.extend(other.on_cost_tick);
+        self.on_step_finish.extend(other.on_step_finish);
+        self.on_compaction.extend(other.on_compaction);
+        self.on_session_status.extend(other.on_session_status);
+        self.on_event.extend(other.on_event);
+        self.notification.extend(other.notification);
     }
 
     /// Sort every chain in canonical order: priority desc, manifest_id
@@ -176,6 +196,7 @@ pub struct PluginFault {
 
 /// Run a hook chain. Each entry is invoked sequentially; the input
 /// threads through `Continue`/`Replace` and the chain halts on `Stop` or
+/// `Deny`.
 pub mod runner;
 pub use runner::{dispatch, dispatch_event};
 

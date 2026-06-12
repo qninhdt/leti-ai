@@ -20,8 +20,7 @@ use crate::types::session::SessionId;
 /// local-process assumption. A cloud impl can call openlet's authz
 /// service from `check` and back the ask map with a shared store. No
 /// signature change needed; the agent-workspace identity threading is
-/// deferred with [`super::tool_executor::ToolExecutor`] (same reason —
-/// no consumer + cross-crate type placement).
+/// deferred (no consumer + cross-crate type placement).
 #[async_trait]
 pub trait PermissionManager: Send + Sync + 'static {
     async fn check(
