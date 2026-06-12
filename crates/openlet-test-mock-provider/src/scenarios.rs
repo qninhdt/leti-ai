@@ -159,7 +159,7 @@ pub enum Response {
         chunks: Vec<Vec<u8>>,
         inter_chunk_delay: Duration,
     },
-    Error {
+    Json {
         status: u16,
         status_text: &'static str,
         body: String,
@@ -177,7 +177,7 @@ impl Response {
     /// 200 OK with a JSON body. Used by the `GET /models` fixture so the
     /// model-catalog path has a network-free response to decode.
     pub(crate) fn ok_json(body: &str) -> Self {
-        Self::Error {
+        Self::Json {
             status: 200,
             status_text: "OK",
             body: body.to_string(),
@@ -190,7 +190,7 @@ impl Response {
         body: &str,
         extra_headers: &[(&'static str, &str)],
     ) -> Self {
-        Self::Error {
+        Self::Json {
             status,
             status_text,
             body: body.to_string(),

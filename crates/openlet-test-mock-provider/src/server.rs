@@ -275,7 +275,7 @@ async fn write_response(stream: &mut TcpStream, resp: Response) -> io::Result<()
             }
             stream.write_all(b"0\r\n\r\n").await?;
         }
-        Response::Error {
+        Response::Json {
             status,
             status_text,
             body,
@@ -298,4 +298,159 @@ async fn write_response(stream: &mut TcpStream, resp: Response) -> io::Result<()
     }
     stream.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    /// Establish a loopback TCP pair: returns the server-side stream (what
+    /// `read_request` reads from) and the client-side stream (what the test
+    /// writes request bytes into). Lets us drive `read_request` against real
+    /// socket I/O — including partial/split reads — with no HTTP framework.
+    async fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let connect = tokio::spawn(async move { TcpStream::connect(addr).await.unwrap() });
+        let (server, _) = listener.accept().await.unwrap();
+        let client = connect.await.unwrap();
+        (server, client)
+    }
+
+    #[test]
+    fn find_header_end_locates_crlfcrlf() {
+        // Position points at the first byte of the \r\n\r\n delimiter.
+        let buf = b"GET / HTTP/1.1\r\nHost: x\r\n\r\nBODY";
+        let pos = find_header_end(buf).expect("delimiter present");
+        assert_eq!(&buf[pos..pos + 4], b"\r\n\r\n");
+        // Body begins at pos + 4 — the offset `read_request` relies on.
+        assert_eq!(&buf[pos + 4..], b"BODY");
+    }
+
+    #[test]
+    fn find_header_end_absent_returns_none() {
+        // No blank line yet → caller must keep reading.
+        assert!(find_header_end(b"GET / HTTP/1.1\r\nHost: x\r\n").is_none());
+    }
+
+    #[tokio::test]
+    async fn parses_request_line_headers_and_body() {
+        let (mut server, mut client) = connected_pair().await;
+        let body = r#"{"messages":[]}"#;
+        let req_bytes = format!(
+            "POST /v1/chat/completions HTTP/1.1\r\n\
+             Host: localhost\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        client.write_all(req_bytes.as_bytes()).await.unwrap();
+        client.flush().await.unwrap();
+
+        let parsed = read_request(&mut server).await.unwrap();
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.path, "/v1/chat/completions");
+        assert_eq!(parsed.body, body);
+        // Header keys are lowercased; content-length must be present.
+        assert!(
+            parsed
+                .headers
+                .iter()
+                .any(|(k, v)| k == "content-length" && v == &body.len().to_string()),
+            "headers: {:?}",
+            parsed.headers
+        );
+        assert!(
+            parsed.headers.iter().any(|(k, _)| k == "content-type"),
+            "content-type header lowercased + captured"
+        );
+    }
+
+    #[tokio::test]
+    async fn reassembles_headers_split_across_reads() {
+        // The header block arrives in two writes with the \r\n\r\n delimiter
+        // straddling the boundary. `read_request`'s accumulate-until-delimiter
+        // loop must stitch them rather than give up on the first short read.
+        let (mut server, mut client) = connected_pair().await;
+        let body = r#"{"messages":[]}"#;
+
+        let writer = tokio::spawn(async move {
+            // First write ends mid-header-block, before the blank line.
+            client
+                .write_all(b"POST /v1/chat HTTP/1.1\r\nHost: localhost\r\n")
+                .await
+                .unwrap();
+            client.flush().await.unwrap();
+            // Small gap so the server's first read returns a partial buffer.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            // Second write completes the delimiter + body.
+            let rest = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+            client.write_all(rest.as_bytes()).await.unwrap();
+            client.flush().await.unwrap();
+        });
+
+        let parsed = read_request(&mut server).await.unwrap();
+        writer.await.unwrap();
+        assert_eq!(parsed.method, "POST");
+        assert_eq!(parsed.path, "/v1/chat");
+        assert_eq!(parsed.body, body);
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_headers() {
+        // A header block that never terminates and exceeds the 64 KiB cap
+        // must error (InvalidData) rather than buffer unboundedly.
+        let (mut server, mut client) = connected_pair().await;
+
+        let writer = tokio::spawn(async move {
+            // Send a valid request line then a flood of header bytes with no
+            // terminating blank line. Ignore write errors — the server may
+            // close once it trips the cap.
+            let _ = client.write_all(b"POST / HTTP/1.1\r\n").await;
+            let filler = vec![b'a'; 8192];
+            for _ in 0..10 {
+                // 80 KiB > 64 KiB cap
+                if client
+                    .write_all(
+                        format!("X-Pad: {}\r\n", String::from_utf8_lossy(&filler)).as_bytes(),
+                    )
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let _ = client.flush().await;
+        });
+
+        let err = read_request(&mut server)
+            .await
+            .expect_err("oversized headers must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        writer.abort();
+    }
+
+    #[tokio::test]
+    async fn errors_on_body_shorter_than_content_length() {
+        // Content-Length advertises more bytes than the client sends, then
+        // the client closes. `read_request` must surface UnexpectedEof rather
+        // than silently parse the truncated body.
+        let (mut server, mut client) = connected_pair().await;
+        let partial_body = "short";
+        let claimed_len = 100; // far more than `partial_body.len()`
+        let req_bytes =
+            format!("POST / HTTP/1.1\r\nContent-Length: {claimed_len}\r\n\r\n{partial_body}");
+        client.write_all(req_bytes.as_bytes()).await.unwrap();
+        client.flush().await.unwrap();
+        // Close the write half so the server's body read returns 0 (EOF).
+        client.shutdown().await.unwrap();
+
+        let err = read_request(&mut server)
+            .await
+            .expect_err("short body must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
 }
