@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::projection::ProjectionCaps;
-use openlet_core::runtime::LoopContext;
+use openlet_core::runtime::{LoopContext, RuntimeHandles};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
@@ -292,20 +292,22 @@ async fn drive_loop(
 
     let loop_ctx = LoopContext {
         agent_id,
-        fs: agent.fs.clone(),
-        permission: state.permission.clone(),
-        events: state.events.clone(),
-        artifacts: state.artifacts.clone(),
-        registry: state.tool_registry.clone(),
+        handles: RuntimeHandles {
+            fs: agent.fs.clone(),
+            permission: state.permission.clone(),
+            events: state.events.clone(),
+            artifacts: state.artifacts.clone(),
+            registry: state.tool_registry.clone(),
+            hook_chains: state.hook_chains.clone(),
+            questions: state.questions.clone(),
+            memory: state.memory.clone(),
+            task_registry: state.task_registry.clone(),
+            agent_registry: state.agent_registry.clone(),
+        },
         read_history,
         mode: session_meta.permission_mode,
         max_steps: crate::turn_driver::MAX_TURN_STEPS,
         agent: agent_def,
-        hook_chains: state.hook_chains.clone(),
-        questions: state.questions.clone(),
-        memory: state.memory.clone(),
-        task_registry: state.task_registry.clone(),
-        agent_registry: state.agent_registry.clone(),
     };
 
     let input = crate::turn_driver::build_turn_input(

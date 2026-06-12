@@ -3,19 +3,21 @@
 //! `ask_user` is the most complex multi-actor flow in the runtime: the model
 //! calls the tool, the turn PARKS on a rendezvous oneshot, a durable
 //! `question.requested` event hits the SSE stream, the client POSTs an answer
-//! to `/v1/sessions/:id/question/answer`, and only then does the parked tool
+//! to `/v1/session/:id/question/answer`, and only then does the parked tool
 //! resume and feed the selection back into the model's next turn. Nothing
 //! short of a real model exercises the full arc — the model must (a) decide to
 //! ask, (b) wait, then (c) act on the answer it could not have predicted.
 //!
 //! The default `POST /v1/session` route ships headless-safe (capabilities
 //! `{}` → `user_questions=false`), so this test boots a question-capable
-//! session via the harness helper. Gated identically to the other live tiers
-//! (`#[ignore]` + `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`).
+//! session via the harness helper. Gated identically to the other live tiers:
+//! the runtime env gate (`OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`) selects
+//! the real provider; unset, the harness falls back to the scripted mock so
+//! `cargo test` makes no network calls.
 //!
-//! Run:
-//!   OPENLET_LIVE_E2E=1 cargo test -p openlet-server --test \
-//!     live_e2e_ask_user -- --ignored
+//! Run against real OpenRouter:
+//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!     cargo test -p openlet-server --test live_e2e_ask_user
 
 use std::time::Duration;
 

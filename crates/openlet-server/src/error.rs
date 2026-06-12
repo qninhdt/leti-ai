@@ -9,7 +9,8 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use openlet_core::error::{
-    ArtifactError, ConfigError, EventError, MemoryError, PermissionError, ProviderError, ToolError,
+    ArtifactError, ConfigError, EventError, FsError, MemoryError, PermissionError, ProviderError,
+    ToolError,
 };
 use openlet_protocol::ErrorDto;
 use serde_json::Value;
@@ -207,6 +208,25 @@ impl From<ToolError> for AppError {
     fn from(e: ToolError) -> Self {
         let class = e.class();
         Self::new(StatusCode::BAD_REQUEST, class.as_str(), e.to_string())
+    }
+}
+
+impl From<FsError> for AppError {
+    fn from(e: FsError) -> Self {
+        match e {
+            FsError::OutsideWorkspace(_) => {
+                Self::bad_request("fs_outside_workspace", "path is outside the workspace")
+            }
+            FsError::NotFound(_) => Self::not_found("file_not_found", "file not found"),
+            FsError::TooLarge { .. } => Self::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "fs_file_too_large",
+                e.to_string(),
+            ),
+            FsError::Binary(_) => Self::unsupported_media_type("fs_binary", "binary file"),
+            FsError::InvalidInput(m) => Self::bad_request("fs_invalid_input", m),
+            FsError::Io(m) => Self::internal("fs_io", m),
+        }
     }
 }
 

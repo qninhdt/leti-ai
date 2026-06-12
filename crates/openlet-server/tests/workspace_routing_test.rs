@@ -15,7 +15,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Extension, Router};
 use openlet_server::AuthPrincipal;
-use openlet_server::middleware::{WORKSPACE_HEADER, WorkspaceRoutingGuard, WorkspaceRoutingLayer};
+use openlet_server::middleware::{WORKSPACE_HEADER, WorkspaceRoutingLayer};
 use openlet_server::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 use openlet_server::{AppState, StaticWorkspaceResolver};
 use tower::ServiceExt;
@@ -42,7 +42,7 @@ impl WorkspaceResolver for ConditionalResolver {
     }
 }
 
-async fn handler(_guard: WorkspaceRoutingGuard) -> impl IntoResponse {
+async fn handler(Extension(_state): Extension<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
@@ -165,17 +165,19 @@ async fn extension_unused_compiles() {
 }
 
 /// C1 regression: ONE canonical `AuthPrincipal` must gate both the
-/// workspace layer AND the handler-side guard. The handler extracts
-/// `WorkspaceRoutingGuard`, whose `from_request_parts` looks the
-/// principal up by `TypeId`. We inject the crate-root re-export
-/// (`openlet_server::AuthPrincipal`) — the SAME path `main.rs` and the
-/// question route use. If a second same-named type were reintroduced in
-/// either place, the `TypeId` lookup would miss and this would 401.
+/// workspace layer AND downstream extractors. The handler extracts
+/// `Extension<Arc<AppState>>` + `Extension<AuthPrincipal>` — proving
+/// the layer populates both extensions. We inject the crate-root
+/// re-export (`openlet_server::AuthPrincipal`) — the SAME path
+/// `main.rs` and the question route use.
 #[tokio::test]
 async fn one_canonical_principal_satisfies_layer_and_guard() {
-    async fn guarded(guard: WorkspaceRoutingGuard) -> impl IntoResponse {
+    async fn guarded(
+        Extension(_state): Extension<Arc<AppState>>,
+        Extension(principal): Extension<openlet_server::AuthPrincipal>,
+    ) -> impl IntoResponse {
         // Touch the principal so the field is load-bearing, not dead.
-        (StatusCode::OK, guard.principal.caller_id)
+        (StatusCode::OK, principal.caller_id)
     }
     let state = Arc::new(support::TestHarness::raw_state().await);
     let resolver = StaticWorkspaceResolver::new(state.clone());

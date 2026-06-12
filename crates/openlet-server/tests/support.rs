@@ -11,7 +11,7 @@ use axum::Router;
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
-use openlet_adapters::localshell::{LocalShellExecutor, LocalShellToolExecutor};
+use openlet_adapters::localshell::LocalShellExecutor;
 use openlet_adapters::sqlite::event_repo::SqliteEventRepo;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory};
 use openlet_core::adapters::ModelProvider;
@@ -22,7 +22,7 @@ use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus};
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_plugin_api::context::CoreApi;
-use openlet_plugin_registry::{PluginRegistry, install_all};
+use openlet_plugin_registry::{PluginHandles, install_all};
 use rust_decimal::Decimal;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -121,15 +121,15 @@ impl TestHarness {
                 artifact_root,
                 pool.clone(),
             )))
-            .tools(Arc::new(LocalShellToolExecutor::new()))
             .tool_registry(tool_registry)
             .events(events)
             .permission(Arc::new(ConfigPermissionMgr::new()))
             .config(Arc::new(config))
-            .plugin_registry(Arc::new(PluginRegistry::new()))
+            .plugin_registry(Arc::new(PluginHandles::new()))
             .runtime(runtime)
             .agents(agents)
             .default_agent_id(default_agent_id)
+            .workspace_root(workspace_root.clone())
             .agent_registry(Arc::new(openlet_core::agent::AgentRegistry::new()))
             .build()
             .expect("build app state");

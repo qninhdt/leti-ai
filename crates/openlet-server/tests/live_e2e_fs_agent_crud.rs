@@ -3,14 +3,14 @@
 //! The deterministic mock is stateless, so it can only drive a SINGLE
 //! tool-call (`live_e2e_fs_write.rs`). The full create→read→edit→delete
 //! sequence requires a REAL model that advances the steps because it sees
-//! each tool result fed back into the next turn. So this tier is gated:
-//!   - `#[ignore]` by default (`cargo test` skips it),
-//!   - even under `--ignored`, returns early unless `OPENLET_LIVE_E2E=1`
-//!     AND `OPENROUTER_API_KEY` is set.
+//! each tool result fed back into the next turn. So this tier is gated at
+//! RUNTIME: the real provider is used only when `OPENLET_LIVE_E2E=1` AND
+//! `OPENROUTER_API_KEY` are set; unset, the harness falls back to the scripted
+//! mock so `cargo test` makes no network calls (no `#[ignore]`).
 //!
-//! Run explicitly:
-//!   OPENLET_LIVE_E2E=1 cargo test -p openlet-server --test \
-//!     live_e2e_fs_agent_crud -- --ignored
+//! Run against real OpenRouter:
+//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!     cargo test -p openlet-server --test live_e2e_fs_agent_crud
 //!
 //! Zero mocks of fs/storage/permission: the real `LocalFilesystem`,
 //! `SqliteMemoryStore`, and `ConfigPermissionMgr` (in Danger mode so the

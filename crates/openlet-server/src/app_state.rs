@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use openlet_core::adapters::{
     artifact_store::ArtifactStore, event_sink::EventSink, filesystem::Filesystem,
     memory_store::MemoryStore, model_provider::ModelProvider,
-    permission_manager::PermissionManager, tool_executor::ToolExecutor,
+    permission_manager::PermissionManager,
 };
 use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
@@ -25,7 +25,7 @@ use openlet_core::tools::registry::ToolRegistry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
 use openlet_core::types::session::SessionId;
 use openlet_plugin_api::dispatch::HookChains;
-use openlet_plugin_registry::PluginRegistry;
+use openlet_plugin_registry::PluginHandles;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
@@ -87,7 +87,6 @@ impl TurnHandle {
 /// workspace. Cloud impls swap to `CloudFilesystem` / container shell
 /// without touching tool code.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct AgentResources {
     pub spec: AgentSpec,
     pub fs: Arc<dyn Filesystem>,
@@ -104,41 +103,38 @@ pub struct AgentResources {
 /// wires a single default agent; cloud plugin populates this map from
 /// the user→agent ownership table.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct AppState {
     pub provider: Arc<dyn ModelProvider>,
     pub memory: Arc<dyn MemoryStore>,
     pub artifacts: Arc<dyn ArtifactStore>,
-    pub tools: Arc<dyn ToolExecutor>,
     pub tool_registry: Arc<ToolRegistry>,
     pub read_histories: Arc<DashMap<SessionId, ReadHistory>>,
     pub events: Arc<dyn EventSink>,
     pub permission: Arc<dyn PermissionManager>,
     pub config: Arc<Config>,
-    pub plugin_registry: Arc<PluginRegistry>,
+    pub plugin_registry: Arc<PluginHandles>,
     pub hook_chains: Arc<HookChains>,
     pub runtime: Arc<ConversationRuntime>,
     pub active_turns: Arc<DashMap<SessionId, TurnHandle>>,
     pub agents: Arc<HashMap<AgentId, AgentResources>>,
     pub default_agent_id: AgentId,
+    /// Absolute path of the agent workspace root. The `Filesystem` trait
+    /// object jails reads to this root but does not expose it; routes that
+    /// must convert the trait's absolute `glob` results back to
+    /// workspace-relative paths (the `/v1/files` listing) read it here.
+    pub workspace_root: std::path::PathBuf,
     /// Agent definitions registered by plugins. Indexed by slug; the
     /// HTTP route resolves the per-session slug via `SessionMeta` once
     /// the column lands, and falls back to the `general` slug
     /// for MVP.
     pub agent_registry: Arc<AgentRegistry>,
     /// In-flight `ask_user` rendezvous map. Tools register oneshots
-    /// here while suspended; `POST /v1/sessions/:id/question/answer`
+    /// here while suspended; `POST /v1/session/:id/question/answer`
     /// resolves them.
     pub questions: Arc<QuestionRegistry>,
     /// In-process subagent task registry. Bounded by
     /// `OPENLET_SUBAGENT_MAX_PER_SESSION` (default 32) per ROOT session.
     pub task_registry: Arc<TaskRegistry>,
-    /// Outbound service-account credential seam. Local default is a
-    /// no-op (`Ok(None)` — agent tools make no authenticated outbound
-    /// calls). Held here so a future outbound HTTP tool can read it from
-    /// the tool context; NOT yet threaded into any tool call (no outbound
-    /// tool exists in core today).
-    pub credential_provider: Arc<dyn crate::auth::CredentialProvider>,
 }
 
 impl AppState {

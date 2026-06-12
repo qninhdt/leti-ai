@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use axum::Extension;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -19,7 +20,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use openlet_server::WORKSPACE_HEADER;
 use openlet_server::workspace_resolver::{WorkspaceError, WorkspaceResolver};
-use openlet_server::{AppState, AuthPrincipal, WorkspaceRoutingGuard, WorkspaceRoutingLayer};
+use openlet_server::{AppState, AuthPrincipal, WorkspaceRoutingLayer};
 use tower::ServiceExt;
 
 mod support;
@@ -50,7 +51,7 @@ impl WorkspaceResolver for TwoTenantResolver {
     }
 }
 
-async fn handler(_guard: WorkspaceRoutingGuard) -> impl IntoResponse {
+async fn handler(Extension(_state): Extension<Arc<AppState>>) -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 

@@ -46,7 +46,8 @@ pub struct EventQuery {
     ),
     responses(
         (status = 200, description = "SSE stream of AgentEvent frames", body = String,
-            content_type = "text/event-stream")
+            content_type = "text/event-stream"),
+        (status = 400, description = "Malformed Last-Event-ID header"),
     )
 )]
 pub async fn stream(

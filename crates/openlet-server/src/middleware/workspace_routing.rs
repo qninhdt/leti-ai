@@ -1,30 +1,27 @@
-//! Workspace routing middleware + extractor.
+//! Workspace routing middleware.
 //!
 //! Resolves the `x-openlet-workspace` header (header-only for MVP; path
 //! prefix `/v1/workspaces/{id}/...` deferred) into an [`Arc<AppState>`]
 //! via a [`WorkspaceResolver`] and stashes it on the request extensions
-//! so per-route handlers can pull it out via [`WorkspaceRoutingGuard`].
+//! so per-route handlers can pull it out.
 //!
 //! ## Cross-tenant isolation gate
 //!
-//! [`WorkspaceRoutingGuard`] asserts an [`AuthPrincipal`] is present in
-//! request extensions BEFORE consulting the resolver. Without
-//! authentication, a malicious caller could forge the
-//! `x-openlet-workspace` header and read another tenant's data —
-//! the guard refuses to resolve a workspace until auth has run. Mount
-//! order MUST be: auth middleware → workspace_routing middleware →
-//! handler. Violating this order produces 401 on every request, which
-//! is loud-fail (intentional).
+//! The middleware asserts an [`AuthPrincipal`] is present in request
+//! extensions BEFORE consulting the resolver. Without authentication, a
+//! malicious caller could forge the `x-openlet-workspace` header and read
+//! another tenant's data — the middleware refuses to resolve a workspace
+//! until auth has run. Mount order MUST be: auth middleware →
+//! workspace_routing middleware → handler. Violating this order produces
+//! 401 on every request, which is loud-fail (intentional).
 
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::FromRequestParts;
-use axum::http::{Request, StatusCode, request::Parts};
+use axum::http::{Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use tower::{Layer, Service};
 
-use crate::app_state::AppState;
 use crate::auth::AuthPrincipal;
 use crate::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 
@@ -32,41 +29,6 @@ use crate::workspace_resolver::{WorkspaceError, WorkspaceResolver};
 /// deployments require this on every authenticated request; the local
 /// binary tolerates absence (resolver is single-tenant).
 pub const WORKSPACE_HEADER: &str = "x-openlet-workspace";
-
-/// Extractor for handlers that need the resolved per-workspace state.
-/// Returns 401 if auth hasn't run, 400 for malformed workspace ids,
-/// 404 for unknown workspaces.
-pub struct WorkspaceRoutingGuard {
-    pub state: Arc<AppState>,
-    pub principal: AuthPrincipal,
-}
-
-impl<S> FromRequestParts<S> for WorkspaceRoutingGuard
-where
-    S: Send + Sync,
-{
-    type Rejection = Response;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let state = parts
-            .extensions
-            .get::<Arc<AppState>>()
-            .cloned()
-            .ok_or_else(|| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "workspace state not resolved",
-                )
-                    .into_response()
-            })?;
-        let principal = parts
-            .extensions
-            .get::<AuthPrincipal>()
-            .cloned()
-            .ok_or_else(|| (StatusCode::UNAUTHORIZED, "authentication required").into_response())?;
-        Ok(WorkspaceRoutingGuard { state, principal })
-    }
-}
 
 /// Layer that resolves the workspace header on every request and
 /// inserts the [`Arc<AppState>`] into request extensions. Returns

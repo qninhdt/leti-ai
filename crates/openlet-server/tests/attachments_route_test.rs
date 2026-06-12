@@ -26,7 +26,7 @@ async fn multipart_25mb_cap_returns_413_pre_body_read() {
     let body_len = body.len();
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/v1/sessions/{session_id}/attachments"))
+        .uri(format!("/v1/session/{session_id}/attachments"))
         .header("content-type", "multipart/form-data; boundary=testboundary")
         .header("content-length", body_len.to_string())
         .body(Body::from(body))
@@ -47,7 +47,7 @@ async fn multipart_image_round_trip() {
     let body = build_multipart_body(&jpeg_bytes, "tiny.jpg");
     let req = Request::builder()
         .method("POST")
-        .uri(format!("/v1/sessions/{session_id}/attachments"))
+        .uri(format!("/v1/session/{session_id}/attachments"))
         .header("content-type", "multipart/form-data; boundary=testboundary")
         .body(Body::from(body))
         .unwrap();

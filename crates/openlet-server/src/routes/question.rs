@@ -1,4 +1,4 @@
-//! `POST /v1/sessions/:id/question/answer` — resolve a pending
+//! `POST /v1/session/:id/question/answer` — resolve a pending
 //! `ask_user` question by routing the user's selected option indices
 //! into the in-memory rendezvous registry.
 //!
@@ -25,7 +25,7 @@ use crate::error::AppError;
 
 #[utoipa::path(
     post,
-    path = "/v1/sessions/{id}/question/answer",
+    path = "/v1/session/{id}/question/answer",
     tag = "question",
     params(("id" = Uuid, Path, description = "Session id")),
     request_body = QuestionAnswerDto,

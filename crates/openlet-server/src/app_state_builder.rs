@@ -12,7 +12,6 @@ use dashmap::DashMap;
 use openlet_core::adapters::{
     artifact_store::ArtifactStore, event_sink::EventSink, memory_store::MemoryStore,
     model_provider::ModelProvider, permission_manager::PermissionManager,
-    tool_executor::ToolExecutor,
 };
 use openlet_core::agent::AgentRegistry;
 use openlet_core::config::Config;
@@ -24,7 +23,7 @@ use openlet_core::tools::registry::ToolRegistry;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::session::SessionId;
 use openlet_plugin_api::dispatch::HookChains;
-use openlet_plugin_registry::PluginRegistry;
+use openlet_plugin_registry::PluginHandles;
 
 use crate::app_state::{AgentResources, AppState, TurnHandle};
 
@@ -46,22 +45,21 @@ pub struct AppStateBuilder {
     provider: Option<Arc<dyn ModelProvider>>,
     memory: Option<Arc<dyn MemoryStore>>,
     artifacts: Option<Arc<dyn ArtifactStore>>,
-    tools: Option<Arc<dyn ToolExecutor>>,
     tool_registry: Option<Arc<ToolRegistry>>,
     events: Option<Arc<dyn EventSink>>,
     permission: Option<Arc<dyn PermissionManager>>,
     config: Option<Arc<Config>>,
-    plugin_registry: Option<Arc<PluginRegistry>>,
+    plugin_registry: Option<Arc<PluginHandles>>,
     hook_chains: Option<Arc<HookChains>>,
     runtime: Option<Arc<ConversationRuntime>>,
     read_histories: Option<Arc<DashMap<SessionId, ReadHistory>>>,
     active_turns: Option<Arc<DashMap<SessionId, TurnHandle>>>,
     agents: Option<HashMap<AgentId, AgentResources>>,
     default_agent_id: Option<AgentId>,
+    workspace_root: Option<std::path::PathBuf>,
     agent_registry: Option<Arc<AgentRegistry>>,
     questions: Option<Arc<QuestionRegistry>>,
     task_registry: Option<Arc<TaskRegistry>>,
-    credential_provider: Option<Arc<dyn crate::auth::CredentialProvider>>,
 }
 
 impl AppStateBuilder {
@@ -85,12 +83,6 @@ impl AppStateBuilder {
     #[must_use]
     pub fn artifacts(mut self, v: Arc<dyn ArtifactStore>) -> Self {
         self.artifacts = Some(v);
-        self
-    }
-
-    #[must_use]
-    pub fn tools(mut self, v: Arc<dyn ToolExecutor>) -> Self {
-        self.tools = Some(v);
         self
     }
 
@@ -119,7 +111,7 @@ impl AppStateBuilder {
     }
 
     #[must_use]
-    pub fn plugin_registry(mut self, v: Arc<PluginRegistry>) -> Self {
+    pub fn plugin_registry(mut self, v: Arc<PluginHandles>) -> Self {
         self.plugin_registry = Some(v);
         self
     }
@@ -161,6 +153,12 @@ impl AppStateBuilder {
     }
 
     #[must_use]
+    pub fn workspace_root(mut self, v: std::path::PathBuf) -> Self {
+        self.workspace_root = Some(v);
+        self
+    }
+
+    #[must_use]
     pub fn agent_registry(mut self, v: Arc<AgentRegistry>) -> Self {
         self.agent_registry = Some(v);
         self
@@ -178,12 +176,6 @@ impl AppStateBuilder {
         self
     }
 
-    #[must_use]
-    pub fn credential_provider(mut self, v: Arc<dyn crate::auth::CredentialProvider>) -> Self {
-        self.credential_provider = Some(v);
-        self
-    }
-
     /// Validate required fields and assemble the [`AppState`]. Auto-fills
     /// `runtime` from provider+memory+events+config if the integrator did
     /// not supply one explicitly.
@@ -195,7 +187,6 @@ impl AppStateBuilder {
         let artifacts = self
             .artifacts
             .ok_or(AppStateBuilderError::Missing("artifacts"))?;
-        let tools = self.tools.ok_or(AppStateBuilderError::Missing("tools"))?;
         let tool_registry = self
             .tool_registry
             .ok_or(AppStateBuilderError::Missing("tool_registry"))?;
@@ -208,6 +199,9 @@ impl AppStateBuilder {
         let default_agent_id = self
             .default_agent_id
             .ok_or(AppStateBuilderError::Missing("default_agent_id"))?;
+        let workspace_root = self
+            .workspace_root
+            .ok_or(AppStateBuilderError::Missing("workspace_root"))?;
 
         let hook_chains = self
             .hook_chains
@@ -227,7 +221,6 @@ impl AppStateBuilder {
             provider,
             memory,
             artifacts,
-            tools,
             tool_registry,
             read_histories: self
                 .read_histories
@@ -237,7 +230,7 @@ impl AppStateBuilder {
             config,
             plugin_registry: self
                 .plugin_registry
-                .unwrap_or_else(|| Arc::new(PluginRegistry::new())),
+                .unwrap_or_else(|| Arc::new(PluginHandles::new())),
             hook_chains,
             runtime,
             active_turns: self
@@ -245,6 +238,7 @@ impl AppStateBuilder {
                 .unwrap_or_else(|| Arc::new(DashMap::new())),
             agents: Arc::new(agents),
             default_agent_id,
+            workspace_root,
             agent_registry: self
                 .agent_registry
                 .unwrap_or_else(|| Arc::new(AgentRegistry::new())),
@@ -254,9 +248,6 @@ impl AppStateBuilder {
             task_registry: self
                 .task_registry
                 .unwrap_or_else(|| Arc::new(TaskRegistry::from_env())),
-            credential_provider: self
-                .credential_provider
-                .unwrap_or_else(|| Arc::new(crate::auth::NoopCredentialProvider)),
         })
     }
 }

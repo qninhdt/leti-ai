@@ -10,8 +10,8 @@ use std::sync::Arc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::error::CoreError;
 use openlet_core::projection::ProjectionCaps;
-use openlet_core::runtime::LoopContext;
 use openlet_core::runtime::subagent::{TaskId, TaskStatus};
+use openlet_core::runtime::{LoopContext, RuntimeHandles};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
@@ -53,20 +53,22 @@ pub(crate) async fn drive_subagent(
 
     let loop_ctx = LoopContext {
         agent_id: agent_resources.spec.id,
-        fs: agent_resources.fs.clone(),
-        permission: child_perm,
-        events: state.events.clone(),
-        artifacts: state.artifacts.clone(),
-        registry: state.tool_registry.clone(),
+        handles: RuntimeHandles {
+            fs: agent_resources.fs.clone(),
+            permission: child_perm,
+            events: state.events.clone(),
+            artifacts: state.artifacts.clone(),
+            registry: state.tool_registry.clone(),
+            hook_chains: state.hook_chains.clone(),
+            questions: state.questions.clone(),
+            memory: state.memory.clone(),
+            task_registry: state.task_registry.clone(),
+            agent_registry: state.agent_registry.clone(),
+        },
         read_history,
         mode: child_meta.map(|m| m.permission_mode).unwrap_or_default(),
         max_steps: crate::turn_driver::MAX_TURN_STEPS,
         agent: agent_def,
-        hook_chains: state.hook_chains.clone(),
-        questions: state.questions.clone(),
-        memory: state.memory.clone(),
-        task_registry: state.task_registry.clone(),
-        agent_registry: state.agent_registry.clone(),
     };
 
     let input =
