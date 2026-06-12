@@ -1,9 +1,7 @@
-// Command palette overlay (⌘K / ctrl+k). A prefix-filtered list over the
-// existing slash-command registry — reuses `complete()` to list/filter and
-// `findCommand()` to resolve, deliberately NOT a fuzzy-ranking subsystem (out of
-// scope for the reskin). Typed printable keys build the query, Up/Down move the
-// cursor, Enter runs the selected command via the shared command context, Esc
-// falls through to the router's pop. Registers on the key router's overlay seam.
+// Command palette overlay (Cmd+K / ctrl+k). A prefix-filtered list over the
+// existing slash-command registry. Typed printable keys build the query,
+// Up/Down move the cursor, Enter runs the selected command via the shared
+// command context, Esc falls through to the router's pop.
 
 import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
@@ -13,6 +11,7 @@ import { useRuntime } from "../render/app-context.js";
 import { setOverlayHandler } from "../render/key-router.js";
 import { createCommandContext } from "../render/command-context.js";
 import { complete, findCommand } from "../commands/registry.js";
+import { isPrintable } from "../utils/printable.js";
 
 import type { KeyHandler } from "../render/key-router.js";
 
@@ -58,15 +57,11 @@ export function CommandPalette() {
       setIndex(0);
       return true;
     }
-    // Printable single char extends the query.
     const seq = key.sequence;
-    if (seq && seq.length === 1) {
-      const code = seq.charCodeAt(0);
-      if (code >= 32 && code !== 127) {
-        setQuery((q) => q + seq);
-        setIndex(0);
-        return true;
-      }
+    if (seq && seq.length === 1 && isPrintable(seq.charCodeAt(0))) {
+      setQuery((q) => q + seq);
+      setIndex(0);
+      return true;
     }
     return false;
   };

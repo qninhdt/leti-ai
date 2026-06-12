@@ -1,12 +1,11 @@
 // Runtime dependencies shared across the Solid tree (REST client, prompt
 // history, SSE connection params). Created once in cli.tsx and provided at the
 // root so routes/footer/overlays can reach the client without prop-drilling.
-// This is the Solid equivalent of the props the Ink <App> received.
 
 import { createContext, useContext } from "solid-js";
 
 import type { OpenletClient } from "../api/client.js";
-import type { PromptHistory } from "../hooks/use-prompt-history.js";
+import type { PromptHistory } from "../services/prompt-history.js";
 
 export interface AppRuntime {
   client: OpenletClient;

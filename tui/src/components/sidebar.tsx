@@ -1,26 +1,26 @@
 // Session sidebar (width 42 when terminal is wide). Shows session/agent/cost
-// summary. Phase 5 fills the full detail (plugin count, permission mode, etc.);
-// here it renders the core fields the store already exposes so the layout
-// column is real, not an empty reserve.
+// summary. Uses fine-grained selectors to only re-render on relevant changes.
 
-import { Show } from "solid-js";
+import { createMemo, Show } from "solid-js";
 
 import { theme } from "../theme/index.js";
-import { useStoreSnapshot } from "../render/store-bridge.js";
+import { useStoreSelector } from "../render/store-bridge.js";
 import { shortId } from "../utils/format.js";
 
 export function Sidebar() {
   const oc = theme.oc;
-  const snap = useStoreSnapshot();
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const sessions = useStoreSelector((s) => s.sessions);
+  const agents = useStoreSelector((s) => s.agents);
 
-  const session = () => {
-    const id = snap().activeSessionId;
-    return id ? snap().sessions[id] ?? null : null;
-  };
-  const agent = () => {
+  const session = createMemo(() => {
+    const id = activeSessionId();
+    return id ? sessions()[id] ?? null : null;
+  });
+  const agent = createMemo(() => {
     const s = session();
-    return s ? snap().agents.find((a) => a.id === s.agent_id) ?? null : null;
-  };
+    return s ? agents().find((a) => a.id === s.agent_id) ?? null : null;
+  });
 
   return (
     <box flexDirection="column" width={42} paddingLeft={2} paddingTop={1} gap={1}>

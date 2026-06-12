@@ -1,9 +1,7 @@
-// Agent picker overlay content, ported from the Ink `AgentPicker` view onto the
-// overlay model. Lists agents (by `name` + description — AgentDto has no
-// display_name), selecting one creates a session with that agent and makes it
-// active, then closes the overlay. Navigation runs through the shared list-nav
-// helper wired into the key router's overlay seam; Escape falls through to the
-// router's pop. Selected row is highlighted (OpenCode list styling), not boxed.
+// Agent picker overlay content. Lists agents (by display_name + description),
+// selecting one creates a session with that agent and makes it active, then
+// closes the overlay. Navigation runs through the shared list-nav helper wired
+// into the key router's overlay seam; Escape falls through to the router's pop.
 
 import { For, Show, onCleanup, onMount } from "solid-js";
 
@@ -13,6 +11,7 @@ import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { setOverlayHandler } from "../render/key-router.js";
 import { createListNav } from "./use-list-nav.js";
+import { createAndActivateSession } from "../services/session-actions.js";
 
 import type { AgentDto } from "../api/types.js";
 
@@ -25,10 +24,7 @@ export function AgentPickerDialog() {
     const store = useStore.getState();
     store.removeOverlay((e: OverlayEntry) => e.kind === "agent_picker");
     try {
-      const session = await runtime.client.createSession({ agent_id: agent.id });
-      const fresh = useStore.getState();
-      fresh.setSessions([...Object.values(fresh.sessions), session]);
-      fresh.setActiveSession(session.id);
+      await createAndActivateSession(runtime.client, agent.id);
     } catch (err) {
       useStore.getState().setClientError(err instanceof Error ? err.message : String(err));
     }

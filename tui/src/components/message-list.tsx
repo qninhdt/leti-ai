@@ -1,8 +1,7 @@
-// Message list — the scrollbox content loop, rewritten for SolidJS. Renders
-// ordered messages, dispatching each to the user or assistant template by role,
-// with `marginTop=1` between them (first gets 0, supplied by the route's top
-// spacer). Plan-mode banner shows above when active. Replaces the Ink
-// role-labeled MessageCard list.
+// Message list — the scrollbox content loop. Renders ordered messages,
+// dispatching each to the user or assistant template by role, with
+// `marginTop=1` between them (first gets 0, supplied by the route's top
+// spacer). Plan-mode banner shows above when active.
 
 import { For, Show } from "solid-js";
 

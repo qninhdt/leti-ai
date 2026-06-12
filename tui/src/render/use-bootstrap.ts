@@ -1,7 +1,7 @@
 // Boots the app: parallel-loads agents/plugins/sessions into the store, then
-// opens the SSE stream and routes frames to applyEvent. Ports the old Ink
-// app.tsx useEffect — the SSE connection re-opens when the active session
-// changes (Solid createEffect tracks the accessor), and closes on cleanup.
+// opens the SSE stream and routes frames to applyEvent. The SSE connection
+// re-opens when the active session changes (Solid createEffect tracks the
+// accessor), and closes on cleanup.
 
 import { createEffect, onCleanup } from "solid-js";
 

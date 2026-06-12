@@ -11,14 +11,6 @@ export interface TerminalSize {
   height: number;
 }
 
-/// Width past which the session route shows the sidebar inline rather than
-/// as an absolute overlay. Mirrors OpenCode's `wide = width > 120`.
-export const WIDE_BREAKPOINT = 120;
-
 export function useTerminalSize(): Accessor<TerminalSize> {
   return useTerminalDimensions();
-}
-
-export function isWide(size: TerminalSize): boolean {
-  return size.width > WIDE_BREAKPOINT;
 }

@@ -1,14 +1,10 @@
-// Permission dialog overlay, ported from the Ink `PermissionModal`. The 3-stage
-// state machine (initial → always | deny_feedback) and its key triggers are
-// preserved VERBATIM — this view governs tool authorization, so approval
-// semantics, defaults, and scope handling are unchanged; only the layout moves
-// to the OpenCode left-bar look. The full diff/bash body stays visible so the
-// operator decides with complete information. The dialog owns its own Esc (the
-// key router does not pop permission overlays), driving stage back-navigation;
-// a resolved reply removes the overlay by askId.
+// Permission dialog overlay. The 3-stage state machine (initial -> always |
+// deny_feedback) and its key triggers are preserved — this view governs tool
+// authorization, so approval semantics, defaults, and scope handling are
+// unchanged. The dialog owns its own Esc driving stage back-navigation; a
+// resolved reply removes the overlay by askId.
 
 import { createSignal, Show, on, createEffect, onCleanup, onMount } from "solid-js";
-import { createPatch } from "diff";
 
 import { theme } from "../theme/index.js";
 import { useStore } from "../store/index.js";
@@ -16,8 +12,9 @@ import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { setOverlayHandler } from "../render/key-router.js";
 import { PROMPT_BODY_BORDER } from "../utils/border-chars.js";
+import { isPrintable } from "../utils/printable.js";
+import { PermissionBody } from "./permission-body.js";
 
-import type { PermissionRequestDto } from "../api/types.js";
 import type { KeyHandler } from "../render/key-router.js";
 
 type Stage = "initial" | "always" | "deny_feedback";
@@ -37,11 +34,6 @@ export function PermissionDialog(props: PermissionDialogProps) {
   );
   const [feedback, setFeedback] = createSignal("");
 
-  // OverlayHost reuses ONE PermissionDialog instance across concurrent asks
-  // (both permission entries match the same dispatch branch), so the signals
-  // above seed only from the first askId. Re-seed them whenever askId changes
-  // or a wrong-tool authorization could be sent: stage/pattern/feedback must
-  // belong to the request currently being shown, not a prior one.
   createEffect(
     on(
       () => props.askId,
@@ -72,16 +64,6 @@ export function PermissionDialog(props: PermissionDialogProps) {
     }
   }
 
-  // Printable char for the pattern/feedback editors: a single-char sequence at
-  // or above space, excluding DEL — mirrors the engine's textarea filter.
-  function printable(key: Parameters<KeyHandler>[0]): string | undefined {
-    const seq = key.sequence;
-    if (!seq || seq.length !== 1) return undefined;
-    const code = seq.charCodeAt(0);
-    if (code < 32 || code === 127) return undefined;
-    return seq;
-  }
-
   const handler: KeyHandler = (key) => {
     const s = stage();
     if (s === "initial") {
@@ -96,8 +78,10 @@ export function PermissionDialog(props: PermissionDialogProps) {
       else if (key.name === "return") void resolve({ decision: "always", pattern: pattern() });
       else if (key.name === "backspace" || key.name === "delete") setPattern((p) => p.slice(0, -1));
       else {
-        const ch = printable(key);
-        if (ch) setPattern((p) => p + ch);
+        const seq = key.sequence;
+        if (seq && seq.length === 1 && isPrintable(seq.charCodeAt(0))) {
+          setPattern((p) => p + seq);
+        }
       }
       return true;
     }
@@ -106,8 +90,10 @@ export function PermissionDialog(props: PermissionDialogProps) {
     else if (key.name === "return") void resolve({ decision: "deny", feedback: feedback() || undefined });
     else if (key.name === "backspace" || key.name === "delete") setFeedback((f) => f.slice(0, -1));
     else {
-      const ch = printable(key);
-      if (ch) setFeedback((f) => f + ch);
+      const seq = key.sequence;
+      if (seq && seq.length === 1 && isPrintable(seq.charCodeAt(0))) {
+        setFeedback((f) => f + seq);
+      }
     }
     return true;
   };
@@ -163,66 +149,6 @@ export function PermissionDialog(props: PermissionDialogProps) {
               </text>
             </box>
           </Show>
-        </box>
-      )}
-    </Show>
-  );
-}
-
-function diffColor(line: string): string {
-  const oc = theme.oc;
-  if (line.startsWith("+") && !line.startsWith("+++")) return oc.diffAdd;
-  if (line.startsWith("-") && !line.startsWith("---")) return oc.diffDelete;
-  return oc.textMuted;
-}
-
-function PermissionBody(props: { request: PermissionRequestDto }) {
-  const oc = theme.oc;
-  const diff = () => props.request.diff;
-  const bash = () => props.request.bash;
-  const patchLines = () => {
-    const d = diff();
-    if (!d) return [];
-    return createPatch(d.filepath, d.before, d.after, "", "").split("\n").slice(4);
-  };
-
-  return (
-    <Show
-      when={diff()}
-      fallback={
-        <Show
-          when={bash()}
-          fallback={
-            <box marginTop={1}>
-              <text fg={oc.textMuted}>
-                {props.request.tool_name}
-                {props.request.reason ? ` — ${props.request.reason}` : ""}
-              </text>
-            </box>
-          }
-        >
-          {(b) => (
-            <box marginTop={1} flexDirection="column">
-              <text fg={oc.text}>
-                <span style={{ fg: oc.textMuted }}>$ </span>
-                {b().command}
-              </text>
-              <text fg={oc.textMuted}>
-                cwd: {b().cwd} · timeout: {b().timeout_ms}ms
-              </text>
-            </box>
-          )}
-        </Show>
-      }
-    >
-      {(d) => (
-        <box marginTop={1} flexDirection="column">
-          <text fg={oc.textMuted}>{d().filepath}</text>
-          {patchLines().map((line) => (
-            <text fg={diffColor(line)} wrapMode="none">
-              {line}
-            </text>
-          ))}
         </box>
       )}
     </Show>
