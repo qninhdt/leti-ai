@@ -175,12 +175,19 @@ if [ "$REBUILD" = "1" ] || [ ! -f tui/dist/cli.mjs ]; then
 fi
 
 # ── Hand the terminal to the TUI ──────────────────────────────────────
-# Run node in the FOREGROUND (not `exec`) so the bash EXIT trap survives
-# to tear down the background server/mock when the TUI quits. `exec` would
-# replace this shell with node, discarding the trap and orphaning the
-# server on the bind port — the exact failure this launcher must avoid.
-# The child still inherits the TTY (stdin/out/err) for full interactivity,
-# and Ctrl-C reaches it via the shared foreground process group.
+# The TUI's @opentui/core engine needs an FFI-capable runtime; it loads
+# native struct bindings that plain Node lacks (node:ffi is unavailable),
+# so the TUI is run under Bun. Run it in the FOREGROUND (not `exec`) so the
+# bash EXIT trap survives to tear down the background server/mock when the
+# TUI quits. `exec` would replace this shell, discarding the trap and
+# orphaning the server on the bind port — the exact failure this launcher
+# must avoid. The child still inherits the TTY (stdin/out/err) for full
+# interactivity, and Ctrl-C reaches it via the shared foreground group.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "error: 'bun' is required to run the TUI (@opentui/core needs Bun FFI)." >&2
+  echo "install it from https://bun.sh, then retry." >&2
+  exit 1
+fi
 echo "launching TUI (Ctrl-C to exit; server will be torn down)…"
 export OPENLET_BASE_URL="${OPENLET_BASE_URL:-http://$BIND}"
-node tui/dist/cli.mjs
+bun tui/dist/cli.mjs

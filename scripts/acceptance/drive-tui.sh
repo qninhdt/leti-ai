@@ -7,7 +7,7 @@
 # Rust LiveServer tier — do NOT reimplement it here.
 #
 # Sourced by acceptance drivers. Provides:
-#   tui_start <base_url> [state_dir]  launch `node tui/dist/cli.mjs` in a
+#   tui_start <base_url> [state_dir]  launch `bun tui/dist/cli.mjs` in a
 #                                     detached tmux pane with env via -e
 #   tui_send "<text>"                 type text into the pane (no Enter)
 #   tui_enter                         send a SEPARATE Enter keystroke
@@ -48,7 +48,7 @@ tui_start() {
   [ -n "$state_dir" ] && env_flags+=( -e "OPENLET_STATE_DIR=$state_dir" )
 
   tmux new-session -d -s "$ACC_TMUX_SESSION" -x 120 -y 40 "${env_flags[@]}" \
-    "node '$_DRV_REPO/tui/dist/cli.mjs'; echo TUI_EXITED; sleep 5"
+    "bun '$_DRV_REPO/tui/dist/cli.mjs'; echo TUI_EXITED; sleep 5"
 }
 
 # Type text WITHOUT submitting. `-l` sends the bytes literally (so "/help"
