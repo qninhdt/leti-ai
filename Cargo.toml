@@ -38,13 +38,13 @@ serde_json = "1.0"
 # HTTP server
 axum = { version = "0.8", default-features = false }
 tower = { version = "0.5", default-features = false }
-tower-http = { version = "0.6", default-features = false }
+tower-http = { version = "0.7", default-features = false }
 
 # OpenAPI / docs
 utoipa = { version = "5.3", features = ["chrono", "uuid"] }
 utoipa-axum = "0.2"
 utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
-schemars = "0.8"
+schemars = "1.2"
 
 # Logging
 tracing = "0.1"
@@ -54,7 +54,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # facade is a no-op until a recorder is installed, so the local binary
 # carries metric call sites at zero cost and needs NO Prometheus/infra.
 metrics = "0.24"
-metrics-exporter-prometheus = { version = "0.16", default-features = false }
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 
 # Errors
 thiserror = "2.0"
@@ -85,10 +85,10 @@ sqlx = { version = "0.8", default-features = false, features = [
     "chrono",
     "uuid",
 ] }
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 regex = "1.10"
-dirs = "5.0"
+dirs = "6.0"
 
 # HTTP client (provider streaming, phase 3)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
@@ -98,12 +98,12 @@ blake3 = "1.5"
 walkdir = "2.5"
 ignore = "0.4"
 globset = "0.4"
-similar = "2.6"
+similar = "3.1"
 tempfile = "3.10"
-nix = { version = "0.29", default-features = false, features = ["signal"] }
+nix = { version = "0.31", default-features = false, features = ["signal"] }
 
 # Test-only (workspace dev-dependencies)
-rstest = { version = "0.23", default-features = false }
+rstest = { version = "0.26", default-features = false }
 proptest = { version = "1.5", default-features = false, features = ["std"] }
 wiremock = "0.6"
 
