@@ -149,7 +149,7 @@ impl Harness {
         let config = Config {
             bind_addr: "127.0.0.1:0".into(),
             data_dir: tempdir.path().to_path_buf(),
-            openrouter_api_key: None,
+            openai_api_key: None,
             default_model: "mock/model".into(),
             permission_ruleset_path: None,
             log_format: LogFormat::Pretty,

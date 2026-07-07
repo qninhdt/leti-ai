@@ -25,7 +25,7 @@ fn test_config() -> Config {
     Config {
         bind_addr: "127.0.0.1:0".to_string(),
         data_dir: std::path::PathBuf::from("/tmp/openlet-coreapi-smoke"),
-        openrouter_api_key: None,
+        openai_api_key: None,
         default_model: "stub-model".to_string(),
         permission_ruleset_path: None,
         log_format: LogFormat::Pretty,

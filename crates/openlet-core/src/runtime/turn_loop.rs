@@ -265,21 +265,43 @@ impl ConversationRuntime {
                     .await;
             }
 
-            if !matches!(outcome.finish_reason, FinishReason::ToolUse) {
+            // Presence of tool calls — not the reported finish_reason —
+            // decides whether the loop continues. Some providers (notably
+            // Gemini through an OpenAI-compat proxy) emit function calls with
+            // finish_reason="stop" (-> EndTurn) instead of "tool_calls".
+            // Trusting the finish reason alone ends the turn before the tool
+            // runs, so the model never sees the result and the user has to
+            // prompt again to continue.
+            let invocations =
+                collect_tool_calls(memory, session_id, outcome.assistant_message_id).await?;
+
+            // No tool calls -> the turn is genuinely over. Report the model's
+            // finish reason, normalizing a tool_use claim with no actual calls
+            // down to end_turn.
+            if invocations.is_empty() {
+                let reason = if matches!(outcome.finish_reason, FinishReason::ToolUse) {
+                    FinishReason::EndTurn
+                } else {
+                    outcome.finish_reason
+                };
                 return Ok(LoopOutcome {
                     steps: model_steps,
-                    finish_reason: outcome.finish_reason,
+                    finish_reason: reason,
                     final_assistant_message_id: Some(outcome.assistant_message_id),
                 });
             }
 
-            // Collect tool_calls from the assistant message just produced.
-            let invocations =
-                collect_tool_calls(memory, session_id, outcome.assistant_message_id).await?;
-            if invocations.is_empty() {
+            // Tool calls present. Honor an intentional stop (Halted from a
+            // cost/hook guard, Cancelled, or an error/filter variant) even with
+            // calls queued; otherwise dispatch them regardless of whether the
+            // provider labelled the turn tool_use or end_turn.
+            if !matches!(
+                outcome.finish_reason,
+                FinishReason::ToolUse | FinishReason::EndTurn
+            ) {
                 return Ok(LoopOutcome {
                     steps: model_steps,
-                    finish_reason: FinishReason::EndTurn,
+                    finish_reason: outcome.finish_reason,
                     final_assistant_message_id: Some(outcome.assistant_message_id),
                 });
             }

@@ -36,7 +36,7 @@ The next start will recreate it.
 
 ### `provider_auth` 401
 
-`OPENROUTER_API_KEY` is missing or wrong. The error envelope's `class` is
+`OPENAI_API_KEY` is missing or wrong. The error envelope's `class` is
 `provider_auth`. Set the env var and retry — keys are read at startup,
 so restart the server after changing it.
 
@@ -81,7 +81,7 @@ or `/danger` in the TUI) to auto-approve workspace tools.
 
 If turns fail immediately with a connect error, the serving provider's
 base URL is likely wrong. `openlet-server` resolves it from
-`OPENLET_MODEL_BASE_URL` (unset → `https://openrouter.ai/api/v1`); the
+`OPENAI_API_BASE_URL` (unset → `https://openrouter.ai/api/v1`); the
 boot log prints the resolved value as `model backend endpoint`. Run
 `openlet-server doctor` — its `model_reachable` check GETs `<base>/models`
 (no chat spend) and reports the failure. Common mistake: appending an
@@ -141,10 +141,10 @@ answers health, so it never polls a foreign process by mistake. Stop the
 existing server, or run `./openlet-ai --clean` to kill the straggler on
 the bind port and clear `.openlet-run/`, then retry.
 
-### "OPENROUTER_API_KEY is missing or empty"
+### "OPENAI_API_KEY is missing or empty"
 
 Real mode fails fast via the binary's own `doctor` preflight (it keys off
-the `api_key_set` check, which reads `OPENROUTER_API_KEY`). Fill the key in
+the `api_key_set` check, which reads `OPENAI_API_KEY`). Fill the key in
 `.env` (copy `.env.example` if absent), or run network-free with
 `./openlet-ai --mock` — the mock backend needs no key.
 

@@ -19,15 +19,15 @@ pub(super) fn api_key_status(key: Option<&SecretString>) -> (Status, Option<Stri
         Some(k) if !k.expose_secret().trim().is_empty() => (Status::Healthy, None),
         Some(_) => (
             Status::Degraded,
-            Some("OPENROUTER_API_KEY is set but empty".into()),
+            Some("OPENAI_API_KEY is set but empty".into()),
         ),
-        None => (Status::Degraded, Some("OPENROUTER_API_KEY not set".into())),
+        None => (Status::Degraded, Some("OPENAI_API_KEY not set".into())),
     }
 }
 
 pub(super) fn check_api_key_set(state: &AppState) -> CheckResult {
     let start = Instant::now();
-    let (status, detail) = api_key_status(state.config.openrouter_api_key.as_ref());
+    let (status, detail) = api_key_status(state.config.openai_api_key.as_ref());
     finish("api_key_set", start, status, detail)
 }
 
@@ -150,7 +150,7 @@ mod tests {
     fn api_key_degraded_when_absent() {
         let (status, detail) = api_key_status(None);
         assert_eq!(status, Status::Degraded);
-        assert!(detail.is_some_and(|d| d.contains("OPENROUTER_API_KEY")));
+        assert!(detail.is_some_and(|d| d.contains("OPENAI_API_KEY")));
     }
 
     #[test]

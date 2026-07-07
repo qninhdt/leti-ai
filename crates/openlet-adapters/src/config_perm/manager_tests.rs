@@ -215,4 +215,72 @@ mod tests {
             .await;
         assert!(matches!(res, Err(PermissionError::AskExpired)));
     }
+
+    #[tokio::test]
+    async fn seed_rules_allow_workspace_writes_without_ask() {
+        // The boot-time seed grants file ops so the workspace owner isn't
+        // prompted on every write/edit.
+        let seed = vec![
+            PermissionRule {
+                permission: "write:**".into(),
+                action: PermissionAction::Allow,
+            },
+            PermissionRule {
+                permission: "edit:**".into(),
+                action: PermissionAction::Allow,
+            },
+        ];
+        let m = ConfigPermissionMgr::new().with_seed_rules(seed).unwrap();
+        assert!(matches!(
+            m.check(ctx(), req("edit:/ws/src/main.rs")).await.unwrap(),
+            Decision::Allow
+        ));
+        assert!(matches!(
+            m.check(ctx(), req("write:/ws/new.rs")).await.unwrap(),
+            Decision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn seed_rules_leave_bash_asking() {
+        // bash is intentionally NOT seeded — it still hits the mode default.
+        let seed = vec![PermissionRule {
+            permission: "write:**".into(),
+            action: PermissionAction::Allow,
+        }];
+        let m = ConfigPermissionMgr::new().with_seed_rules(seed).unwrap();
+        assert!(matches!(
+            m.check(ctx(), req("bash:ls")).await.unwrap(),
+            Decision::Pending { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn seed_rules_overridden_by_later_always_deny() {
+        // Seeds are the base layer; a persisted always-deny must still win
+        // (last-match-wins). record_always appends after the seed.
+        let seed = vec![PermissionRule {
+            permission: "edit:**".into(),
+            action: PermissionAction::Allow,
+        }];
+        let m = ConfigPermissionMgr::new().with_seed_rules(seed).unwrap();
+        m.record_always(
+            AlwaysScope::Global,
+            PermissionRule {
+                permission: "edit:/secret/**".into(),
+                action: PermissionAction::Deny,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            m.check(ctx(), req("edit:/secret/keys.txt")).await.unwrap(),
+            Decision::Deny { .. }
+        ));
+        // Non-secret edits still allowed by the seed.
+        assert!(matches!(
+            m.check(ctx(), req("edit:/ws/main.rs")).await.unwrap(),
+            Decision::Allow
+        ));
+    }
 }

@@ -268,3 +268,49 @@ fn role_delta_is_noop() {
     assert_eq!(parts.len(), 1);
     assert!(matches!(&parts[0], ProcessorPart::StepFinish { .. }));
 }
+
+#[test]
+fn trailing_usage_finish_does_not_downgrade_tool_use() {
+    // With stream_options.include_usage the provider streams the real
+    // finish_reason="tool_calls" chunk, then a trailing usage-only chunk
+    // whose finish reason the decoder fabricates as EndTurn. The first
+    // (real) reason must win, or the turn loop sees end_turn and returns
+    // before dispatching the tool — the model never reads the result.
+    let (parts, _events) = drive(vec![
+        ChatDelta::ToolCallStart {
+            call_id: "call_1".to_string(),
+            name: "bash".to_string(),
+            index: 0,
+        },
+        ChatDelta::ToolCallArgsDelta {
+            index: 0,
+            args_chunk: "{}".to_string(),
+        },
+        ChatDelta::Finish {
+            reason: FinishReason::ToolUse,
+            usage: None,
+        },
+        // Trailing usage-only chunk — decoder emits Finish{EndTurn}.
+        ChatDelta::Finish {
+            reason: FinishReason::EndTurn,
+            usage: Some(Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..Default::default()
+            }),
+        },
+    ])
+    .unwrap();
+
+    let step_finish = parts
+        .iter()
+        .find_map(|p| match p {
+            ProcessorPart::StepFinish { reason, .. } => Some(reason.as_str()),
+            _ => None,
+        })
+        .expect("a step_finish part");
+    assert_eq!(
+        step_finish, "tool_use",
+        "trailing usage chunk must not overwrite the real tool_use finish"
+    );
+}

@@ -14,6 +14,11 @@ use openlet_core::types::session::{SessionMeta, SessionStatus};
 /// `extensions` is an opaque integrator-owned JSON blob (e.g.
 /// `{"user_id": "u_123", "tenant_id": "t_42"}`). Core stays auth-blind:
 /// the schema lives entirely in the integrator. Defaults to `null`.
+///
+/// `user_questions` declares whether the caller can answer interactive
+/// `ask_user` prompts. Defaults to `true` because this DTO is used by
+/// interactive frontends (the TUI); headless callers set it `false` so
+/// `ask_user` fails fast instead of blocking on a UI that never replies.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateSessionDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,6 +30,14 @@ pub struct CreateSessionDto {
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     #[schema(value_type = Object)]
     pub extensions: serde_json::Value,
+    #[serde(default = "default_user_questions")]
+    pub user_questions: bool,
+}
+
+/// `ask_user` capability defaults ON for this DTO — it is the interactive
+/// create path. Headless integrators pass `false` explicitly.
+fn default_user_questions() -> bool {
+    true
 }
 
 /// `POST /v1/session/:id/mode` body.
@@ -89,4 +102,11 @@ impl From<SessionMeta> for SessionDto {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AbortAckDto {
     pub aborted: bool,
+}
+
+/// `POST /v1/session/:id/compact` ack. `compacted` is false when there was
+/// nothing to compact (conversation at/under the preserved-recent floor).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CompactAckDto {
+    pub compacted: bool,
 }

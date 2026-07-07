@@ -107,6 +107,42 @@ pub struct SessionMeta {
     pub model: Option<String>,
 }
 
+impl SessionMeta {
+    /// Build a fresh top-level (`depth = 0`) session row. Mirrors what the
+    /// SQLite store's `create_session` seeds, but lets the caller declare
+    /// `capabilities` up front — the interactive HTTP create path uses this
+    /// to enable `user_questions`, while headless/subagent paths keep the
+    /// all-false default. `now` is injected so the storage layer owns the
+    /// clock (tests can pin it).
+    #[must_use]
+    pub fn new_root(
+        id: SessionId,
+        agent_id: AgentId,
+        parent_session_id: Option<SessionId>,
+        permission_mode: PermissionMode,
+        capabilities: SessionCapabilities,
+        now: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id,
+            agent_id,
+            status: SessionStatus::Idle,
+            permission_mode,
+            parent_session_id,
+            created_at: now,
+            updated_at: now,
+            deleted_at: None,
+            version: "0.1.0".to_string(),
+            extensions: serde_json::Value::Null,
+            capabilities,
+            current_agent_slug: None,
+            previous_agent_slug: None,
+            depth: 0,
+            model: None,
+        }
+    }
+}
+
 /// Frontend affordances the session's caller exposes. Default = every
 /// flag `false` so headless-cloud sessions are safe by construction —
 /// interactive tools (`ask_user`) return a synchronous error rather

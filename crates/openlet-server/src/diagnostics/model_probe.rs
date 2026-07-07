@@ -15,7 +15,7 @@ use crate::app_state::AppState;
 /// Canonical env-var name for the model API base URL. Single source of
 /// truth — the serve path (`main.rs`) imports this so the doctor probe and
 /// the live provider always agree on which variable selects the backend.
-pub const BASE_URL_ENV: &str = "OPENLET_MODEL_BASE_URL";
+pub const BASE_URL_ENV: &str = "OPENAI_API_BASE_URL";
 
 pub(super) async fn check_model_reachable(state: &AppState) -> CheckResult {
     let start = Instant::now();
@@ -39,7 +39,7 @@ pub(super) async fn check_model_reachable(state: &AppState) -> CheckResult {
 
     let api_key = state
         .config
-        .openrouter_api_key
+        .openai_api_key
         .as_ref()
         .map(|k| k.expose_secret().to_string());
 

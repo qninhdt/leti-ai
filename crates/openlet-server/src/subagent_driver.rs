@@ -51,6 +51,13 @@ pub(crate) async fn drive_subagent(
     let child_meta = state.memory.get_session(child_session_id).await?;
     let child_model = child_meta.as_ref().and_then(|m| m.model.clone());
 
+    // Subagents get their own agent's system prompt too (identity + tool
+    // catalog), composed against the child agent's workspace root.
+    let system_prompt = crate::turn_driver::compose_agent_system_prompt(
+        agent_def.as_ref(),
+        &agent_resources.spec.workspace_root,
+    );
+
     let loop_ctx = LoopContext {
         agent_id: agent_resources.spec.id,
         handles: RuntimeHandles {
@@ -72,7 +79,7 @@ pub(crate) async fn drive_subagent(
     };
 
     let input =
-        crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools, child_model);
+        crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools, child_model, system_prompt);
 
     let memory = crate::turn_driver::memory_arc(&state);
     let outcome = state

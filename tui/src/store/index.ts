@@ -5,11 +5,11 @@
 import { createStore } from "zustand/vanilla";
 
 import { upsertPartInMessage, updateMessageById, updatePartById } from "./reducers.js";
+import { hydrateMessages } from "./message-hydration.js";
 
 import type { FileBadge } from "../services/attachment-embedder.js";
-import type { State, MessageView } from "./types.js";
-
-export type { State, MessageView, PartView, OverlayEntry, OverlayKind, ConnSlice, PluginErrorView } from "./types.js";
+import type { State, MessageView, PendingQuestion } from "./types.js";
+export type { State, MessageView, PartView, OverlayEntry, OverlayKind, ConnSlice, PluginErrorView, PendingQuestion } from "./types.js";
 
 // Sum two 4-decimal USD cost strings. A NaN parse falls back to the prior
 // total so a malformed delta never zeroes the displayed cost.
@@ -30,6 +30,7 @@ export const useStore = createStore<State>((set) => ({
   plugins: [],
   pluginErrors: [],
   pendingPermissions: {},
+  pendingQuestions: {},
   clientError: null,
   planMode: {},
   overlays: [],
@@ -75,6 +76,26 @@ export const useStore = createStore<State>((set) => ({
         return { messages: { ...s.messages, [sessionId]: next } };
       }
       return { messages: { ...s.messages, [sessionId]: list.concat(userMsg) } };
+    }),
+
+  hydrateSession: (sessionId, serverMessages) =>
+    set((s) => {
+      const existing = s.messages[sessionId] ?? [];
+      const merged = hydrateMessages(existing, serverMessages);
+      return { messages: { ...s.messages, [sessionId]: merged } };
+    }),
+
+  clearQuestion: (questionId) =>
+    set((s) => {
+      if (!s.pendingQuestions[questionId]) return {};
+      const next = { ...s.pendingQuestions };
+      delete next[questionId];
+      return {
+        pendingQuestions: next,
+        overlays: s.overlays.filter(
+          (e) => !(e.kind === "question" && e.questionId === questionId),
+        ),
+      };
     }),
 
   applyEvent: (ev) =>
@@ -196,6 +217,26 @@ export const useStore = createStore<State>((set) => ({
           };
         }
 
+        case "question_requested": {
+          const already = s.overlays.some(
+            (e) => e.kind === "question" && e.questionId === ev.question_id,
+          );
+          const question: PendingQuestion = {
+            session_id: ev.session_id,
+            question_id: ev.question_id,
+            header: ev.header,
+            question: ev.question,
+            options: ev.options,
+            multi_select: ev.multi_select,
+          };
+          return {
+            pendingQuestions: { ...s.pendingQuestions, [ev.question_id]: question },
+            overlays: already
+              ? s.overlays
+              : s.overlays.concat({ kind: "question", questionId: ev.question_id }),
+          };
+        }
+
         case "plugin_error": {
           const errs = s.pluginErrors.concat({
             pluginId: ev.plugin_id,
@@ -216,7 +257,16 @@ export const useStore = createStore<State>((set) => ({
           return { planMode: next };
         }
 
-        case "error":
+        case "error": {
+          // Surface the server-side turn failure. Previously this frame was
+          // dropped (return {}), so a turn that errored left the session in
+          // "errored" with NO visible reason — the user just saw a dead
+          // session. Route it to the persistent clientError banner (cleared on
+          // the next successful submit) so the real code/message is shown.
+          const detail = ev.message?.trim() ? ev.message : ev.code;
+          return { clientError: `Agent error: ${detail}` };
+        }
+
         case "heartbeat":
         default:
           return {};

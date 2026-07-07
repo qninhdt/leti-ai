@@ -9,6 +9,7 @@ import { findCommand } from "../commands/registry.js";
 import { useStore } from "../store/index.js";
 import { randomId } from "../utils/id.js";
 import { embedMentions } from "../services/attachment-embedder.js";
+import { createAndActivateSession } from "../services/session-actions.js";
 import { createCommandContext } from "./command-context.js";
 
 import type { AppRuntime } from "./app-context.js";
@@ -35,9 +36,19 @@ export function createPromptSubmit(runtime: AppRuntime): (text: string) => Promi
       }
     }
 
-    const store = useStore.getState();
-    if (!store.activeSessionId) return;
-    const sessionId = store.activeSessionId;
+    // On the home screen no session is active yet — the first prompt lazily
+    // creates one against the default agent so typing "just works" without a
+    // prior /new. A missing session id after this means no agent is registered,
+    // which is a real error the user must see rather than a silent no-op.
+    let sessionId = useStore.getState().activeSessionId;
+    if (!sessionId) {
+      const created = await createAndActivateSession(runtime.client);
+      sessionId = created?.id ?? null;
+    }
+    if (!sessionId) {
+      useStore.getState().setClientError("no agent available to start a session");
+      return;
+    }
 
     // Resolve @-mentions: embed file content into the outgoing prompt, collect
     // badge descriptors for the optimistic message.

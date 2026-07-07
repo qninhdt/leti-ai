@@ -26,6 +26,8 @@ export function PartText(props: PartTextProps) {
         <markdown
           content={content()}
           streaming={props.part.status !== "complete"}
+          conceal={true}
+          concealCode={false}
           syntaxStyle={syntaxStyle}
           fg={oc.text}
           bg={oc.background}

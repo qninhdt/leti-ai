@@ -59,7 +59,7 @@ impl TestHarness {
         let config = Config {
             bind_addr: "127.0.0.1:0".to_string(),
             data_dir: tempdir.path().to_path_buf(),
-            openrouter_api_key: None,
+            openai_api_key: None,
             default_model: "stub-model".to_string(),
             permission_ruleset_path: None,
             log_format: LogFormat::Pretty,

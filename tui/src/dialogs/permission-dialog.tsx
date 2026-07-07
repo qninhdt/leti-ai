@@ -30,7 +30,7 @@ export function PermissionDialog(props: PermissionDialogProps) {
 
   const [stage, setStage] = createSignal<Stage>("initial");
   const [pattern, setPattern] = createSignal(
-    request()?.patterns?.[0] ?? request()?.tool_name ?? "",
+    request()?.patterns?.[0] ?? request()?.tool_name ?? request()?.permission ?? "",
   );
   const [feedback, setFeedback] = createSignal("");
 
@@ -40,7 +40,7 @@ export function PermissionDialog(props: PermissionDialogProps) {
       () => {
         const req = useStore.getState().pendingPermissions[props.askId];
         setStage("initial");
-        setPattern(req?.patterns?.[0] ?? req?.tool_name ?? "");
+        setPattern(req?.patterns?.[0] ?? req?.tool_name ?? req?.permission ?? "");
         setFeedback("");
       },
       { defer: true },
@@ -49,15 +49,19 @@ export function PermissionDialog(props: PermissionDialogProps) {
 
   async function resolve(reply: {
     decision: "allow" | "deny" | "always";
-    pattern?: string;
     feedback?: string;
   }): Promise<void> {
     useStore.getState().removeOverlay((e) => e.kind === "permission" && e.askId === props.askId);
+    // Map the dialog's 3-stage vocabulary onto the server's PermissionReplyKind.
+    // The "always" stage in this UI is always an allow (no always-deny path),
+    // and the server derives the persisted rule pattern from the original ask,
+    // so no pattern is sent. `feedback` (deny reason) rides along as `reason`.
+    const decision =
+      reply.decision === "always" ? "always_allow" : reply.decision;
     try {
       await runtime.client.replyPermission(props.askId, {
-        reply: reply.decision,
-        pattern: reply.pattern ?? null,
-        feedback: reply.feedback ?? null,
+        decision,
+        reason: reply.feedback ?? null,
       });
     } catch (err) {
       useStore.getState().setClientError(err instanceof Error ? err.message : String(err));
@@ -75,7 +79,7 @@ export function PermissionDialog(props: PermissionDialogProps) {
     }
     if (s === "always") {
       if (key.name === "escape") setStage("initial");
-      else if (key.name === "return") void resolve({ decision: "always", pattern: pattern() });
+      else if (key.name === "return") void resolve({ decision: "always" });
       else if (key.name === "backspace" || key.name === "delete") setPattern((p) => p.slice(0, -1));
       else {
         const seq = key.sequence;

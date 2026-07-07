@@ -21,9 +21,9 @@ OpenAPI shape (see `/doc/openapi.json`) works.
 |---|---|---|---|
 | `OPENLET_BIND` | `127.0.0.1:8787` | no | TCP bind. Loopback only by default. |
 | `OPENLET_DATA_DIR` | `~/.openlet` | no | Sqlite + artifacts + session logs root. |
-| `OPENROUTER_API_KEY` | _(unset)_ | yes (for live model) | Bearer token for OpenRouter. |
+| `OPENAI_API_KEY` | _(unset)_ | yes (for live model) | Bearer token for OpenRouter. |
 | `OPENLET_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | no | Default chat model id. |
-| `OPENLET_MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | no | Model API base URL — honored on the serve path. Point at a self-hosted gateway or the in-process mock. |
+| `OPENAI_API_BASE_URL` | `https://openrouter.ai/api/v1` | no | Model API base URL — honored on the serve path. Point at a self-hosted gateway or the in-process mock. |
 | `OPENLET_MAX_COST_USD` | `5.00` | no | Per-session hard limit. |
 | `OPENLET_LOG_FORMAT` | `json` | no | `json` or `pretty`. |
 | `OPENLET_METRICS_BIND` | _(unset)_ | no | If set (e.g. `127.0.0.1:9464`), serves Prometheus metrics at `GET /metrics` on that address. Unset → metrics fully off. |
@@ -56,7 +56,7 @@ arbitrary tool execution to any reacher. Don't do it in MVP.
 
 The shipped provider defaults to `https://openrouter.ai/api/v1`. To use a
 self-hosted gateway (LiteLLM, vLLM with the OpenAI-compat shim, etc.), set
-`OPENLET_MODEL_BASE_URL` to its base URL — the serve path honors it, no
+`OPENAI_API_BASE_URL` to its base URL — the serve path honors it, no
 source edit needed. Unset falls back to the OpenRouter default. The
 credential still flows only as the `Authorization` header.
 
@@ -72,7 +72,7 @@ To do it by hand, start the mock and point the server at its printed
 
 ```bash
 cargo run -p openlet-test-mock-provider --bin mock-openai-service
-# then: OPENLET_MODEL_BASE_URL=<printed base_url> cargo run -p openlet-server
+# then: OPENAI_API_BASE_URL=<printed base_url> cargo run -p openlet-server
 ```
 
 The mock returns canned `simple_text` by default; embed

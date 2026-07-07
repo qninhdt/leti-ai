@@ -1,17 +1,53 @@
 // Session sidebar (width 42 when terminal is wide). Shows session/agent/cost
-// summary. Uses fine-grained selectors to only re-render on relevant changes.
+// summary plus the active session's TODO checklist (mirrors OpenCode, which
+// surfaces the plan in the sidebar rather than inline in the transcript). Uses
+// fine-grained selectors to only re-render on relevant changes.
 
-import { createMemo, Show } from "solid-js";
+import { createMemo, For, Show } from "solid-js";
 
 import { theme } from "../theme/index.js";
 import { useStoreSelector } from "../render/store-bridge.js";
 import { shortId } from "../utils/format.js";
+import { parseTodos, type TodoItem, type TodoStatus } from "./tool-todo-parse.js";
+
+import type { MessageView } from "../store/index.js";
+
+const EMPTY_MESSAGES: MessageView[] = [];
+
+// Glyph per status — matches the inline renderer that used to own this list.
+const GLYPH: Record<TodoStatus, string> = {
+  pending: "☐",
+  in_progress: "◐",
+  completed: "☑",
+  cancelled: "☒",
+};
+
+// Scan a session's messages newest-first for the most recent `todo` tool call.
+// The todo tool replaces the whole list each call, so the latest call IS the
+// current plan; earlier calls are superseded.
+function latestTodos(messages: MessageView[]): TodoItem[] {
+  for (let m = messages.length - 1; m >= 0; m--) {
+    const parts = messages[m]!.parts;
+    for (let p = parts.length - 1; p >= 0; p--) {
+      const part = parts[p]!;
+      if (part.kind === "tool_call" && (part.tool_name ?? "").toLowerCase() === "todo") {
+        const items = parseTodos(part.tool_args);
+        if (items.length > 0) return items;
+      }
+    }
+  }
+  return [];
+}
 
 export function Sidebar() {
   const oc = theme.oc;
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
   const sessions = useStoreSelector((s) => s.sessions);
   const agents = useStoreSelector((s) => s.agents);
+  const messages = useStoreSelector((s) => {
+    const id = s.activeSessionId;
+    return id ? s.messages[id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
+  });
 
   const session = createMemo(() => {
     const id = activeSessionId();
@@ -21,6 +57,19 @@ export function Sidebar() {
     const s = session();
     return s ? agents().find((a) => a.id === s.agent_id) ?? null : null;
   });
+  const todos = createMemo(() => latestTodos(messages()));
+
+  const color = (status: TodoStatus): string => {
+    switch (status) {
+      case "in_progress":
+        return oc.accent;
+      case "completed":
+      case "cancelled":
+        return oc.textMuted;
+      default:
+        return oc.text;
+    }
+  };
 
   return (
     <box flexDirection="column" width={42} paddingLeft={2} paddingTop={1} gap={1}>
@@ -44,6 +93,21 @@ export function Sidebar() {
             <text fg={oc.warning}>${s().cost_decimal_str}</text>
           </box>
         )}
+      </Show>
+      <Show when={todos().length > 0}>
+        <box flexDirection="column" marginTop={1} gap={1}>
+          <text fg={oc.textMuted}>TODO</text>
+          <box flexDirection="column">
+            <For each={todos()}>
+              {(item) => (
+                <box flexDirection="row" gap={1}>
+                  <text fg={color(item.status)}>{GLYPH[item.status] ?? "☐"}</text>
+                  <text fg={color(item.status)}>{item.content}</text>
+                </box>
+              )}
+            </For>
+          </box>
+        </box>
       </Show>
     </box>
   );

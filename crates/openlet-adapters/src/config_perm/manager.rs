@@ -83,6 +83,25 @@ impl ConfigPermissionMgr {
         })
     }
 
+    /// Chainable seed: compile `rules` and install them as the base
+    /// ruleset, preserving any `hook_chains` / `repo` already attached.
+    /// Used at boot to grant default workspace file operations so the
+    /// agent isn't asked on every write/edit (only `bash` + out-of-workspace
+    /// paths fall through to the mode default). Rules are last-match-wins,
+    /// so a later persisted `always_deny` still overrides a seeded allow.
+    ///
+    /// Replaces the ruleset wholesale (the manager is not yet shared at
+    /// construction time), so call this once during builder setup.
+    pub fn with_seed_rules(self, rules: Vec<PermissionRule>) -> Result<Self, PermissionError> {
+        let compiled =
+            CompiledRuleset::from_rules(rules).map_err(|e| PermissionError::Io(e.to_string()))?;
+        self.inner
+            .try_write()
+            .map(|mut g| *g = compiled)
+            .map_err(|_| PermissionError::Io("ruleset locked during seed".into()))?;
+        Ok(self)
+    }
+
     /// Snapshot of pending asks — useful for the HTTP route that lists
     /// open prompts for a session.
     pub fn pending_count(&self) -> usize {

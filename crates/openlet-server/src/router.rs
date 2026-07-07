@@ -88,12 +88,14 @@ impl RouterBuilder {
         self
     }
 
-    /// `POST /v1/session/:id/prompt_async` + `GET /v1/session/:id/messages`.
+    /// `POST /v1/session/:id/prompt_async` + `POST /v1/session/:id/compact`
+    /// + `GET /v1/session/:id/messages`.
     #[must_use]
     pub fn with_message_routes(mut self) -> Self {
         self.inner = self
             .inner
             .routes(routes!(message::prompt_async))
+            .routes(routes!(message::compact))
             .routes(routes!(message::list_messages));
         self
     }

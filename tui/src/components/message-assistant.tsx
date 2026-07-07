@@ -1,20 +1,27 @@
 // Assistant message, ported from OpenCode's assistant branch
 // (`routes/session/index.tsx:1402`). Iterates the message's parts through a
 // kind-keyed dispatch (text / reasoning / tool) and renders a per-turn footer
-// line `▣ mode · model · cost` once `step_finish` arrives. NO duration — the
+// line `▣ model · cost` once `step_finish` arrives. NO duration — the
 // step_finished DTO carries reason/usage/cost only, no timing — so cost is the
-// trailing metric. A tool_result part is folded into its tool_call's block by
-// matching tool_call_id, never rendered as a standalone row.
+// trailing metric. Permission mode is deliberately NOT shown here: it's a
+// session-wide setting (default workspace_write), not a per-message fact, and
+// repeating it on every turn was noise. It lives in the sidebar instead. A
+// tool_result part is folded into its tool_call's block by matching
+// tool_call_id, never rendered as a standalone row.
 
 import { For, Show, createMemo } from "solid-js";
 
 import { theme } from "../theme/index.js";
 import { formatUsd } from "../utils/format.js";
 import { toolVisual } from "./tool-visuals.js";
+import { toolLabel, toolBlockTitle } from "./tool-label.js";
+import { formatToolOutput } from "./tool-output-format.js";
 import { PartText } from "./part-text.js";
 import { PartReasoning } from "./part-reasoning.js";
 import { ToolInline } from "./tool-inline.js";
 import { ToolBlock } from "./tool-block.js";
+import { ToolTodo } from "./tool-todo.js";
+import { ToolAskUser } from "./tool-ask-user.js";
 
 import type { MessageView, PartView } from "../store/index.js";
 
@@ -24,8 +31,6 @@ export interface MessageAssistantProps {
   accent: string;
   /// Model label for the footer (agent's model, or a dash).
   model: string;
-  /// Permission mode label for the footer.
-  mode: string;
 }
 
 function summarize(value: unknown, max = 80): string {
@@ -71,6 +76,35 @@ export function MessageAssistant(props: MessageAssistantProps) {
     return map;
   });
 
+  // Tool name keyed by call id. A tool_result part carries only tool_call_id
+  // (no name), so the inline result row looks the name up here to format the
+  // structured JSON body into human text instead of showing a raw blob.
+  const toolNameByCallId = createMemo(() => {
+    const map = new Map<string, string | undefined>();
+    for (const p of props.message.parts) {
+      if (p.kind === "tool_call" && p.tool_call_id) map.set(p.tool_call_id, p.tool_name);
+    }
+    return map;
+  });
+
+  // Call ids whose standalone result row must be suppressed because a
+  // special renderer already owns the call's display: block cards fold their
+  // own result (blockCallIds), and the todo checklist renders from args so its
+  // `{count}` result is redundant noise.
+  const suppressedResultIds = createMemo(() => {
+    const ids = new Set(blockCallIds());
+    for (const p of props.message.parts) {
+      if (p.kind !== "tool_call") continue;
+      const name = (p.tool_name ?? "").toLowerCase();
+      // todo + ask_user own their own renderers that already fold the result.
+      if (name === "todo" || name === "ask_user") {
+        if (p.tool_call_id) ids.add(p.tool_call_id);
+        if (p.id) ids.add(p.id);
+      }
+    }
+    return ids;
+  });
+
   const renderPart = (part: PartView) => {
     switch (part.kind) {
       case "text":
@@ -78,6 +112,21 @@ export function MessageAssistant(props: MessageAssistantProps) {
       case "reasoning":
         return <PartReasoning part={part} />;
       case "tool_call": {
+        const name = (part.tool_name ?? "").toLowerCase();
+        // Todo renders as a checklist from its args, not a generic tool line.
+        if (name === "todo") {
+          return <ToolTodo part={part} />;
+        }
+        // ask_user renders as a question block (options + chosen answer)
+        // instead of raw JSON. The live selection UI is a separate overlay.
+        if (name === "ask_user") {
+          const byId = resultByCallId();
+          const out =
+            (part.tool_call_id ? byId.get(part.tool_call_id) : undefined) ??
+            (part.id ? byId.get(part.id) : undefined) ??
+            part.tool_result;
+          return <ToolAskUser part={part} result={out} />;
+        }
         const visual = toolVisual(part.tool_name);
         if (visual.template === "block") {
           const byId = resultByCallId();
@@ -86,20 +135,33 @@ export function MessageAssistant(props: MessageAssistantProps) {
             (part.id ? byId.get(part.id) : undefined) ??
             part.tool_result;
           return (
-            <ToolBlock part={part} title={`# ${part.tool_name ?? "tool"}`} output={resultText(out)} />
+            <ToolBlock
+              part={part}
+              title={`# ${toolBlockTitle(part.tool_name, part.tool_args)}`}
+              output={formatToolOutput(part.tool_name, resultText(out))}
+            />
           );
         }
-        return <ToolInline part={part} summary={`${part.tool_name ?? "tool"} ${summarize(part.tool_args)}`.trim()} />;
-      }
-      case "tool_result":
-        // Suppress a result row only when a BLOCK tool_call will fold it into
-        // its card. Inline-tool results, and orphans with no matching call,
-        // still render as their own line so output is never silently dropped.
         return (
-          <Show when={!part.tool_call_id || !blockCallIds().has(part.tool_call_id)}>
-            <ToolInline part={part} summary={resultText(part.tool_result).slice(0, 80)} />
+          <ToolInline
+            part={part}
+            summary={`${part.tool_name ?? "tool"} ${toolLabel(part.tool_name, part.tool_args)}`.trim()}
+          />
+        );
+      }
+      case "tool_result": {
+        // Suppress a result row when a BLOCK tool_call folds it into its card,
+        // or when the todo checklist already renders the call. Inline-tool
+        // results, and orphans with no matching call, still render so output is
+        // never silently dropped.
+        const name = part.tool_call_id ? toolNameByCallId().get(part.tool_call_id) : undefined;
+        const formatted = formatToolOutput(name, resultText(part.tool_result));
+        return (
+          <Show when={!part.tool_call_id || !suppressedResultIds().has(part.tool_call_id)}>
+            <ToolInline part={part} summary={formatted.split("\n")[0]?.slice(0, 80) ?? ""} />
           </Show>
         );
+      }
       default:
         return null;
     }
@@ -115,7 +177,7 @@ export function MessageAssistant(props: MessageAssistantProps) {
           <box paddingLeft={3} marginTop={1} flexDirection="row" gap={1}>
             <text fg={props.accent}>▣</text>
             <text fg={oc.textMuted} wrapMode="none">
-              {props.mode} · {props.model}
+              {props.model}
               {f().cost ? ` · ${formatUsd(f().cost)}` : ""}
             </text>
           </box>

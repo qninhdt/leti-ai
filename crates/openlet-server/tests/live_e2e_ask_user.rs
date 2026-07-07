@@ -8,15 +8,15 @@
 //! short of a real model exercises the full arc — the model must (a) decide to
 //! ask, (b) wait, then (c) act on the answer it could not have predicted.
 //!
-//! The default `POST /v1/session` route ships headless-safe (capabilities
-//! `{}` → `user_questions=false`), so this test boots a question-capable
-//! session via the harness helper. Gated identically to the other live tiers:
-//! the runtime env gate (`OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`) selects
-//! the real provider; unset, the harness falls back to the scripted mock so
-//! `cargo test` makes no network calls.
+//! This test boots a question-capable session via the harness helper (which
+//! persists capabilities directly through the memory store), keeping it
+//! hermetic regardless of the HTTP create route's default. Gated identically
+//! to the other live tiers: the runtime env gate (`OPENLET_LIVE_E2E=1` +
+//! `OPENAI_API_KEY`) selects the real provider; unset, the harness falls back
+//! to the scripted mock so `cargo test` makes no network calls.
 //!
 //! Run against real OpenRouter:
-//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!   OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... \
 //!     cargo test -p openlet-server --test live_e2e_ask_user
 
 use std::time::Duration;

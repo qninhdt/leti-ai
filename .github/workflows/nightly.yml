@@ -49,11 +49,11 @@ jobs:
       - name: Run gated acceptance suite
         env:
           OPENLET_LIVE_E2E: "1"
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENLET_LIVE_E2E_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o-mini' }}
         run: |
-          if [ -z "$OPENROUTER_API_KEY" ]; then
-            echo "::notice::OPENROUTER_API_KEY not set — skipping live acceptance (CI stays green)."
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::notice::OPENAI_API_KEY not set — skipping live acceptance (CI stays green)."
             exit 0
           fi
           # Two-tier scenarios: the env gate (OPENLET_LIVE_E2E=1 + key) selects

@@ -180,7 +180,7 @@ async fn config_error_io_maps_to_500_config_io() {
 async fn provider_error_missing_credentials_maps_to_401_provider_auth() {
     let app: AppError = ProviderError::MissingCredentials {
         provider: "openrouter",
-        env_var: "OPENROUTER_API_KEY",
+        env_var: "OPENAI_API_KEY",
     }
     .into();
     assert_eq!(status_and_code(app).await, (401, "provider_auth".into()));

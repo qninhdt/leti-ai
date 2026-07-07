@@ -36,6 +36,7 @@ async fn prompt_then_abort_marks_cancelling() {
         parent_session_id: None,
         permission_mode: None,
         extensions: serde_json::Value::Null,
+        user_questions: true,
     })
     .unwrap();
     let resp = app
@@ -99,6 +100,7 @@ async fn empty_prompt_rejected() {
         parent_session_id: None,
         permission_mode: None,
         extensions: serde_json::Value::Null,
+        user_questions: true,
     })
     .unwrap();
     let resp = app

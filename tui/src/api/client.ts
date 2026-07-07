@@ -5,6 +5,7 @@
 import type {
   AbortAckDto,
   AgentDto,
+  CompactAckDto,
   CreateMessageDto,
   CreateSessionDto,
   FileContentDto,
@@ -12,6 +13,8 @@ import type {
   PermissionReplyDto,
   PluginInfoDto,
   PromptAckDto,
+  QuestionAnswerDto,
+  ServerMessageDto,
   SessionDto,
   SetModeDto,
 } from "./types.js";
@@ -41,9 +44,12 @@ export interface OpenletClient {
   createSession(body: CreateSessionDto): Promise<SessionDto>;
   getSession(id: string): Promise<SessionDto>;
   promptAsync(sessionId: string, body: CreateMessageDto): Promise<PromptAckDto>;
+  listMessages(sessionId: string): Promise<ServerMessageDto[]>;
   abort(sessionId: string): Promise<AbortAckDto>;
+  compact(sessionId: string): Promise<CompactAckDto>;
   setMode(sessionId: string, body: SetModeDto): Promise<SessionDto>;
   replyPermission(askId: string, body: PermissionReplyDto): Promise<{ ok: true }>;
+  answerQuestion(sessionId: string, body: QuestionAnswerDto): Promise<void>;
   listPlugins(): Promise<PluginInfoDto[]>;
   listFiles(query: string): Promise<FileListDto>;
   getFileContent(path: string): Promise<FileContentDto>;
@@ -75,8 +81,13 @@ export function createClient(config: ClientConfig): OpenletClient {
       } catch {}
       throw new ApiError(res.status, code, message);
     }
+    // 204, or any 2xx with an empty/no-JSON body (e.g. the permission-reply
+    // route returns a bare 200 OK). Guard `res.json()` so those don't throw
+    // "Unexpected end of JSON input" and get misreported as a client error.
     if (res.status === 204) return undefined as T;
-    return (await res.json()) as T;
+    const raw = await res.text();
+    if (raw.length === 0) return undefined as T;
+    return JSON.parse(raw) as T;
   }
 
   return {
@@ -86,9 +97,12 @@ export function createClient(config: ClientConfig): OpenletClient {
     createSession: (body) => request("POST", "/v1/session", body),
     getSession: (id) => request("GET", `/v1/session/${id}`),
     promptAsync: (id, body) => request("POST", `/v1/session/${id}/prompt_async`, body),
+    listMessages: (id) => request("GET", `/v1/session/${id}/messages`),
     abort: (id) => request("POST", `/v1/session/${id}/abort`),
+    compact: (id) => request("POST", `/v1/session/${id}/compact`),
     setMode: (id, body) => request("POST", `/v1/session/${id}/mode`, body),
-    replyPermission: (askId, body) => request("POST", `/v1/permission/${askId}/reply`, body),
+    replyPermission: (askId, body) => request("POST", `/v1/permission/${askId}`, body),
+    answerQuestion: (id, body) => request("POST", `/v1/session/${id}/question/answer`, body),
     listPlugins: () => request("GET", "/v1/plugin"),
     listFiles: (query) => request("GET", `/v1/files?query=${encodeURIComponent(query)}`),
     getFileContent: (path) => request("GET", `/v1/files/content?path=${encodeURIComponent(path)}`),

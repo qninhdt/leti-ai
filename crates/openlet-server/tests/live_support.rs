@@ -11,7 +11,7 @@
 //! - `LiveServer::with_mock()` — points the provider at the in-process
 //!   `MockOpenAiService` (deterministic, network-free, default CI path).
 //! - `LiveServer::with_openrouter()` — points at real OpenRouter using
-//!   `OPENROUTER_API_KEY`. Reached only when the runtime env gate
+//!   `OPENAI_API_KEY`. Reached only when the runtime env gate
 //!   (`OPENLET_LIVE_E2E=1` + key present) is satisfied; otherwise scenario
 //!   boots transparently fall back to the scripted mock so a keyless CI
 //!   stays green. No `#[ignore]` — the env gate is the single source of
@@ -61,9 +61,9 @@ pub struct LiveServer {
     // the transient SSE delta stream, so there's no HTTP route to read it).
     memory: Arc<dyn openlet_core::adapters::MemoryStore>,
     // The default agent id the server registered. Exposed so the ask_user
-    // test can persist a question-capable session (default `create_session`
-    // hardcodes capabilities to `{}` → `user_questions=false`, which makes
-    // `ask_user` error synchronously instead of parking).
+    // test can persist a question-capable session directly via the memory
+    // store (bypassing the HTTP route), keeping the test hermetic regardless
+    // of the route's default capabilities.
     default_agent_id: openlet_core::types::agent::AgentId,
     // The artifact store the server uses. Exposed so the todo test can read
     // back the persisted `todos.json` the `todo` tool writes.
@@ -121,7 +121,7 @@ impl LiveServer {
         .await
     }
 
-    /// Boot against real OpenRouter. Reads `OPENROUTER_API_KEY` from env;
+    /// Boot against real OpenRouter. Reads `OPENAI_API_KEY` from env;
     /// callers must gate on its presence + `OPENLET_LIVE_E2E=1`.
     pub async fn with_openrouter() -> Self {
         Self::with_openrouter_inner(None, false, Vec::new(), None).await
@@ -184,7 +184,7 @@ impl LiveServer {
         // On the live tier the key is REQUIRED; on the mock tier (tier-1) the
         // key is absent, so fall back to a placeholder (the scripted provider
         // ignores it).
-        let key = std::env::var("OPENROUTER_API_KEY").unwrap_or_else(|_| "mock-key".to_string());
+        let key = std::env::var("OPENAI_API_KEY").unwrap_or_else(|_| "mock-key".to_string());
         let model = std::env::var("OPENLET_LIVE_E2E_MODEL")
             .unwrap_or_else(|_| "openai/gpt-4o-mini".to_string());
         Self::boot(
@@ -266,7 +266,7 @@ impl LiveServer {
         let config = Config {
             bind_addr: "127.0.0.1:0".to_string(),
             data_dir: data_root.clone(),
-            openrouter_api_key: None,
+            openai_api_key: None,
             default_model: model.to_string(),
             permission_ruleset_path: None,
             log_format: LogFormat::Pretty,
@@ -731,7 +731,7 @@ impl LiveServer {
 /// Centralized so every scenario file branches identically.
 pub fn scenario_live_enabled() -> bool {
     std::env::var("OPENLET_LIVE_E2E").as_deref() == Ok("1")
-        && std::env::var("OPENROUTER_API_KEY").is_ok()
+        && std::env::var("OPENAI_API_KEY").is_ok()
 }
 
 /// Extract the joined `data:` payload from one raw SSE frame (handles

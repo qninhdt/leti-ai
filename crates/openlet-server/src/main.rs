@@ -20,6 +20,7 @@ use openlet_server::boot::{
     build_tool_registry, install_plugins, openrouter_config_from_env, resolve_model_base_url,
     resolve_workspace_root, single_default_agent,
 };
+use openlet_server::permission_seed::default_permission_rules;
 use openlet_server::{
     AppStateBuilder, RouterBuilder,
     cli::{Cli, Command},
@@ -37,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // Load `.env` from CWD (walking up to the repo root) before reading
     // config. Existing process-env vars win — dotenvy does not override
-    // already-set keys, so an explicit `OPENROUTER_API_KEY=… cargo run`
+    // already-set keys, so an explicit `OPENAI_API_KEY=… cargo run`
     // still takes precedence over the file.
     let dotenv_path = dotenvy::dotenv().ok();
     let mut config = Config::load().context("loading config")?;
@@ -91,7 +92,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
             config: &config,
             provider: Arc::new(OpenRouterProvider::new(
                 resolve_model_base_url(),
-                config.openrouter_api_key.clone(),
+                config.openai_api_key.clone(),
                 openrouter_config_from_env(),
             )),
             workspace_root: resolve_workspace_root(&config),
@@ -237,7 +238,10 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .tool_registry(tool_registry)
         .events(events)
         .permission(Arc::new(
-            ConfigPermissionMgr::new().with_hook_chains(hook_chains.clone()),
+            ConfigPermissionMgr::new()
+                .with_hook_chains(hook_chains.clone())
+                .with_seed_rules(default_permission_rules())
+                .context("seeding default permission rules")?,
         ))
         .config(Arc::new(config.clone()))
         .hook_chains(hook_chains.clone())

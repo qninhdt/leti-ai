@@ -35,7 +35,7 @@ export function PermissionBody(props: { request: PermissionRequestDto }) {
           fallback={
             <box marginTop={1}>
               <text fg={oc.textMuted}>
-                {props.request.tool_name}
+                {props.request.tool_name ?? props.request.permission}
                 {props.request.reason ? ` — ${props.request.reason}` : ""}
               </text>
             </box>

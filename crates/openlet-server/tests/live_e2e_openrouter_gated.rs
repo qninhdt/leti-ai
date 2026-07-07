@@ -1,15 +1,15 @@
 //! Live OpenRouter E2E — the real-traffic subset.
 //!
-//! These hit the actual OpenRouter API with the real `OPENROUTER_API_KEY`.
+//! These hit the actual OpenRouter API with the real `OPENAI_API_KEY`.
 //! They are GATED at RUNTIME so a keyless `cargo test` stays green: each boot
 //! goes through `LiveServer::for_scenario`, which uses the real OpenRouter
-//! provider only when `OPENLET_LIVE_E2E=1` AND `OPENROUTER_API_KEY` are set;
+//! provider only when `OPENLET_LIVE_E2E=1` AND `OPENAI_API_KEY` are set;
 //! otherwise it transparently falls back to the in-process scripted mock
 //! (tier-1) driving the SAME test body. No `#[ignore]` — the env gate is the
 //! single source of truth, so the test runs (against the mock) by default.
 //!
 //! Run against real OpenRouter:
-//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!   OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... \
 //!     cargo test -p openlet-server --test live_e2e_openrouter_gated
 //!
 //! Cost guardrails: the cheapest model the caller selects via

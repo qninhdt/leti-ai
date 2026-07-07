@@ -59,25 +59,60 @@ export interface MessageDto {
   created_at: string;
 }
 
+// GET /v1/session/:id/messages returns the server's tagged-union parts
+// verbatim (openlet_protocol::dto::PartDto — serde tag="kind"). Unlike the
+// flat streaming PartDto above, each variant carries only its own fields, so
+// tool_call/tool_result bodies (name/args/result) arrive intact. This is the
+// ONLY path that delivers tool bodies to the UI; the SSE stream carries just
+// part ids. Kept as a discriminated union so `serverPartToView` narrows safely.
+export type ServerPartDto =
+  | { kind: "text"; id: string; text: string }
+  | { kind: "reasoning"; id: string; text: string }
+  | { kind: "tool_call"; id: string; call_id: string; name: string; args: unknown }
+  | { kind: "tool_result"; id: string; call_id: string; ok: boolean; text?: string | null; error?: string | null }
+  | { kind: "image"; id: string; artifact_id: string; mime: string; width: number; height: number }
+  | { kind: "document"; id: string; artifact_id: string; mime: string; extracted_text?: string | null }
+  | { kind: "step_start"; id: string }
+  | { kind: "step_finish"; id: string; reason: string }
+  | { kind: "compaction"; id: string; summary: string; compacted_message_ids: string[]; original_token_count: number }
+  | { kind: "plan"; id: string; plan: string };
+
+export interface ServerMessageDto {
+  id: string;
+  session_id: string;
+  role: "user" | "assistant" | "tool" | "system";
+  created_at: string;
+  parts: ServerPartDto[];
+}
+
+// Mirrors openlet_protocol::dto::PermissionRequestDto. The server currently
+// sends only ask_id + permission (a structured string like "file:write:/path"
+// or "bash:rm*") + optional reason/timeout. tool_name/diff/bash/patterns are
+// NOT emitted yet (the core PermissionRequest carries no such data) — kept
+// optional here so the dialog degrades to `permission` as the display key
+// rather than rendering `undefined`.
 export interface PermissionRequestDto {
   ask_id: string;
-  session_id: string;
   permission: string;
-  tool_name: string;
+  reason?: string;
+  timeout_ms?: number;
+  session_id?: string;
+  tool_name?: string;
   tool_args?: unknown;
   diff?: { filepath: string; before: string; after: string };
   bash?: { command: string; cwd: string; timeout_ms: number };
   patterns?: string[];
-  reason?: string;
 }
 
-export type PermissionReplyKind = "allow" | "deny" | "always" | "never";
+// Mirrors openlet_protocol::dto::PermissionReplyDto (serde snake_case). The
+// server takes ONLY `decision` + optional `reason`; the rule pattern for an
+// always_* decision is derived server-side from the original ask, never from
+// client input, so no pattern/scope field is sent.
+export type PermissionReplyKind = "allow" | "deny" | "always_allow" | "always_deny";
 
 export interface PermissionReplyDto {
-  reply: PermissionReplyKind;
-  pattern?: string | null;
-  feedback?: string | null;
-  scope?: "session" | "workspace" | "agent";
+  decision: PermissionReplyKind;
+  reason?: string | null;
 }
 
 export interface CreateSessionDto {
@@ -97,8 +132,26 @@ export interface PromptAckDto {
   message_id: string;
 }
 
+// Mirrors openlet_protocol::dto::AskOptionDto — one selectable answer for an
+// `ask_user` question. `description` is optional secondary text.
+export interface AskOptionDto {
+  label: string;
+  description?: string | null;
+}
+
+// Body for POST /v1/session/:id/question/answer. `selected` carries the picked
+// option indices — exactly one for single-select, zero-or-more for multi.
+export interface QuestionAnswerDto {
+  question_id: string;
+  selected: number[];
+}
+
 export interface AbortAckDto {
   ok: true;
+}
+
+export interface CompactAckDto {
+  compacted: boolean;
 }
 
 export interface ErrorDto {
@@ -157,6 +210,15 @@ export type EventDto =
     }
   | { kind: "permission_asked"; session_id: string; request: PermissionRequestDto }
   | { kind: "permission_resolved"; ask_id: string; decision: string }
+  | {
+      kind: "question_requested";
+      session_id: string;
+      question_id: string;
+      header: string;
+      question: string;
+      options: AskOptionDto[];
+      multi_select: boolean;
+    }
   | { kind: "error"; session_id?: string; code: string; message: string }
   | { kind: "heartbeat" }
   | { kind: "plugin_error"; plugin_id: string; code: string; message: string }
@@ -172,6 +234,7 @@ export type EventName =
   | "step.finished"
   | "permission.asked"
   | "permission.resolved"
+  | "question.requested"
   | "plan_mode.entered"
   | "plan_mode.exited"
   | "error"

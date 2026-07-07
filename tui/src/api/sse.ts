@@ -29,6 +29,7 @@ const KIND_FROM_NAME: Record<EventName, EventDto["kind"]> = {
   "step.finished": "step_finished",
   "permission.asked": "permission_asked",
   "permission.resolved": "permission_resolved",
+  "question.requested": "question_requested",
   "plan_mode.entered": "plan_mode_entered",
   "plan_mode.exited": "plan_mode_exited",
   "error": "error",

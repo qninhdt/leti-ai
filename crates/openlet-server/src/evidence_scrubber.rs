@@ -89,7 +89,7 @@ mod tests {
 
     #[test]
     fn bearer_and_env_assignment_are_removed() {
-        let t = "Authorization: Bearer sk-test-tokenvalue123\nOPENROUTER_API_KEY=secretval";
+        let t = "Authorization: Bearer sk-test-tokenvalue123\nOPENAI_API_KEY=secretval";
         let s = scrub_transcript(t);
         assert!(!s.contains("sk-test-tokenvalue123"), "bearer token: {s}");
         assert!(!s.contains("secretval"), "env value: {s}");

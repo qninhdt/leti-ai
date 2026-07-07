@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use openlet_core::types::agent::AgentId;
-use openlet_core::types::session::{SessionFilter, SessionId};
+use openlet_core::types::session::{SessionCapabilities, SessionFilter, SessionId, SessionMeta};
 use openlet_protocol::{CreateSessionDto, SessionDto, SetModeDto};
 use uuid::Uuid;
 
@@ -38,7 +38,22 @@ pub async fn create(
         ));
     }
     let parent = body.parent_session_id.map(SessionId::from);
-    let id = state.memory.create_session(agent_id, parent).await?;
+    // Build the row explicitly so the caller-declared capabilities +
+    // permission mode are honored. `create_session` (the bare path) hardcodes
+    // all-false capabilities and the default mode; the interactive create route
+    // must instead enable `user_questions` so `ask_user` doesn't fail fast.
+    let capabilities = SessionCapabilities {
+        user_questions: body.user_questions,
+    };
+    let meta = SessionMeta::new_root(
+        SessionId::new(),
+        agent_id,
+        parent,
+        body.permission_mode.unwrap_or_default(),
+        capabilities,
+        chrono::Utc::now(),
+    );
+    let id = state.memory.create_session_with_meta(meta).await?;
     if !body.extensions.is_null() {
         state
             .memory

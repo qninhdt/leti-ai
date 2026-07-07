@@ -34,6 +34,53 @@ pub(super) enum CompactionFlow {
 }
 
 impl ConversationRuntime {
+    /// Manually trigger one compaction step, bypassing the token-threshold
+    /// gate `run_loop` applies. Backs the on-demand `/compact` command so a
+    /// user can summarize before context pressure forces it. Compacts
+    /// everything older than the most recent `PRESERVE_RECENT` messages,
+    /// then returns — it does NOT drive a follow-up model turn (that's the
+    /// loop's job when compaction fires mid-turn).
+    ///
+    /// Returns `Ok(false)` when there's nothing to compact (no agent, or the
+    /// conversation is at/under the preserved-recent floor).
+    pub async fn compact_session(
+        &self,
+        memory: &Arc<dyn MemoryStore>,
+        loop_ctx: &LoopContext,
+        mut input: TurnInput,
+        cancel: CancellationToken,
+    ) -> Result<bool, CoreError> {
+        use crate::projection::LlmRole;
+        use crate::runtime::compaction::PRESERVE_RECENT;
+
+        let Some(agent) = loop_ctx.agent.as_ref() else {
+            return Ok(false);
+        };
+        // Count non-system messages; nothing to compact if we're at or under
+        // the preserved-recent floor (compaction would supersede nothing).
+        let body_count = input
+            .messages
+            .iter()
+            .filter(|m| !matches!(m.role, LlmRole::System))
+            .count();
+        if body_count <= PRESERVE_RECENT {
+            return Ok(false);
+        }
+        let keep = PRESERVE_RECENT.min(body_count);
+        let mut last_actual_tokens: Option<usize> = None;
+        self.run_compaction(
+            memory,
+            loop_ctx,
+            agent.as_ref(),
+            keep,
+            &mut input,
+            &mut last_actual_tokens,
+            cancel,
+        )
+        .await?;
+        Ok(true)
+    }
+
     /// Run one compaction step: dispatch the `OnCompaction` Before/After
     /// hooks, drive a one-shot summarization turn, persist the summary as
     /// `Part::Compaction`, and re-project.

@@ -12,7 +12,7 @@ that is what this checklist is for.
 ## Setup
 
 ```bash
-cp .env.example .env        # then fill OPENROUTER_API_KEY
+cp .env.example .env        # then fill OPENAI_API_KEY
 ./openlet-ai                # real OpenRouter
 # or, no key / no network:
 ./openlet-ai --mock         # in-process mock LLM

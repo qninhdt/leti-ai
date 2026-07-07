@@ -49,6 +49,10 @@ export function createCommandContext(runtime: AppRuntime): CommandContext {
     newSession: async () => {
       await createAndActivateSession(runtime.client);
     },
+    compact: async () => {
+      const id = useStore.getState().activeSessionId;
+      if (id) await runtime.client.compact(id);
+    },
     setMode: async (mode) => {
       const id = useStore.getState().activeSessionId;
       if (id) await runtime.client.setMode(id, { mode });

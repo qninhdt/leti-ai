@@ -19,7 +19,7 @@ const MAX_STDOUT: usize = 256 * 1024;
 const MAX_STDERR: usize = 64 * 1024;
 
 /// Env vars passed to subprocesses. Anything else is dropped so a
-/// command can't leak `OPENROUTER_API_KEY` or similar via `env`.
+/// command can't leak `OPENAI_API_KEY` or similar via `env`.
 ///
 /// `HOME` is intentionally excluded: combined with a login shell it
 /// lets a malicious LLM persist across sessions via `~/.bashrc`. We use

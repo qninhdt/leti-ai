@@ -4,11 +4,13 @@ import type { ConnState } from "../api/sse.js";
 import type { FileBadge } from "../services/attachment-embedder.js";
 import type {
   AgentDto,
+  AskOptionDto,
   EventDto,
   MessageDto,
   PartDto,
   PermissionRequestDto,
   PluginInfoDto,
+  ServerMessageDto,
   SessionDto,
 } from "../api/types.js";
 
@@ -18,6 +20,7 @@ import type {
 // is keyed by askId). A bare kind would make >=2 concurrent asks ambiguous.
 export type OverlayEntry =
   | { kind: "permission"; askId: string }
+  | { kind: "question"; questionId: string }
   | { kind: "agent_picker" }
   | { kind: "session_picker" }
   | { kind: "help" }
@@ -52,6 +55,19 @@ export interface PluginErrorView {
   at: number;
 }
 
+// A pending `ask_user` question awaiting the user's selection. Mirrors the
+// `question_requested` SSE frame; keyed in the store by `question_id`. The
+// session stays `running` (the tool suspends server-side) until answered, so
+// the dialog is the ONLY way to unblock the turn.
+export interface PendingQuestion {
+  session_id: string;
+  question_id: string;
+  header: string;
+  question: string;
+  options: AskOptionDto[];
+  multi_select: boolean;
+}
+
 export interface State {
   conn: ConnSlice;
   sessions: Record<string, SessionDto>;
@@ -61,6 +77,10 @@ export interface State {
   plugins: PluginInfoDto[];
   pluginErrors: PluginErrorView[];
   pendingPermissions: Record<string, PermissionRequestDto>;
+  /// Pending `ask_user` questions keyed by question_id. Populated by the
+  /// `question_requested` SSE frame; drained when the dialog posts an answer
+  /// (optimistically) or the turn settles.
+  pendingQuestions: Record<string, PendingQuestion>;
   /// Last client-side error (failed prompt/command/session call). Surfaced
   /// as a banner so an async failure in the non-async input handler is
   /// visible to the user instead of becoming an unhandled rejection.
@@ -86,4 +106,12 @@ export interface State {
   /// file-mention badges. The SSE stream never produces a user message, so the
   /// TUI must add it itself.
   addUserMessage: (sessionId: string, messageId: string, text: string, badges: FileBadge[]) => void;
+  /// Merge server-authoritative message bodies (from GET /messages) into the
+  /// session's view. This is the only path that delivers tool call
+  /// name/args/results to the UI — the SSE stream carries part ids only.
+  hydrateSession: (sessionId: string, messages: ServerMessageDto[]) => void;
+  /// Remove a pending question + its overlay once answered/cancelled. The
+  /// server has no "question_resolved" event, so the dialog calls this itself
+  /// after POSTing the answer (optimistic dismiss).
+  clearQuestion: (questionId: string) => void;
 }

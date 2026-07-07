@@ -42,7 +42,7 @@ impl OpenRouterProvider {
         config: OpenRouterConfig,
     ) -> Self {
         Self {
-            transport: HttpTransport::new(base_url, api_key, "openrouter", "OPENROUTER_API_KEY"),
+            transport: HttpTransport::new(base_url, api_key, "openrouter", "OPENAI_API_KEY"),
             config,
         }
     }
@@ -61,7 +61,7 @@ impl OpenRouterProvider {
                 api_key,
                 http,
                 "openrouter",
-                "OPENROUTER_API_KEY",
+                "OPENAI_API_KEY",
             ),
             config,
         }

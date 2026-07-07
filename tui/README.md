@@ -102,7 +102,7 @@ Two E2E tiers exercise the same `<App>`:
   SSE socket, real provider stream. Requires the binaries prebuilt
   (`cargo build -p openlet-server -p openlet-test-mock-provider`). The
   real-OpenRouter sub-tier additionally needs `OPENLET_LIVE_E2E=1` +
-  `OPENROUTER_API_KEY` and asserts shape only, never exact model words.
+  `OPENAI_API_KEY` and asserts shape only, never exact model words.
 
 ## Architecture notes
 

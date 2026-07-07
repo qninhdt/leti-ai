@@ -125,6 +125,25 @@ describe("store applyEvent", () => {
     expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-b")).toBe(true);
   });
 
+  it("surfaces a server error event into clientError (not silently dropped)", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "error",
+      session_id: "sid-err",
+      code: "provider_error",
+      message: "upstream 403: model not subscribed",
+    });
+    expect(useStore.getState().clientError).toBe(
+      "Agent error: upstream 403: model not subscribed",
+    );
+  });
+
+  it("falls back to the error code when the message is empty", () => {
+    const s = useStore.getState();
+    s.applyEvent({ kind: "error", code: "timeout", message: "" });
+    expect(useStore.getState().clientError).toBe("Agent error: timeout");
+  });
+
   it("addUserMessage reconciles an SSE placeholder that arrived first (no dup, role=user, badges kept)", () => {
     const s = useStore.getState();
     const sid = "sid-opt";
@@ -152,5 +171,62 @@ describe("store applyEvent", () => {
     const list = useStore.getState().messages[sid] ?? [];
     expect(list.length).toBe(1);
     expect(list[0]?.role).toBe("user");
+  });
+
+  it("question_requested records the pending question + pushes a question overlay", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "question_requested",
+      session_id: "sid-q",
+      question_id: "q-1",
+      header: "Pick one",
+      question: "Which framework?",
+      options: [{ label: "Solid" }, { label: "React", description: "the classic" }],
+      multi_select: false,
+    });
+    const state = useStore.getState();
+    expect(state.pendingQuestions["q-1"]).toMatchObject({
+      question_id: "q-1",
+      multi_select: false,
+    });
+    expect(state.pendingQuestions["q-1"]?.options).toHaveLength(2);
+    const top = state.overlays[state.overlays.length - 1];
+    expect(top).toEqual({ kind: "question", questionId: "q-1" });
+  });
+
+  it("question_requested is idempotent — a re-emitted frame does not stack a 2nd overlay", () => {
+    const s = useStore.getState();
+    const ev: EventDto = {
+      kind: "question_requested",
+      session_id: "sid-q2",
+      question_id: "q-2",
+      header: "H",
+      question: "Q?",
+      options: [{ label: "a" }, { label: "b" }],
+      multi_select: false,
+    };
+    s.applyEvent(ev);
+    s.applyEvent(ev);
+    const count = useStore
+      .getState()
+      .overlays.filter((e) => e.kind === "question" && e.questionId === "q-2").length;
+    expect(count).toBe(1);
+  });
+
+  it("clearQuestion drains the pending question + removes its overlay (optimistic answer)", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "question_requested",
+      session_id: "sid-q3",
+      question_id: "q-3",
+      header: "H",
+      question: "Q?",
+      options: [{ label: "a" }, { label: "b" }],
+      multi_select: true,
+    });
+    useStore.getState().clearQuestion("q-3");
+    const state = useStore.getState();
+    expect(state.pendingQuestions["q-3"]).toBeUndefined();
+    expect(state.overlays.some((e) => e.kind === "question" && e.questionId === "q-3")).toBe(false);
   });
 });

@@ -26,7 +26,7 @@ pub fn resolve_workspace_root(config: &Config) -> std::path::PathBuf {
         .unwrap_or_else(|_| config.data_dir.join("workspace"))
 }
 
-/// Resolve the model API base URL: `OPENLET_MODEL_BASE_URL` if set, else
+/// Resolve the model API base URL: `OPENAI_API_BASE_URL` if set, else
 /// the OpenAI-compat default (OpenRouter). A single trailing `/` is
 /// trimmed so callers can pass `…/v1` or `…/v1/` interchangeably.
 pub fn resolve_model_base_url() -> String {
@@ -47,12 +47,39 @@ pub fn openrouter_config_from_env() -> OpenRouterConfig {
 }
 
 /// Build the tool registry from plugin-drained handles.
+///
+/// `OPENLET_DISABLED_TOOLS` (comma-separated tool names, e.g. `bash` or
+/// `bash,edit`) drops matching tools before registration so the model never
+/// sees them in its tool catalog and can't dispatch them. Whitespace around
+/// each name is trimmed; empty entries are ignored. Unknown names are a no-op.
 pub fn build_tool_registry(tools: Vec<ToolHandle>) -> Arc<ToolRegistry> {
+    let disabled = disabled_tool_names();
     let mut tool_builder = ToolRegistry::builder();
     for tool in tools {
+        if disabled.iter().any(|d| d == tool.name()) {
+            tracing::info!(tool = tool.name(), "tool disabled via OPENLET_DISABLED_TOOLS");
+            continue;
+        }
         tool_builder = tool_builder.register_erased(tool);
     }
     tool_builder.build()
+}
+
+/// Parse `OPENLET_DISABLED_TOOLS` into a trimmed, non-empty name list.
+fn disabled_tool_names() -> Vec<String> {
+    std::env::var("OPENLET_DISABLED_TOOLS")
+        .map(|raw| parse_disabled_tools(&raw))
+        .unwrap_or_default()
+}
+
+/// Pure comma-split + trim + drop-empties. Split out from the env reader so
+/// the parsing is unit-testable without mutating process env.
+fn parse_disabled_tools(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Wire the single default agent (one workspace -> one fs + shell) that
@@ -91,4 +118,18 @@ pub async fn install_plugins(
     install_all(plugins, &configs, core_api)
         .await
         .context("draining plugin registrations")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_disabled_tools_trims_and_drops_empties() {
+        assert_eq!(parse_disabled_tools("bash"), vec!["bash"]);
+        assert_eq!(parse_disabled_tools(" bash , edit "), vec!["bash", "edit"]);
+        assert_eq!(parse_disabled_tools("bash,,"), vec!["bash"]);
+        assert!(parse_disabled_tools("").is_empty());
+        assert!(parse_disabled_tools("  ,  ").is_empty());
+    }
 }

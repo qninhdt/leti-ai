@@ -68,13 +68,13 @@ up_mock() {
 # binds 127.0.0.1:0-style via OPENLET_BIND; caller passes a concrete port.
 # Required env the caller must export beforehand:
 #   OPENLET_BIND, OPENLET_DEFAULT_MODEL, OPENLET_WORKSPACE, OPENLET_DATA_DIR
-#   and (real mode) OPENROUTER_API_KEY.
+#   and (real mode) OPENAI_API_KEY.
 up_server() {
   _require_bin "$SERVER_BIN"
   local base_url="$1"
   : >"$SERVER_LOG"
   local bind="${OPENLET_BIND:-127.0.0.1:8788}"
-  OPENLET_MODEL_BASE_URL="$base_url" "$SERVER_BIN" serve >"$SERVER_LOG" 2>&1 &
+  OPENAI_API_BASE_URL="$base_url" "$SERVER_BIN" serve >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   local health="http://$bind/v1/health"
   local deadline=$((SECONDS + 30))

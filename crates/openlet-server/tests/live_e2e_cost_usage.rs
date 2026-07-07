@@ -8,11 +8,11 @@
 //! pricing-table row, so the displayed cost was always `$0.0000`.
 //!
 //! GATED at runtime like the rest of the live tier: the real provider is used
-//! only when `OPENLET_LIVE_E2E=1` AND `OPENROUTER_API_KEY` are set; otherwise
+//! only when `OPENLET_LIVE_E2E=1` AND `OPENAI_API_KEY` are set; otherwise
 //! the harness falls back to the scripted mock (no network, no `#[ignore]`).
 //!
 //! Run explicitly (forces gemini via the harness model env):
-//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!   OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... \
 //!     OPENLET_LIVE_E2E_MODEL=google/gemini-3.5-flash \
 //!     cargo test -p openlet-server --test live_e2e_cost_usage -- --nocapture
 //!

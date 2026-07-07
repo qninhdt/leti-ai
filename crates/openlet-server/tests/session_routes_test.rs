@@ -18,6 +18,7 @@ async fn create_list_get_delete_session_round_trip() {
         parent_session_id: None,
         permission_mode: None,
         extensions: serde_json::Value::Null,
+        user_questions: true,
     })
     .unwrap();
     let resp = app
@@ -138,6 +139,7 @@ async fn create_session_with_extensions_round_trip() {
         parent_session_id: None,
         permission_mode: None,
         extensions: extensions.clone(),
+        user_questions: true,
     })
     .unwrap();
     let resp = app

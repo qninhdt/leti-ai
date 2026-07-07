@@ -78,7 +78,7 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
             config,
             provider: Arc::new(OpenRouterProvider::new(
                 resolve_model_base_url(),
-                config.openrouter_api_key.clone(),
+                config.openai_api_key.clone(),
                 openrouter_config_from_env(),
             )),
             workspace_root: resolve_workspace_root(config),

@@ -13,6 +13,7 @@ import { useStoreSelector } from "./store-bridge.js";
 import { AgentPickerDialog } from "../dialogs/agent-picker.js";
 import { SessionPickerDialog } from "../dialogs/session-picker.js";
 import { PermissionDialog } from "../dialogs/permission-dialog.js";
+import { QuestionDialog } from "../dialogs/question-dialog.js";
 import { HelpDialog } from "../dialogs/help-dialog.js";
 import { PluginsDialog } from "../dialogs/plugins-dialog.js";
 import { CommandPalette } from "../dialogs/command-palette.js";
@@ -44,6 +45,12 @@ export function OverlayHost() {
             <Match when={entry().kind === "permission"}>
               {/* Renders its own bordered panel + owns its keys. */}
               <PermissionDialog askId={(entry() as { kind: "permission"; askId: string }).askId} />
+            </Match>
+            <Match when={entry().kind === "question"}>
+              {/* Owns its own chrome + keys, like the permission dialog. */}
+              <QuestionDialog
+                questionId={(entry() as { kind: "question"; questionId: string }).questionId}
+              />
             </Match>
             <Match when={true}>
               <box

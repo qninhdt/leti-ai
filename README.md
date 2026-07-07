@@ -10,7 +10,7 @@ One command boots the server, waits for health, builds the TUI if needed,
 and drops you into the live terminal app — then tears the server down on exit.
 
 ```bash
-cp .env.example .env   # then fill OPENROUTER_API_KEY
+cp .env.example .env   # then fill OPENAI_API_KEY
 ./openlet-ai           # real OpenRouter
 ```
 
@@ -32,7 +32,7 @@ If you'd rather drive each piece by hand:
 cargo build --workspace
 
 # 2. Run the server (defaults to 127.0.0.1:8787).
-OPENROUTER_API_KEY=sk-... cargo run -p openlet-server
+OPENAI_API_KEY=sk-... cargo run -p openlet-server
 
 # 3. In another terminal, install the TUI and connect.
 cd tui && npm install && npm run build && npm install -g .
@@ -40,11 +40,11 @@ openlet
 ```
 
 For a network-free dry run, point the server at the in-process mock provider.
-`OPENLET_MODEL_BASE_URL` is honored on the serve path (no source edit needed):
+`OPENAI_API_BASE_URL` is honored on the serve path (no source edit needed):
 
 ```bash
 cargo run -p openlet-test-mock-provider --bin mock-openai-service
-# then start the server with OPENLET_MODEL_BASE_URL=<printed base_url, verbatim>
+# then start the server with OPENAI_API_BASE_URL=<printed base_url, verbatim>
 # (the printed URL already ends in /v1 — do not append another)
 ```
 
@@ -56,8 +56,8 @@ All config is environment-driven. See [`docs/deployment.md`](docs/deployment.md)
 |---|---|---|
 | `OPENLET_BIND` | `127.0.0.1:8787` | TCP bind address. Loopback-only by default. |
 | `OPENLET_DATA_DIR` | `~/.openlet` | Sqlite, artifact, and session-log root. |
-| `OPENROUTER_API_KEY` | _(unset)_ | OpenRouter / OpenAI-compat credentials. |
-| `OPENLET_MODEL_BASE_URL` | `https://openrouter.ai/api/v1` | Model API base URL. Point at a self-hosted gateway or the in-process mock (`./openlet-ai --mock` sets it). |
+| `OPENAI_API_KEY` | _(unset)_ | OpenRouter / OpenAI-compat credentials. |
+| `OPENAI_API_BASE_URL` | `https://openrouter.ai/api/v1` | Model API base URL. Point at a self-hosted gateway or the in-process mock (`./openlet-ai --mock` sets it). |
 | `OPENLET_DEFAULT_MODEL` | `anthropic/claude-sonnet-4-6` | Default chat model. |
 | `OPENLET_LOG_FORMAT` | `json` | `json` or `pretty`. |
 | `OPENLET_ENABLE_DOCS` | `1` | Set `0` to remove the `/doc` Swagger UI in cloud builds. |

@@ -13,6 +13,7 @@ export interface CommandContext {
   setView: (view: { kind: string; askId?: string }) => void;
   cancelTurn: () => Promise<void>;
   newSession: () => Promise<void>;
+  compact: () => Promise<void>;
   setMode: (mode: "read_only" | "workspace_write" | "danger") => Promise<void>;
   enterPlanMode: () => Promise<void>;
   exit: () => void;
@@ -53,10 +54,22 @@ export const commands: Command[] = [
     run: (ctx) => ctx.newSession(),
   },
   {
+    name: "clear",
+    category: "Session",
+    summary: "Clear conversation (start a fresh session)",
+    run: (ctx) => ctx.newSession(),
+  },
+  {
     name: "cancel",
     category: "Session",
     summary: "Abort current turn",
     run: (ctx) => ctx.cancelTurn(),
+  },
+  {
+    name: "compact",
+    category: "Session",
+    summary: "Summarize older messages to free up context",
+    run: (ctx) => ctx.compact(),
   },
   {
     name: "danger",

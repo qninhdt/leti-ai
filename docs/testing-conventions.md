@@ -27,14 +27,14 @@ never mocked — in these tiers.
 | Tier | File(s) | Gate | Run |
 |---|---|---|---|
 | Mock-LLM (default) | `live_e2e_server_core`, `live_e2e_plugin_agent`, `live_e2e_fs_write`, `live_e2e_session_persist` | none — runs on plain `cargo test` | `cargo test --workspace` |
-| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud`, and the other `live_e2e_*` scenario files | runtime env only: `OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY` (no `#[ignore]`) | `OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... cargo test -p openlet-server` |
+| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud`, and the other `live_e2e_*` scenario files | runtime env only: `OPENLET_LIVE_E2E=1` + `OPENAI_API_KEY` (no `#[ignore]`) | `OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... cargo test -p openlet-server` |
 | TUI Node wire-double (default) | `tui/tests/e2e/tui-live-e2e.test.tsx` | none | `cd tui && npm test` |
 | TUI real-binary (gated) | `tui/tests/e2e/tui-real-binary-e2e.test.tsx` | `OPENLET_TUI_REAL_E2E=1` (+ `OPENLET_LIVE_E2E=1` + key for the OpenRouter sub-tier) | `cd tui && npm run test:e2e:real` |
 
 The real-OpenRouter scenario files (`live_e2e_*`) carry **no `#[ignore]`
 attribute**. They are gated purely at RUNTIME through the shared harness:
 `LiveServer::for_scenario` (and its variants) use the real
-`OpenRouterProvider` only when `OPENLET_LIVE_E2E=1` AND `OPENROUTER_API_KEY`
+`OpenRouterProvider` only when `OPENLET_LIVE_E2E=1` AND `OPENAI_API_KEY`
 are both set. Unset (the keyless CI default), the harness transparently
 falls back to the in-process scripted mock driving the SAME test body — so
 `cargo test` makes no network calls and the scenarios still exercise the

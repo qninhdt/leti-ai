@@ -10,12 +10,12 @@
 //! checklist was actually maintained (not just narrated).
 //!
 //! Gated identically to the other live tiers: the runtime env gate
-//! (`OPENLET_LIVE_E2E=1` + `OPENROUTER_API_KEY`) selects the real provider;
+//! (`OPENLET_LIVE_E2E=1` + `OPENAI_API_KEY`) selects the real provider;
 //! unset, the harness falls back to the scripted mock so `cargo test` makes no
 //! network calls.
 //!
 //! Run against real OpenRouter:
-//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!   OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... \
 //!     cargo test -p openlet-server --test live_e2e_todo_workflow
 
 use std::process::Command;

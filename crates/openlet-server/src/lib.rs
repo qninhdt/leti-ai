@@ -19,6 +19,7 @@ pub mod metrics;
 pub mod middleware;
 pub mod notif_bucket;
 pub mod openapi;
+pub mod permission_seed;
 pub mod router;
 pub mod routes;
 pub mod shutdown;

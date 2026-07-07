@@ -6,7 +6,7 @@
 # server (and the mock backend, if started) down — no orphaned process
 # holding the bind port.
 #
-#   ./openlet-ai            real OpenRouter (needs OPENROUTER_API_KEY in .env)
+#   ./openlet-ai            real OpenRouter (needs OPENAI_API_KEY in .env)
 #   ./openlet-ai --mock     network-free in-process mock LLM (no key needed)
 #   ./openlet-ai --clean     kill stragglers on the bind port + clear run dir
 #   ./openlet-ai --rebuild  force a TUI rebuild before launch
@@ -73,7 +73,7 @@ mkdir -p "$RUN_DIR"
 if [ ! -f .env ]; then
   cp .env.example .env
   if [ "$MOCK" = "0" ]; then
-    echo "created .env from .env.example — fill OPENROUTER_API_KEY, then re-run." >&2
+    echo "created .env from .env.example — fill OPENAI_API_KEY, then re-run." >&2
     echo "(or run network-free: ./openlet-ai --mock)" >&2
     exit 1
   fi
@@ -114,8 +114,8 @@ if [ "$MOCK" = "1" ]; then
     exit 1
   fi
   # VERBATIM — the printed URL already ends in /v1. Do NOT append another.
-  export OPENLET_MODEL_BASE_URL="$MOCK_BASE"
-  echo "mock backend: $OPENLET_MODEL_BASE_URL"
+  export OPENAI_API_BASE_URL="$MOCK_BASE"
+  echo "mock backend: $OPENAI_API_BASE_URL"
 fi
 
 # ── Preflight via the binary's own doctor (single source of truth) ────
@@ -132,7 +132,7 @@ echo "────────────────────────�
 if [ "$MOCK" = "0" ]; then
   if ! echo "$DOCTOR_OUT" | grep -qE '^\[OK\] api_key_set'; then
     echo "" >&2
-    echo "OPENROUTER_API_KEY is missing or empty — set it in .env (see .env.example)," >&2
+    echo "OPENAI_API_KEY is missing or empty — set it in .env (see .env.example)," >&2
     echo "or run network-free with: ./openlet-ai --mock" >&2
     exit 1
   fi

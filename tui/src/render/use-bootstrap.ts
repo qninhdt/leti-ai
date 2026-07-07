@@ -9,6 +9,7 @@ import { connectSse } from "../api/sse.js";
 import { useStore } from "../store/index.js";
 import { useStoreSelector } from "./store-bridge.js";
 import { useRuntime } from "./app-context.js";
+import { createHydrationController } from "./hydration-controller.js";
 
 import type { OpenletClient } from "../api/client.js";
 
@@ -29,13 +30,24 @@ export function useBootstrap(): void {
   const runtime = useRuntime();
   void loadInitial(runtime.client);
 
+  const hydration = createHydrationController(runtime.client);
+
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
   createEffect(() => {
+    const sessionId = activeSessionId() ?? undefined;
+    // Fetch server-authoritative bodies for the newly active session so its
+    // tool calls (name/args/results) render immediately — the SSE stream alone
+    // carries only part ids.
+    if (sessionId) hydration.refresh(sessionId);
+
     const sse = connectSse({
       baseUrl: runtime.baseUrl,
-      sessionId: activeSessionId() ?? undefined,
+      sessionId,
       token: runtime.token,
-      onEvent: (ev) => useStore.getState().applyEvent(ev),
+      onEvent: (ev) => {
+        useStore.getState().applyEvent(ev);
+        hydration.onEvent(ev);
+      },
       onState: (status, detail) => useStore.getState().setConn(status, detail),
     });
     onCleanup(() => sse.close());

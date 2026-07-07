@@ -51,7 +51,7 @@ struct Inner {
     api_key: Option<SecretString>,
     http: Client,
     /// Names surfaced in `MissingCredentials` so the operator sees which
-    /// provider + env var to set (e.g. `openrouter` / `OPENROUTER_API_KEY`).
+    /// provider + env var to set (e.g. `openrouter` / `OPENAI_API_KEY`).
     provider_name: &'static str,
     env_var: &'static str,
 }

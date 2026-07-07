@@ -7,14 +7,31 @@
 //! `stream_options.include_usage = true`.
 
 use serde::Deserialize;
+use serde::de::Deserializer;
 
 use openlet_core::adapters::model_provider::{ChatDelta, FinishReason};
 use openlet_core::error::ProviderError;
 use openlet_core::types::event::Usage;
 
+/// Deserialize a value that may be `null` into `T::default()`.
+///
+/// `#[serde(default)]` only fills in a value when the field is ABSENT; an
+/// explicit `null` still routes through `T`'s `Deserialize`, which fails for
+/// `Vec<_>` with "invalid type: null, expected a sequence". Some
+/// OpenAI-compat gateways (e.g. Gemini-via-proxy) send `"tool_calls": null`
+/// and `"choices": null` on chunks with no tool call — this coerces those to
+/// an empty collection instead of aborting the whole stream.
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ChunkEnvelope {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub choices: Vec<ChunkChoice>,
     #[serde(default)]
     pub usage: Option<UsageWire>,
@@ -40,13 +57,19 @@ pub struct ChunkDelta {
     /// OpenRouter alias for the same — some upstreams forward as `reasoning`.
     #[serde(default)]
     pub reasoning: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub tool_calls: Vec<ChunkToolCall>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ChunkToolCall {
-    pub index: usize,
+    /// Position of this tool call within the turn. OpenAI/OpenRouter always
+    /// send it (it's how streamed arg deltas are grouped), but some
+    /// gateways — notably Gemini-via-proxy — omit it on tool-call deltas.
+    /// Optional here so the whole stream doesn't abort with "missing field
+    /// `index`"; the decoder falls back to the tool call's array position.
+    #[serde(default)]
+    pub index: Option<usize>,
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
@@ -143,8 +166,8 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
             }
         }
 
-        for tc in delta.tool_calls {
-            push_tool_delta(tc, &mut out);
+        for (pos, tc) in delta.tool_calls.into_iter().enumerate() {
+            push_tool_delta(tc, pos, &mut out);
         }
 
         if let Some(reason) = finish_reason {
@@ -174,12 +197,16 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
     Ok(out)
 }
 
-fn push_tool_delta(tc: ChunkToolCall, out: &mut Vec<ChatDelta>) {
+fn push_tool_delta(tc: ChunkToolCall, pos: usize, out: &mut Vec<ChatDelta>) {
     let ChunkToolCall {
         index,
         id,
         function,
     } = tc;
+    // Gateways that omit `index` (Gemini-via-proxy) get the array position as
+    // a stable fallback: within one chunk the ordering is authoritative, and
+    // single-tool-call turns (the common case) always collapse to index 0.
+    let index = index.unwrap_or(pos);
     let (name, arguments) = match function {
         Some(f) => (f.name, f.arguments),
         None => (None, None),
@@ -311,5 +338,75 @@ mod tests {
             &deltas[0],
             ChatDelta::Reasoning { text, .. } if text == "think"
         ));
+    }
+
+    #[test]
+    fn tolerates_null_tool_calls() {
+        // Gemini-via-gateway sends `"tool_calls": null` on text-only chunks.
+        // `#[serde(default)]` alone rejects explicit null ("invalid type:
+        // null, expected a sequence") — the whole turn used to crash here.
+        let p = r#"{"choices":[{"delta":{"role":"assistant","content":"hi","tool_calls":null}}]}"#;
+        let deltas = decode_chunk(p).unwrap();
+        assert!(matches!(deltas[0], ChatDelta::Role));
+        assert!(matches!(&deltas[1], ChatDelta::Content { text } if text == "hi"));
+        // No tool-call deltas emitted for a null list.
+        assert_eq!(deltas.len(), 2);
+    }
+
+    #[test]
+    fn tolerates_null_choices() {
+        // Same class of bug on the envelope's `choices` array.
+        let p = r#"{"choices":null,"usage":{"prompt_tokens":3,"completion_tokens":1}}"#;
+        let deltas = decode_chunk(p).unwrap();
+        // choices null → treated as empty → trailing usage still emits Finish.
+        assert!(matches!(
+            &deltas[0],
+            ChatDelta::Finish { usage: Some(u), .. } if u.input_tokens == 3
+        ));
+    }
+
+    #[test]
+    fn tolerates_null_choices_no_usage() {
+        // Null choices with no usage → no deltas, no error (stream continues).
+        let p = r#"{"choices":null}"#;
+        let deltas = decode_chunk(p).unwrap();
+        assert!(deltas.is_empty());
+    }
+
+    #[test]
+    fn tool_call_without_index_falls_back_to_array_position() {
+        // Gemini-via-gateway omits `index` on tool-call deltas. A required
+        // `index` field aborted the whole turn with "missing field `index`";
+        // the decoder must fall back to the tool call's position instead.
+        let p = r#"{"choices":[{"delta":{"tool_calls":[{"id":"call_1","function":{"name":"todo","arguments":"{"}}]}}]}"#;
+        let deltas = decode_chunk(p).unwrap();
+        assert!(matches!(
+            &deltas[0],
+            ChatDelta::ToolCallStart { call_id, name, index }
+                if call_id == "call_1" && name == "todo" && *index == 0
+        ));
+        assert!(matches!(
+            &deltas[1],
+            ChatDelta::ToolCallArgsDelta { index, .. } if *index == 0
+        ));
+    }
+
+    #[test]
+    fn two_indexless_tool_calls_get_distinct_positions() {
+        // Parallel tool calls in one chunk with no `index` must not collide —
+        // array position keeps them on separate BTreeMap keys downstream.
+        let p = r#"{"choices":[{"delta":{"tool_calls":[
+            {"id":"a","function":{"name":"read","arguments":"{}"}},
+            {"id":"b","function":{"name":"glob","arguments":"{}"}}
+        ]}}]}"#;
+        let deltas = decode_chunk(p).unwrap();
+        let starts: Vec<usize> = deltas
+            .iter()
+            .filter_map(|d| match d {
+                ChatDelta::ToolCallStart { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(starts, vec![0, 1]);
     }
 }

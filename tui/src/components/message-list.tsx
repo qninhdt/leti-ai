@@ -17,8 +17,6 @@ export interface MessageListProps {
   accent: string;
   /// Model label for the assistant footer.
   model: string;
-  /// Permission mode label for the assistant footer.
-  mode: string;
   planMode?: boolean;
 }
 
@@ -42,7 +40,6 @@ export function MessageList(props: MessageListProps) {
                   message={message}
                   accent={props.accent}
                   model={props.model}
-                  mode={props.mode}
                 />
               }
             >

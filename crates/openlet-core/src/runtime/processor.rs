@@ -174,7 +174,16 @@ impl Processor {
             }
             ChatDelta::Finish { reason, usage } => {
                 state.usage = usage.or(state.usage);
-                state.finish = Some(reason);
+                // A stream carries exactly one real finish_reason. With
+                // stream_options.include_usage set, the provider sends a
+                // trailing usage-only chunk (choices: []) whose finish reason
+                // the decoder fabricates as EndTurn. Keeping the FIRST reason
+                // stops that synthetic EndTurn from downgrading a tool_use
+                // turn — otherwise the loop sees end_turn and returns before
+                // dispatching the tool, so the model never reads the result.
+                if state.finish.is_none() {
+                    state.finish = Some(reason);
+                }
                 flush_into_parts(&mut state, &mut parts)?;
             }
         }

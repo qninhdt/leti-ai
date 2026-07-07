@@ -167,6 +167,7 @@ async fn session_extensions_round_trip_canonical_cloud_shape() {
         parent_session_id: None,
         permission_mode: None,
         extensions: extensions.clone(),
+        user_questions: true,
     })
     .expect("serialize CreateSessionDto");
 

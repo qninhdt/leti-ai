@@ -16,7 +16,7 @@ use crate::error::ConfigError;
 pub struct Config {
     pub bind_addr: String,
     pub data_dir: PathBuf,
-    pub openrouter_api_key: Option<SecretString>,
+    pub openai_api_key: Option<SecretString>,
     pub default_model: String,
     pub permission_ruleset_path: Option<PathBuf>,
     pub log_format: LogFormat,
@@ -49,7 +49,7 @@ impl Config {
             .map(|s| expand_tilde(&s))
             .unwrap_or_else(|_| default_data_dir());
 
-        let openrouter_api_key = env::var("OPENROUTER_API_KEY").ok().map(SecretString::from);
+        let openai_api_key = env::var("OPENAI_API_KEY").ok().map(SecretString::from);
 
         let default_model = env::var("OPENLET_DEFAULT_MODEL")
             .unwrap_or_else(|_| "anthropic/claude-sonnet-4-6".to_string());
@@ -76,7 +76,7 @@ impl Config {
         Ok(Self {
             bind_addr,
             data_dir,
-            openrouter_api_key,
+            openai_api_key,
             default_model,
             permission_ruleset_path,
             log_format,

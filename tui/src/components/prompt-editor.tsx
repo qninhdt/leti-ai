@@ -12,10 +12,12 @@ import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { createPromptSubmit } from "../render/use-prompt-submit.js";
 import { createMentionAutocomplete } from "../hooks/use-mention-autocomplete.js";
+import { createSlashAutocomplete } from "../hooks/use-slash-autocomplete.js";
 import { PromptMetaRow } from "./prompt-meta-row.js";
 import { PromptShelf } from "./prompt-shelf.js";
 import { PromptHintRow } from "./prompt-hint-row.js";
 import { FileAutocomplete } from "../dialogs/file-autocomplete.js";
+import { SlashAutocomplete } from "../dialogs/slash-autocomplete.js";
 import { PROMPT_BODY_BORDER } from "../utils/border-chars.js";
 import { formatTokens, formatUsd } from "../utils/format.js";
 import { placeholderText, randomPlaceholderIndex } from "../utils/placeholder-rotation.js";
@@ -49,6 +51,7 @@ export function PromptEditor() {
   let interruptTimer: ReturnType<typeof setTimeout> | undefined;
 
   const mention = createMentionAutocomplete(() => input);
+  const slash = createSlashAutocomplete(() => input, runtime);
 
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
   const sessions = useStoreSelector((s) => s.sessions);
@@ -170,6 +173,35 @@ export function PromptEditor() {
         return;
       }
     }
+    if (slash.popupOpen()) {
+      if (event.name === "up") {
+        event.preventDefault();
+        slash.setIndex((i: number) => Math.max(0, i - 1));
+        return;
+      }
+      if (event.name === "down") {
+        event.preventDefault();
+        slash.setIndex((i: number) => Math.min(slash.suggestions().length - 1, i + 1));
+        return;
+      }
+      if (event.name === "return") {
+        // Run the highlighted command and clear the buffer — a slash prompt is
+        // a command invocation, not text to submit to the model.
+        event.preventDefault();
+        slash.runSelection();
+        return;
+      }
+      if (event.name === "tab") {
+        event.preventDefault();
+        slash.completeSelection();
+        return;
+      }
+      if (event.name === "escape") {
+        event.preventDefault();
+        slash.dismiss();
+        return;
+      }
+    }
     handleKey(event);
   };
 
@@ -232,6 +264,7 @@ export function PromptEditor() {
             onContentChange={() => {
               if (input && !input.isDestroyed) setValue(input.plainText);
               mention.refreshMention();
+              slash.refresh();
             }}
             onCursorChange={() => mention.refreshMention()}
             onKeyDown={onKeyDown}
@@ -246,6 +279,9 @@ export function PromptEditor() {
       </box>
       <Show when={mention.popupOpen()}>
         <FileAutocomplete query={mention.mentionQuery() ?? ""} files={mention.acFiles()} index={mention.acIndex()} />
+      </Show>
+      <Show when={slash.popupOpen()}>
+        <SlashAutocomplete query={slash.slashQuery() ?? ""} suggestions={slash.suggestions()} index={slash.index()} />
       </Show>
       <PromptShelf borderColor={accent()} />
       <PromptHintRow

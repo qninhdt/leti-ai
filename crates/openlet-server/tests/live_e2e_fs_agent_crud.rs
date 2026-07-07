@@ -5,11 +5,11 @@
 //! sequence requires a REAL model that advances the steps because it sees
 //! each tool result fed back into the next turn. So this tier is gated at
 //! RUNTIME: the real provider is used only when `OPENLET_LIVE_E2E=1` AND
-//! `OPENROUTER_API_KEY` are set; unset, the harness falls back to the scripted
+//! `OPENAI_API_KEY` are set; unset, the harness falls back to the scripted
 //! mock so `cargo test` makes no network calls (no `#[ignore]`).
 //!
 //! Run against real OpenRouter:
-//!   OPENLET_LIVE_E2E=1 OPENROUTER_API_KEY=... \
+//!   OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... \
 //!     cargo test -p openlet-server --test live_e2e_fs_agent_crud
 //!
 //! Zero mocks of fs/storage/permission: the real `LocalFilesystem`,
