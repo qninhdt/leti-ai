@@ -91,7 +91,7 @@ fn synthetic_request_and_verbatim_summary_substituted() {
 
     let mut parts = HashMap::new();
     parts.insert(original.id, vec![text_part("the original turn")]);
-    parts.insert(synth.id, vec![text_part(COMPACTION_REQUEST)]);
+    parts.insert(synth.id, vec![text_part(&COMPACTION_REQUEST)]);
     parts.insert(verbatim.id, vec![text_part("- Goal: x\n- Files: y")]);
     parts.insert(
         comp_owner.id,

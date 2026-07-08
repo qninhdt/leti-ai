@@ -46,6 +46,7 @@ pdf-extract = "=0.7.7"
 # Content-based MIME sniffing for the multipart upload route. F3.5 — we
 # never trust the client-supplied Content-Type.
 infer = "0.16"
+tera.workspace = true
 
 [lints]
 workspace = true

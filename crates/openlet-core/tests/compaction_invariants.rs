@@ -136,7 +136,7 @@ proptest! {
         let proj = build_compaction_projection(&convo, keep);
 
         // Exactly one COMPACTION_REQUEST.
-        let req_count = proj.iter().filter(|m| m.content == COMPACTION_REQUEST).count();
+        let req_count = proj.iter().filter(|m| m.content == *COMPACTION_REQUEST).count();
         prop_assert_eq!(req_count, 1, "expected exactly one COMPACTION_REQUEST, got {}", req_count);
 
         // If a system message was present, it's at index 0.
@@ -159,7 +159,7 @@ proptest! {
         // ahead of the kept tail).
         let req_idx = proj
             .iter()
-            .position(|m| m.content == COMPACTION_REQUEST)
+            .position(|m| m.content == *COMPACTION_REQUEST)
             .expect("request present");
         if body.len() > keep {
             let tail_start = body.len() - keep;

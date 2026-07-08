@@ -14,7 +14,7 @@
 //! - We keep `PRESERVE_RECENT = 4` total messages. Conservative for short
 //!   multi-tool turns.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use crate::adapters::event_sink::EventSink;
 use crate::adapters::memory_store::MemoryStore;
@@ -33,16 +33,13 @@ pub const PRESERVE_RECENT: usize = 4;
 /// Synthetic user prompt asking the model to summarize older messages.
 /// Phrased to preserve goal/decisions/files while dropping tool-output
 /// bodies.
-pub const COMPACTION_REQUEST: &str = "Summarize the conversation history above. Preserve:\n\
-- The user's overall goal\n\
-- Key decisions and constraints established\n\
-- Files read or modified (paths only)\n\
-- Tool errors encountered and resolutions\nDrop:\n\
-- Verbose tool output bodies\n\
-- Code snippets superseded by later edits\n\
-- Idle chatter\n\
-Output format: bullet points under headers (Goal, Decisions, Files, Errors).\n\
-Limit: 500 words.";
+///
+/// Sourced from the embedded `ops/compaction.md` Tera template and
+/// rendered once on first use. Exposed as a `LazyLock<String>` (deref to
+/// `&str`) so the many compare-by-content call sites and tests keep a
+/// single canonical value without re-rendering.
+pub static COMPACTION_REQUEST: LazyLock<String> =
+    LazyLock::new(crate::runtime::prompt::compaction_request);
 
 /// Decision returned by `should_compact`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,11 +343,11 @@ mod tests {
         // First message must be the system prompt.
         assert!(matches!(proj[0].role, LlmRole::System));
         // The COMPACTION_REQUEST must appear somewhere.
-        assert!(proj.iter().any(|m| m.content == COMPACTION_REQUEST));
+        assert!(proj.iter().any(|m| m.content == *COMPACTION_REQUEST));
         // The most-recent message (kept) must appear after the request.
         let req_idx = proj
             .iter()
-            .position(|m| m.content == COMPACTION_REQUEST)
+            .position(|m| m.content == *COMPACTION_REQUEST)
             .unwrap();
         let recent_idx = proj.iter().rposition(|m| m.content == "recent").unwrap();
         assert!(

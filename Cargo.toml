@@ -99,6 +99,11 @@ walkdir = "2.5"
 ignore = "0.4"
 globset = "0.4"
 similar = "2.6"
+
+# Prompt templating (Jinja2-style). Pinned exact: 2.0 is a from-scratch
+# rewrite with a different API surface than 1.x; a minor bump could shift
+# it again. Templates are embedded at compile time via include_str!.
+tera = "=2.0.0"
 tempfile = "3.10"
 nix = { version = "0.29", default-features = false, features = ["signal"] }
 
