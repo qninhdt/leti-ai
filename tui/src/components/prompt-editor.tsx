@@ -14,6 +14,7 @@ import { createPromptSubmit } from "../render/use-prompt-submit.js";
 import { createMentionAutocomplete } from "../hooks/use-mention-autocomplete.js";
 import { createSlashAutocomplete } from "../hooks/use-slash-autocomplete.js";
 import { PromptMetaRow } from "./prompt-meta-row.js";
+import { ContextBar } from "./context-bar.js";
 import { PromptShelf } from "./prompt-shelf.js";
 import { PromptHintRow } from "./prompt-hint-row.js";
 import { FileAutocomplete } from "../dialogs/file-autocomplete.js";
@@ -87,6 +88,18 @@ export function PromptEditor() {
     const raw = session()?.cost_decimal_str;
     if (!raw) return undefined;
     return Number.parseFloat(raw) > 0 ? formatUsd(raw) : undefined;
+  });
+
+  // Latest provider-reported prompt tokens — the compaction anchor, so the
+  // context bar tracks the same number should_compact does. Undefined before
+  // the first turn returns usage (bar degrades to window size only).
+  const contextTokens = createMemo(() => {
+    const list = messages();
+    for (let i = list.length - 1; i >= 0; i--) {
+      const tok = list[i]?.step_finish?.context_tokens;
+      if (tok && tok > 0) return tok;
+    }
+    return undefined;
   });
 
   createEffect(on(activeSessionId, () => setPlaceholderIdx(randomPlaceholderIndex()), { defer: true }));
@@ -274,7 +287,22 @@ export function PromptEditor() {
               input = r;
             }}
           />
-          <PromptMetaRow agent={agent()} model={model()} accent={accent()} />
+          <PromptMetaRow
+            agent={agent()}
+            model={model()}
+            accent={accent()}
+            right={
+              <Show when={agent()}>
+                {(a) => (
+                  <ContextBar
+                    used={contextTokens()}
+                    contextWindow={a().context_window ?? 0}
+                    compactionThreshold={a().compaction_threshold ?? 0.8}
+                  />
+                )}
+              </Show>
+            }
+          />
         </box>
       </box>
       <Show when={mention.popupOpen()}>

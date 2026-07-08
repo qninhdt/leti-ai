@@ -24,6 +24,12 @@ export interface AgentDto {
   // Effective serve model for this agent's turns (config.default_model).
   // Always present from the server; optional here for forward-compat.
   model?: string | null;
+  // Total token budget of the agent's model — denominator for the context bar.
+  // Optional here for forward-compat with older servers; degrade to no bar.
+  context_window?: number;
+  // Fraction of context_window at which auto-compaction fires (e.g. 0.8), so
+  // the bar can mark "left until compact" rather than the hard limit.
+  compaction_threshold?: number;
 }
 
 export interface SessionDto {

@@ -173,9 +173,19 @@ export const useStore = createStore<State>((set) => ({
           const totalUsage = ev.usage
             ? ev.usage.input_tokens + ev.usage.output_tokens + ev.usage.reasoning_tokens
             : undefined;
+          // Prompt tokens are the compaction anchor: `should_compact` compares
+          // `usage.input_tokens` (the prompt size the model last measured)
+          // against `context_window * compaction_threshold`. The context bar
+          // uses the same number so it and the real trigger stay consistent.
+          const contextTokens = ev.usage ? ev.usage.input_tokens : undefined;
           const messages = updateMessageById(s.messages, ev.session_id, ev.message_id, (msg) => ({
             ...msg,
-            step_finish: { reason: ev.reason, usage_total: totalUsage, cost: ev.cost_decimal_str },
+            step_finish: {
+              reason: ev.reason,
+              usage_total: totalUsage,
+              cost: ev.cost_decimal_str,
+              context_tokens: contextTokens,
+            },
           }));
           const session = s.sessions[ev.session_id];
           const sessions =

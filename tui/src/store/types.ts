@@ -36,7 +36,7 @@ export interface PartView extends PartDto {
 
 export interface MessageView extends MessageDto {
   parts: PartView[];
-  step_finish?: { reason: string; usage_total?: number; cost?: string };
+  step_finish?: { reason: string; usage_total?: number; cost?: string; context_tokens?: number };
   /// File-mention badge chips for a user message. Carried on the optimistic
   /// user message and preserved when the SSE echo arrives.
   badges?: FileBadge[];
