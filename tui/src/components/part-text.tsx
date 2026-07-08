@@ -1,9 +1,15 @@
-// Assistant text part, ported from OpenCode's `TextPart`
-// (`routes/session/index.tsx:1577`). Renders the part's text through the
-// engine's rich `<markdown>` element (confirmed present in the Solid catalogue)
-// at `paddingLeft=3 marginTop=1`, streaming-aware. While a part streams its
-// finalized `text` is empty and the live tokens accumulate in `buffer`; we feed
-// `text + buffer` so the markdown updates as deltas arrive.
+// Assistant text part. Renders the part's text through the engine's rich
+// `<markdown>` element at `paddingLeft=3 marginTop=1`, streaming-aware. While a
+// part streams its finalized `text` is empty and the live tokens accumulate in
+// `buffer`; we feed `text + buffer` so the markdown updates as deltas arrive.
+//
+// internalBlockMode="top-level" is load-bearing for smooth streaming: it keeps
+// every top-level markdown block (paragraph, heading, list, fenced code) as its
+// own child renderable, so appending a token only re-parses/re-highlights the
+// trailing block while all prior blocks keep their exact renderable instances
+// and are skipped by reference. The default "coalesced" mode merges the whole
+// message into a single block that gets fully re-highlighted every token —
+// which reads as flicker/lag on every keystroke of streamed text.
 
 import { Show } from "solid-js";
 
@@ -26,6 +32,7 @@ export function PartText(props: PartTextProps) {
         <markdown
           content={content()}
           streaming={props.part.status !== "complete"}
+          internalBlockMode="top-level"
           conceal={true}
           concealCode={false}
           syntaxStyle={syntaxStyle}
