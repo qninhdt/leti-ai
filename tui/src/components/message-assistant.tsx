@@ -8,8 +8,19 @@
 // repeating it on every turn was noise. It lives in the sidebar instead. A
 // tool_result part is folded into its tool_call's block by matching
 // tool_call_id, never rendered as a standalone row.
+//
+// Streaming reconciliation is why the parts loop is <Index> + <Switch>, not
+// <For> + a plain switch. The store hands us a NEW parts array (and new part
+// objects) on every streamed token. <For> keys by reference, so it would
+// dispose and rebuild each part's component — and the markdown renderable it
+// owns — on every token, which reads as flicker/lag. <Index> keys by position:
+// the streaming text part keeps ONE PartText instance whose `content` prop
+// updates in place, so the markdown renderable's incremental parser survives.
+// <Switch>/<Match> on part().kind keeps the dispatch reactive, since a part at
+// a given position can change kind (a streaming text part is replaced by the
+// hydrated, correctly-typed part on the next GET /messages).
 
-import { For, Show, createMemo } from "solid-js";
+import { Index, Show, Switch, Match, createMemo } from "solid-js";
 
 import { theme } from "../theme/index.js";
 import { formatUsd } from "../utils/format.js";
@@ -26,6 +37,7 @@ import { ToolTodo } from "./tool-todo.js";
 import { ToolAskUser } from "./tool-ask-user.js";
 import { CompactionDivider } from "./compaction-divider.js";
 
+import type { Accessor } from "solid-js";
 import type { MessageView, PartView } from "../store/index.js";
 
 export interface MessageAssistantProps {
@@ -108,83 +120,100 @@ export function MessageAssistant(props: MessageAssistantProps) {
     return ids;
   });
 
-  const renderPart = (part: PartView) => {
-    switch (part.kind) {
-      case "text":
-        return <PartText part={part} />;
-      case "reasoning":
-        return <PartReasoning part={part} />;
-      case "compaction":
-        return <CompactionDivider part={part} />;
-      case "tool_call": {
-        const name = (part.tool_name ?? "").toLowerCase();
-        // Todo renders as a checklist from its args, not a generic tool line.
-        if (name === "todo") {
-          return <ToolTodo part={part} />;
-        }
-        // ask_user renders as a question block (options + chosen answer)
-        // instead of raw JSON. The live selection UI is a separate overlay.
-        if (name === "ask_user") {
-          const byId = resultByCallId();
-          const out =
-            (part.tool_call_id ? byId.get(part.tool_call_id) : undefined) ??
-            (part.id ? byId.get(part.id) : undefined) ??
-            part.tool_result;
-          return <ToolAskUser part={part} result={out} />;
-        }
-        const visual = toolVisual(part.tool_name);
-        if (visual.template === "block") {
-          const byId = resultByCallId();
-          const out =
-            (part.tool_call_id ? byId.get(part.tool_call_id) : undefined) ??
-            (part.id ? byId.get(part.id) : undefined) ??
-            part.tool_result;
-          const title = `# ${toolBlockTitle(part.tool_name, part.tool_args)}`;
-          // edit/write emit a structured FileDiff in their result body; render
-          // it as a colored diff card. A write "create" has no diff and falls
-          // through to the generic block card below.
-          const diff = parseFileDiff(out);
-          if (diff) {
-            return <ToolDiff part={part} title={title} diff={diff} />;
-          }
-          return (
-            <ToolBlock
-              part={part}
-              title={title}
-              output={formatToolOutput(part.tool_name, resultText(out))}
-            />
-          );
-        }
-        return (
+  // Result body a tool_call part should display: prefer the folded result
+  // matched by call id, falling back to any result carried on the part itself.
+  const outFor = (p: PartView): unknown => {
+    const byId = resultByCallId();
+    return (
+      (p.tool_call_id ? byId.get(p.tool_call_id) : undefined) ??
+      (p.id ? byId.get(p.id) : undefined) ??
+      p.tool_result
+    );
+  };
+
+  // A tool_call part's dispatch (todo / ask_user / block-diff / block / inline),
+  // kept reactive so a result folded in by a later hydration flips the branch
+  // (e.g. block card → diff card) without recreating the whole message subtree.
+  const ToolCallPart = (p: Accessor<PartView>) => {
+    const name = () => (p().tool_name ?? "").toLowerCase();
+    const out = () => outFor(p());
+    const diff = () => parseFileDiff(out());
+    const title = () => `# ${toolBlockTitle(p().tool_name, p().tool_args)}`;
+    return (
+      <Switch
+        fallback={
           <ToolInline
-            part={part}
-            summary={`${part.tool_name ?? "tool"} ${toolLabel(part.tool_name, part.tool_args)}`.trim()}
+            part={p()}
+            summary={`${p().tool_name ?? "tool"} ${toolLabel(p().tool_name, p().tool_args)}`.trim()}
           />
-        );
-      }
-      case "tool_result": {
-        // Suppress a result row when a BLOCK tool_call folds it into its card,
-        // or when the todo checklist already renders the call. Inline-tool
-        // results, and orphans with no matching call, still render so output is
-        // never silently dropped.
-        const name = part.tool_call_id ? toolNameByCallId().get(part.tool_call_id) : undefined;
-        const formatted = formatToolOutput(name, resultText(part.tool_result));
-        return (
-          <Show when={!part.tool_call_id || !suppressedResultIds().has(part.tool_call_id)}>
-            <ToolInline part={part} summary={formatted.split("\n")[0]?.slice(0, 80) ?? ""} />
+        }
+      >
+        {/* Todo renders as a checklist from its args, not a generic tool line. */}
+        <Match when={name() === "todo"}>
+          <ToolTodo part={p()} />
+        </Match>
+        {/* ask_user renders as a question block (options + chosen answer)
+            instead of raw JSON. The live selection UI is a separate overlay. */}
+        <Match when={name() === "ask_user"}>
+          <ToolAskUser part={p()} result={out()} />
+        </Match>
+        <Match when={toolVisual(p().tool_name).template === "block"}>
+          {/* edit/write emit a structured FileDiff in their result body; render
+              it as a colored diff card. A write "create" has no diff and falls
+              back to the generic block card. */}
+          <Show
+            when={diff()}
+            fallback={
+              <ToolBlock
+                part={p()}
+                title={title()}
+                output={formatToolOutput(p().tool_name, resultText(out()))}
+              />
+            }
+          >
+            {(d) => <ToolDiff part={p()} title={title()} diff={d()} />}
           </Show>
-        );
-      }
-      default:
-        return null;
-    }
+        </Match>
+      </Switch>
+    );
+  };
+
+  // A standalone tool_result row. Suppressed when a BLOCK tool_call folds it
+  // into its card, or when todo/ask_user own the call's display. Inline-tool
+  // results, and orphans with no matching call, still render so output is never
+  // silently dropped.
+  const ToolResultPart = (p: Accessor<PartView>) => {
+    const name = () => (p().tool_call_id ? toolNameByCallId().get(p().tool_call_id!) : undefined);
+    const summary = () =>
+      formatToolOutput(name(), resultText(p().tool_result)).split("\n")[0]?.slice(0, 80) ?? "";
+    return (
+      <Show when={!p().tool_call_id || !suppressedResultIds().has(p().tool_call_id!)}>
+        <ToolInline part={p()} summary={summary()} />
+      </Show>
+    );
   };
 
   const finish = () => props.message.step_finish;
 
   return (
     <box flexDirection="column">
-      <For each={props.message.parts}>{(part) => renderPart(part)}</For>
+      <Index each={props.message.parts}>
+        {(part) => (
+          <Switch>
+            <Match when={part().kind === "text"}>
+              <PartText part={part()} />
+            </Match>
+            <Match when={part().kind === "reasoning"}>
+              <PartReasoning part={part()} />
+            </Match>
+            <Match when={part().kind === "compaction"}>
+              <CompactionDivider part={part()} />
+            </Match>
+            <Match when={part().kind === "tool_call"}>{ToolCallPart(part)}</Match>
+            <Match when={part().kind === "tool_result"}>{ToolResultPart(part)}</Match>
+          </Switch>
+        )}
+      </Index>
       <Show when={finish()}>
         {(f) => (
           <box paddingLeft={3} marginTop={1} flexDirection="row" gap={1}>
