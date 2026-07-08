@@ -10,6 +10,7 @@ import { useStore } from "../store/index.js";
 import { useStoreSelector } from "./store-bridge.js";
 import { useRuntime } from "./app-context.js";
 import { createHydrationController } from "./hydration-controller.js";
+import { createEventPump } from "./event-pump.js";
 
 import type { OpenletClient } from "../api/client.js";
 
@@ -40,16 +41,27 @@ export function useBootstrap(): void {
     // carries only part ids.
     if (sessionId) hydration.refresh(sessionId);
 
+    // Coalesce the per-token part_delta flood to ~30fps before it hits the
+    // store; every other event flushes the buffer first, then applies. The
+    // pump is per-connection so its timer is torn down with the stream.
+    // hydration.onEvent stays on the raw event (it only reacts to
+    // session_status/message_created, never deltas) so hydration timing is
+    // unchanged.
+    const pump = createEventPump((ev) => useStore.getState().applyEvent(ev));
+
     const sse = connectSse({
       baseUrl: runtime.baseUrl,
       sessionId,
       token: runtime.token,
       onEvent: (ev) => {
-        useStore.getState().applyEvent(ev);
+        pump.push(ev);
         hydration.onEvent(ev);
       },
       onState: (status, detail) => useStore.getState().setConn(status, detail),
     });
-    onCleanup(() => sse.close());
+    onCleanup(() => {
+      sse.close();
+      pump.dispose();
+    });
   });
 }
