@@ -89,15 +89,23 @@ pub fn compute_line_diff(old: &str, new: &str, line_cap: usize) -> FileDiff {
         let mut lines: Vec<DiffLine> = Vec::new();
         let mut old_start = 0usize;
         let mut new_start = 0usize;
-        let mut saw_anchor = false;
 
         for op in group {
             for change in diff.iter_changes(op) {
-                if !saw_anchor {
-                    // 1-based line numbers of the hunk's first line.
-                    old_start = change.old_index().map_or(0, |i| i + 1);
-                    new_start = change.new_index().map_or(0, |i| i + 1);
-                    saw_anchor = true;
+                // 1-based line number of the hunk's first line on each side,
+                // captured independently: a hunk that opens with a Delete has
+                // no new_index on that first change (and an Insert has no
+                // old_index), so anchor each side on the first change that
+                // carries an index for it rather than the first change overall.
+                if old_start == 0 {
+                    if let Some(i) = change.old_index() {
+                        old_start = i + 1;
+                    }
+                }
+                if new_start == 0 {
+                    if let Some(i) = change.new_index() {
+                        new_start = i + 1;
+                    }
                 }
                 let kind = match change.tag() {
                     ChangeTag::Insert => {
