@@ -6,11 +6,13 @@
 //! inventory/macro magic — registration is a manual `register_tools()`.
 
 pub mod builtins;
+pub mod diff;
 pub mod dispatcher;
 pub mod erased;
 pub mod read_history;
 pub mod registry;
 
+pub use diff::{DiffHunk, DiffLine, DiffLineKind, FileDiff, compute_line_diff};
 pub use dispatcher::{ToolDispatchResult, ToolInvocation, dispatch_batch};
 pub use erased::ErasedTool;
 pub use read_history::ReadHistory;

@@ -32,6 +32,9 @@ pub struct EditInput {
 pub struct EditOutput {
     pub path: String,
     pub replacements: usize,
+    /// Line-level diff of the change, for TUI rendering. Rides through the
+    /// tool-result JSON body — no protocol change (see `tools::diff`).
+    pub diff: crate::tools::diff::FileDiff,
 }
 
 pub struct EditTool;
@@ -100,6 +103,12 @@ impl Tool for EditTool {
             original.replacen(&input.find, &input.replace, 1)
         };
 
+        let diff = crate::tools::diff::compute_line_diff(
+            &original,
+            &new_content,
+            crate::tools::diff::DEFAULT_LINE_CAP,
+        );
+
         let body = Bytes::from(new_content.into_bytes());
         let _meta = ctx
             .fs
@@ -109,6 +118,7 @@ impl Tool for EditTool {
         Ok(EditOutput {
             path: input.path.display().to_string(),
             replacements: if input.replace_all { occurrences } else { 1 },
+            diff,
         })
     }
 }

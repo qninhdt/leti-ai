@@ -20,6 +20,8 @@ import { PartText } from "./part-text.js";
 import { PartReasoning } from "./part-reasoning.js";
 import { ToolInline } from "./tool-inline.js";
 import { ToolBlock } from "./tool-block.js";
+import { ToolDiff } from "./tool-diff.js";
+import { parseFileDiff } from "./tool-diff-parse.js";
 import { ToolTodo } from "./tool-todo.js";
 import { ToolAskUser } from "./tool-ask-user.js";
 
@@ -134,10 +136,18 @@ export function MessageAssistant(props: MessageAssistantProps) {
             (part.tool_call_id ? byId.get(part.tool_call_id) : undefined) ??
             (part.id ? byId.get(part.id) : undefined) ??
             part.tool_result;
+          const title = `# ${toolBlockTitle(part.tool_name, part.tool_args)}`;
+          // edit/write emit a structured FileDiff in their result body; render
+          // it as a colored diff card. A write "create" has no diff and falls
+          // through to the generic block card below.
+          const diff = parseFileDiff(out);
+          if (diff) {
+            return <ToolDiff part={part} title={title} diff={diff} />;
+          }
           return (
             <ToolBlock
               part={part}
-              title={`# ${toolBlockTitle(part.tool_name, part.tool_args)}`}
+              title={title}
               output={formatToolOutput(part.tool_name, resultText(out))}
             />
           );
