@@ -45,6 +45,19 @@ describe("serverPartToView", () => {
     expect(serverPartToView({ kind: "step_finish", id: "p1", reason: "stop" })).toBeNull();
     expect(serverPartToView({ kind: "step_start", id: "p2" })).toBeNull();
   });
+
+  it("surfaces a compaction marker with its folded token count", () => {
+    const v = serverPartToView({
+      kind: "compaction",
+      id: "p1",
+      summary: "earlier turns summarized",
+      compacted_message_ids: ["m0", "m1"],
+      original_token_count: 4200,
+    });
+    expect(v).not.toBeNull();
+    expect(v?.kind).toBe("compaction");
+    expect(v?.original_token_count).toBe(4200);
+  });
 });
 
 describe("hydrateMessages", () => {
@@ -132,5 +145,49 @@ describe("hydrateMessages", () => {
     ];
     const out = hydrateMessages([typed], server);
     expect(out[0]!.parts[0]!.text).toBe("explain @a.ts");
+  });
+
+  it("hides messages a compaction superseded but keeps the marker's divider", () => {
+    // GET /messages returns the RAW append-only log: the original turns, the
+    // synthetic "Summarize…" user request, and the raw summary assistant
+    // message — the last two are superseded by the compaction marker and must
+    // not render as stray turns beside the divider.
+    const server: ServerMessageDto[] = [
+      { id: "u0", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "u0p", text: "old question" }] },
+      { id: "synth", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "sp", text: "Summarize the conversation history above." }] },
+      { id: "sum", session_id: "s1", role: "assistant", created_at: "t", parts: [{ kind: "text", id: "sump", text: "Goal: …" }] },
+      {
+        id: "comp",
+        session_id: "s1",
+        role: "assistant",
+        created_at: "t",
+        parts: [{ kind: "compaction", id: "cp", summary: "Goal: …", compacted_message_ids: ["u0", "synth", "sum"], original_token_count: 3200 }],
+      },
+      { id: "u1", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "u1p", text: "next question" }] },
+    ];
+    const out = hydrateMessages([], server);
+    // Superseded turns dropped; marker + surrounding real turns survive.
+    expect(out.map((m) => m.id)).toEqual(["comp", "u1"]);
+    expect(out[0]!.parts[0]!.kind).toBe("compaction");
+    expect(out[0]!.parts[0]!.original_token_count).toBe(3200);
+  });
+
+  it("keeps superseded call+result together (no orphaned result) when dropped", () => {
+    // A superseded assistant turn that issued a tool call: filtering the whole
+    // message must take its tool result with it, not strand the result as an
+    // orphan standalone row.
+    const server: ServerMessageDto[] = [
+      assistantWithCall("a0", "c0", "read"),
+      toolResult("t0", "c0", "file body"),
+      {
+        id: "comp",
+        session_id: "s1",
+        role: "assistant",
+        created_at: "t",
+        parts: [{ kind: "compaction", id: "cp", summary: "s", compacted_message_ids: ["a0", "t0"], original_token_count: 100 }],
+      },
+    ];
+    const out = hydrateMessages([], server);
+    expect(out.map((m) => m.id)).toEqual(["comp"]);
   });
 });

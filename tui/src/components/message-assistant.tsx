@@ -24,6 +24,7 @@ import { ToolDiff } from "./tool-diff.js";
 import { parseFileDiff } from "./tool-diff-parse.js";
 import { ToolTodo } from "./tool-todo.js";
 import { ToolAskUser } from "./tool-ask-user.js";
+import { CompactionDivider } from "./compaction-divider.js";
 
 import type { MessageView, PartView } from "../store/index.js";
 
@@ -113,6 +114,8 @@ export function MessageAssistant(props: MessageAssistantProps) {
         return <PartText part={part} />;
       case "reasoning":
         return <PartReasoning part={part} />;
+      case "compaction":
+        return <CompactionDivider part={part} />;
       case "tool_call": {
         const name = (part.tool_name ?? "").toLowerCase();
         // Todo renders as a checklist from its args, not a generic tool line.

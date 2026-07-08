@@ -44,9 +44,19 @@ export function serverPartToView(p: ServerPartDto): PartView | null {
     }
     case "plan":
       return { ...base(p.id), kind: "text", text: p.plan };
-    // step_start / step_finish / compaction / image / document carry no
-    // inline body here — step_finish drives the footer via the step_finished
-    // SSE event, images surface via attachment badges.
+    case "compaction":
+      // Surface the compaction marker so the transcript shows a boundary
+      // divider instead of silently dropping the superseded turns. The
+      // summary body itself isn't rendered inline (the model sees it via the
+      // projection); the divider only reports the folded token count.
+      return {
+        ...base(p.id),
+        kind: "compaction",
+        original_token_count: p.original_token_count,
+      };
+    // step_start / step_finish / image / document carry no inline body here —
+    // step_finish drives the footer via the step_finished SSE event, images
+    // surface via attachment badges.
     default:
       return null;
   }
@@ -110,6 +120,25 @@ function isStreaming(m: MessageView): boolean {
   return m.parts.some((p) => p.buffer.length > 0 || p.reasoning_buffer.length > 0);
 }
 
+/// Collect the message ids superseded by a compaction. `GET /messages` returns
+/// the RAW append-only log, which includes the synthetic "Summarize…" user turn
+/// and the raw summary assistant message that compaction persists — the backend
+/// hides these from the MODEL via the projection layer, but the transcript must
+/// hide them too or they render as stray turns beside the divider. Keyed on the
+/// typed `compacted_message_ids` the marker carries (never text-matched); the
+/// marker's own message is never in its list, so the divider survives the drop.
+function collectSuperseded(server: ServerMessageDto[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of server) {
+    for (const p of m.parts) {
+      if (p.kind === "compaction") {
+        for (const id of p.compacted_message_ids) ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
 /// Produce the merged message list for a session: server-authoritative folded
 /// messages, plus any store-only message the server hasn't persisted yet (the
 /// in-flight streaming turn). A message that is present on both sides keeps its
@@ -123,7 +152,12 @@ export function hydrateMessages(
   server: ServerMessageDto[],
 ): MessageView[] {
   const storeById = new Map(existing.map((m) => [m.id, m]));
-  const folded = foldToolResults(server.map(mapMessage));
+  // Drop messages a compaction superseded (the synthetic request + raw summary
+  // turn) so they don't render beside the divider. Done before folding so a
+  // superseded assistant message takes its own tool results with it.
+  const superseded = collectSuperseded(server);
+  const visible = server.filter((m) => !superseded.has(m.id));
+  const folded = foldToolResults(visible.map(mapMessage));
 
   const settled = folded.map((m) => {
     const store = storeById.get(m.id);

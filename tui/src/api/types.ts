@@ -45,7 +45,7 @@ export interface SessionDto {
 export interface PartDto {
   id: string;
   message_id: string;
-  kind: "text" | "reasoning" | "tool_call" | "tool_result" | "step_finish";
+  kind: "text" | "reasoning" | "tool_call" | "tool_result" | "step_finish" | "compaction";
   text?: string;
   tool_name?: string;
   tool_args?: unknown;
@@ -55,6 +55,9 @@ export interface PartDto {
   reason?: string;
   usage?: UsageDto;
   cost_decimal_str?: string;
+  // Present only on kind:"compaction" — the token count that was summarized
+  // away, shown on the transcript divider so the user sees the boundary.
+  original_token_count?: number;
 }
 
 export interface MessageDto {
