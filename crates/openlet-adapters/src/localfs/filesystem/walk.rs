@@ -67,7 +67,11 @@ pub(crate) async fn glob(
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .unwrap_or(SystemTime::UNIX_EPOCH);
-            hits.push((entry.path().to_path_buf(), mtime));
+            // Return workspace-relative paths per the `Filesystem` trait
+            // contract ("All paths are workspace-relative"). Leaking the
+            // absolute host path would both break that contract and expose
+            // the tempdir/cloud-mount prefix to the caller.
+            hits.push((rel.to_path_buf(), mtime));
         }
         match opts.sort {
             GlobSort::PathAsc => hits.sort_by(|a, b| a.0.cmp(&b.0)),

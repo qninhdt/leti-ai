@@ -271,6 +271,7 @@ impl LiveServer {
             permission_ruleset_path: None,
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
+            cloud_fs: None,
         };
 
         let runtime = Arc::new(ConversationRuntime::new(
@@ -300,8 +301,15 @@ impl LiveServer {
                 Some(s) => s.clone(),
                 None => Arc::new(StubSubagentSpawner),
             };
+        // Wire the in-process Monty python executor exactly like the server
+        // binary (main.rs passes `Some(python)`), so scenarios can drive the
+        // real `python` tool. Harmless for scenarios that never call it — it
+        // only adds the tool to the catalog.
+        let python: Arc<dyn openlet_core::tools::builtins::python::PythonExecutor> =
+            Arc::new(openlet_adapters::pyexec::MontyExecutor::new());
         let plugins = openlet_plugin_registry::all_plugins(
             shell.clone(),
+            Some(python),
             memory.clone(),
             task_registry.clone(),
             spawner,
@@ -933,6 +941,252 @@ impl CoreApi for NoopCoreApi {
         _: String,
         _: String,
     ) {
+    }
+}
+
+/// Build a minimal `ToolCtx` for running an executor (bash/python) directly
+/// from a test, outside the HTTP loop. Only `fs` + `cancel` carry real
+/// behavior — everything else is an all-permissive no-op — because the
+/// executors touch nothing else. Used by the debug→fix→verify test to re-run
+/// the model's repaired script through a FRESH executor (independent proof the
+/// fix actually executes, not just that the file changed).
+pub fn minimal_tool_ctx(
+    fs: Arc<dyn openlet_core::adapters::Filesystem>,
+) -> openlet_core::adapters::tool_executor::ToolCtx {
+    use openlet_core::adapters::tool_executor::ToolCtx;
+    use openlet_core::tools::ReadHistory;
+    use openlet_core::types::agent::AgentId;
+    use openlet_core::types::message::MessageId;
+    use openlet_core::types::permission::PermissionMode;
+    use openlet_core::types::session::SessionId;
+
+    ToolCtx {
+        session_id: SessionId::new(),
+        agent_id: AgentId::new(),
+        message_id: MessageId::new(),
+        call_id: "verify-rerun".into(),
+        fs,
+        mode: PermissionMode::Danger,
+        permission: Arc::new(AllowAllPerm),
+        events: Arc::new(NoopEventSink),
+        artifacts: Arc::new(DiscardArtifacts),
+        read_history: ReadHistory::new(),
+        cancel: CancellationToken::new(),
+        questions: Arc::new(openlet_core::runtime::QuestionRegistry::new()),
+        memory: Arc::new(NoopMemory),
+        task_registry: Arc::new(openlet_core::runtime::subagent::TaskRegistry::new(32)),
+        agent_registry: Arc::new(openlet_core::agent::AgentRegistry::new()),
+    }
+}
+
+struct AllowAllPerm;
+
+#[async_trait]
+impl openlet_core::adapters::permission_manager::PermissionManager for AllowAllPerm {
+    async fn check(
+        &self,
+        _: openlet_core::types::permission::PermissionCtx,
+        _: openlet_core::types::permission::PermissionRequest,
+    ) -> Result<openlet_core::types::permission::Decision, openlet_core::error::PermissionError>
+    {
+        Ok(openlet_core::types::permission::Decision::Allow)
+    }
+    async fn reply(
+        &self,
+        _: openlet_core::types::permission::AskId,
+        _: openlet_core::types::permission::Decision,
+    ) -> Result<(), openlet_core::error::PermissionError> {
+        Ok(())
+    }
+    async fn cancel_ask(
+        &self,
+        _: openlet_core::types::permission::AskId,
+    ) -> Result<(), openlet_core::error::PermissionError> {
+        Ok(())
+    }
+    async fn record_always(
+        &self,
+        _: openlet_core::types::permission::AlwaysScope,
+        _: openlet_core::types::permission::PermissionRule,
+    ) -> Result<(), openlet_core::error::PermissionError> {
+        Ok(())
+    }
+    fn take_deferred(
+        &self,
+        _: openlet_core::types::permission::AskId,
+    ) -> Option<openlet_core::permission::Deferred<openlet_core::types::permission::Decision>> {
+        None
+    }
+    fn peek_session_id(
+        &self,
+        _: openlet_core::types::permission::AskId,
+    ) -> Option<openlet_core::types::session::SessionId> {
+        None
+    }
+    async fn accept_ask(
+        &self,
+        _: openlet_core::types::permission::AskId,
+        _: openlet_core::types::permission::AlwaysScope,
+        _: openlet_core::types::permission::PermissionAction,
+    ) -> Result<(), openlet_core::error::PermissionError> {
+        Ok(())
+    }
+}
+
+struct NoopEventSink;
+
+#[async_trait]
+impl openlet_core::adapters::event_sink::EventSink for NoopEventSink {
+    async fn publish(
+        &self,
+        _: openlet_core::types::event::AgentEvent,
+        _: openlet_core::adapters::event_sink::Persistence,
+    ) -> Result<(), openlet_core::error::EventError> {
+        Ok(())
+    }
+    fn subscribe(
+        &self,
+        _: openlet_core::types::event::EventFilter,
+    ) -> tokio::sync::broadcast::Receiver<openlet_core::adapters::event_sink::DeliveredEvent> {
+        let (_, rx) = tokio::sync::broadcast::channel(1);
+        rx
+    }
+}
+
+struct DiscardArtifacts;
+
+#[async_trait]
+impl openlet_core::adapters::artifact_store::ArtifactStore for DiscardArtifacts {
+    async fn put(
+        &self,
+        session: openlet_core::types::session::SessionId,
+        key: &str,
+        _: bytes::Bytes,
+    ) -> Result<openlet_core::adapters::artifact_store::ArtifactRef, openlet_core::error::ArtifactError>
+    {
+        Ok(openlet_core::adapters::artifact_store::ArtifactRef {
+            session_id: session,
+            key: key.to_string(),
+            size: 0,
+            mime: None,
+        })
+    }
+    async fn get(
+        &self,
+        _: &openlet_core::adapters::artifact_store::ArtifactRef,
+    ) -> Result<bytes::Bytes, openlet_core::error::ArtifactError> {
+        Err(openlet_core::error::ArtifactError::NotFound("test".into()))
+    }
+    async fn list(
+        &self,
+        _: openlet_core::types::session::SessionId,
+    ) -> Result<Vec<openlet_core::adapters::artifact_store::ArtifactRef>, openlet_core::error::ArtifactError>
+    {
+        Ok(vec![])
+    }
+}
+
+struct NoopMemory;
+
+#[async_trait]
+impl openlet_core::adapters::memory_store::MemoryStore for NoopMemory {
+    async fn create_session(
+        &self,
+        _: openlet_core::types::agent::AgentId,
+        _: Option<openlet_core::types::session::SessionId>,
+    ) -> Result<openlet_core::types::session::SessionId, openlet_core::error::MemoryError> {
+        Err(openlet_core::error::MemoryError::Unimplemented)
+    }
+    async fn get_session(
+        &self,
+        _: openlet_core::types::session::SessionId,
+    ) -> Result<Option<openlet_core::types::session::SessionMeta>, openlet_core::error::MemoryError>
+    {
+        Ok(None)
+    }
+    async fn list_sessions(
+        &self,
+        _: openlet_core::types::session::SessionFilter,
+    ) -> Result<Vec<openlet_core::types::session::SessionMeta>, openlet_core::error::MemoryError>
+    {
+        Ok(vec![])
+    }
+    async fn update_status(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: openlet_core::types::session::SessionStatus,
+        _: &str,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn switch_agent(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: &str,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn update_permission_mode(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: openlet_core::types::permission::PermissionMode,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn update_session_extensions(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: Value,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn delete_session(
+        &self,
+        _: openlet_core::types::session::SessionId,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn append_message(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        msg: openlet_core::types::message::Message,
+    ) -> Result<openlet_core::types::message::MessageId, openlet_core::error::MemoryError> {
+        Ok(msg.id)
+    }
+    async fn append_part(
+        &self,
+        _: openlet_core::types::message::MessageId,
+        _: openlet_core::types::part::Part,
+    ) -> Result<openlet_core::types::part::PartId, openlet_core::error::MemoryError> {
+        Ok(openlet_core::types::part::PartId::new())
+    }
+    async fn upsert_part(
+        &self,
+        _: openlet_core::types::message::MessageId,
+        _: openlet_core::types::part::PartId,
+        _: openlet_core::types::part::Part,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
+    }
+    async fn list_messages(
+        &self,
+        _: openlet_core::types::session::SessionId,
+    ) -> Result<Vec<openlet_core::types::message::Message>, openlet_core::error::MemoryError> {
+        Ok(vec![])
+    }
+    async fn list_parts(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: openlet_core::types::message::MessageId,
+    ) -> Result<Vec<openlet_core::types::part::Part>, openlet_core::error::MemoryError> {
+        Ok(vec![])
+    }
+    async fn record_read(
+        &self,
+        _: openlet_core::types::session::SessionId,
+        _: std::path::PathBuf,
+    ) -> Result<(), openlet_core::error::MemoryError> {
+        Ok(())
     }
 }
 
