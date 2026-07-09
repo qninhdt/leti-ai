@@ -6,8 +6,10 @@
 //! - `write` — `write` + atomic write helpers
 
 mod meta;
+mod mutate;
 mod read;
 mod write;
 
+pub(crate) use mutate::{remove, rename};
 pub(crate) use read::{exists, list, read, stat};
 pub(crate) use write::write;

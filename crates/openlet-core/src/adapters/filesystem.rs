@@ -65,6 +65,17 @@ pub trait Filesystem: Send + Sync + 'static {
     /// `args.max_hits`; lines longer than `args.max_line_chars` are
     /// truncated.
     async fn grep(&self, args: GrepArgs) -> Result<Vec<GrepHit>, FsError>;
+
+    /// Remove a file or empty directory. `FsError::NotFound` if the path
+    /// does not exist. Implementations reject recursive directory removal
+    /// here — callers that need `rm -r` walk + remove leaf-first through
+    /// this method so the workspace-boundary check runs on every path.
+    async fn remove(&self, path: &Path) -> Result<(), FsError>;
+
+    /// Rename / move `from` to `to`. Both paths are workspace-relative and
+    /// boundary-checked. Overwrites `to` when it exists (POSIX `rename`
+    /// semantics). `FsError::NotFound` if `from` is absent.
+    async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
 }
 
 /// `(start, len)` byte slice. `start` is 0-indexed; `len = 0` means
@@ -105,6 +116,12 @@ pub struct WriteOpts {
     /// `FileMeta.atomic = false` on the returned meta. We don't expose
     /// that yet; the field is reserved.
     pub atomic: bool,
+    /// Append `body` to the file instead of truncating. Backs shell
+    /// `>>` and `tee -a`. When `true`, `atomic` is ignored (append is
+    /// inherently a read-modify-write, not a whole-file swap) and
+    /// `create_new` still refuses a pre-existing target. A missing file
+    /// is created.
+    pub append: bool,
 }
 
 impl Default for WriteOpts {
@@ -112,6 +129,7 @@ impl Default for WriteOpts {
         Self {
             create_new: false,
             atomic: true,
+            append: false,
         }
     }
 }

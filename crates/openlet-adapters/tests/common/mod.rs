@@ -9,6 +9,8 @@
 
 #![allow(dead_code)]
 
+pub mod mem_fs;
 pub mod sqlite_helper;
 pub mod tempdir_workspace;
+pub mod tool_ctx_harness;
 pub mod wiremock_helpers;

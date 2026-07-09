@@ -40,7 +40,28 @@ pub(crate) async fn write(
         }
     }
 
-    if opts.atomic {
+    if opts.append {
+        // Append is a read-modify-write, not a whole-file swap — `atomic`
+        // does not apply. `create_new` still refuses a pre-existing file.
+        let mut open_opts = fs::OpenOptions::new();
+        open_opts.append(true);
+        if opts.create_new {
+            open_opts.create_new(true);
+        } else {
+            open_opts.create(true);
+        }
+        let mut file = open_opts.open(&resolved).await.map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                FsError::InvalidInput(format!("file already exists: {}", resolved.display()))
+            } else {
+                FsError::Io(e.to_string())
+            }
+        })?;
+        file.write_all(&body)
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
+        file.flush().await.map_err(|e| FsError::Io(e.to_string()))?;
+    } else if opts.atomic {
         // Atomic + create_new: the previous metadata-stat-then-persist
         // pattern was a TOCTOU window (`tempfile.persist` always
         // clobbers via rename(2)). `persist_noclobber` uses linkat with

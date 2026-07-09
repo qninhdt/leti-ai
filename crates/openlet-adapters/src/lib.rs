@@ -6,9 +6,12 @@
 //! enrichment (attribution headers, provider routing, model fallback).
 
 pub mod bus;
+pub mod cloudfs;
 pub mod config_perm;
+pub mod emushell;
 pub mod localfs;
 pub mod localshell;
 pub mod openai;
 pub mod openrouter;
+pub mod pyexec;
 pub mod sqlite;

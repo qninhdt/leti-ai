@@ -20,7 +20,9 @@ license = "Apache-2.0"
 publish = false
 authors = ["Openlet"]
 repository = "https://github.com/qninhdt/openlet-ai"
-rust-version = "1.85"
+# Monty (Python executor) requires Rust >= 1.95; the workspace toolchain is
+# pinned to latest stable in rust-toolchain.toml. Keep MSRV at Monty's floor.
+rust-version = "1.95"
 
 [workspace.dependencies]
 # Async / runtime
@@ -88,17 +90,49 @@ sqlx = { version = "0.8", default-features = false, features = [
 sha2 = "0.10"
 hex = "0.4"
 regex = "1.10"
+# HIR literal extraction for the cloud grep prefilter (Phase 6). We extract a
+# PROVABLY-required literal set from the parsed regex tree — the library keeps
+# the covering invariant (marks the Seq infinite/inexact when it can't safely
+# enumerate), so we can never fabricate a false literal from a quantifier
+# interior, an escape body, or a literal-less alternation branch. Pinned to
+# match the `regex` crate's transitive version.
+regex-syntax = "0.8"
 dirs = "5.0"
 
-# HTTP client (provider streaming, phase 3)
+# HTTP client (provider streaming, phase 3; S3 presigned GET for cloud fs)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 blake3 = "1.5"
+
+# gRPC client for the cloud Filesystem impl (Phase 6). openlet-ai is a CLIENT
+# of openlet file-service; the .proto is vendored under
+# openlet-adapters/proto/ and codegen'd by tonic-build at build time. tls
+# via rustls to match the reqwest/sqlx stack (no OpenSSL in the tree).
+tonic = { version = "0.12", default-features = false, features = ["transport", "codegen", "prost", "tls", "tls-roots"] }
+prost = "0.13"
+prost-types = "0.13"
+tonic-build = { version = "0.12", default-features = false, features = ["prost", "transport"] }
 
 # Filesystem (phase 4 tools)
 walkdir = "2.5"
 ignore = "0.4"
 globset = "0.4"
 similar = "2.6"
+
+# Emulated shell interpreter (bash tool). tree-sitter parses bash into a
+# CST; we hand-write the async eval loop that walks it. Pin tree-sitter-bash
+# exact — a grammar bump can rename node kinds and silently break the walk
+# (spike-verified in Phase 1). tree-sitter itself is API-stable at 0.26.
+tree-sitter = "0.26"
+tree-sitter-bash = "=0.25.1"
+
+# Emulated python interpreter (python tool). Monty is pydantic's
+# agent-oriented Python interpreter: deny-by-default, IO through a single
+# host-callback seam (`OsCall`), resource limits built in. NOT on crates.io
+# (the `monty` name there is a placeholder); pin the git rev so builds are
+# reproducible. Bumping the rev must re-run the security probes in the
+# pyexec integration tests (import socket/subprocess denied, no host disk
+# escape) — a grammar/API bump could otherwise regress the sandbox.
+monty = { git = "https://github.com/pydantic/monty", rev = "4bcbcf5251b3a4a30b22fdfc372e5189adf4b86f" }
 
 # Prompt templating (Jinja2-style). Pinned exact: 2.0 is a from-scratch
 # rewrite with a different API surface than 1.x; a minor bump could shift

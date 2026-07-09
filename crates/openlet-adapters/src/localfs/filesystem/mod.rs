@@ -56,6 +56,14 @@ impl Filesystem for LocalFilesystem {
         operations::write(&self.root, path, body, opts).await
     }
 
+    async fn remove(&self, path: &Path) -> Result<(), FsError> {
+        operations::remove(&self.root, path).await
+    }
+
+    async fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError> {
+        operations::rename(&self.root, from, to).await
+    }
+
     async fn list(&self, path: &Path) -> Result<Vec<DirEntry>, FsError> {
         operations::list(&self.root, path).await
     }

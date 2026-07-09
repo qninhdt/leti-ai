@@ -73,7 +73,9 @@ impl Tool for BashTool {
         "bash"
     }
     fn description(&self) -> &'static str {
-        "Run a shell command via bash -lc. 120s default timeout, output capped, kill_on_drop=true."
+        "Run a bash command. Supports pipes, redirects, globs, variables, \
+         command substitution, and for/while/if. Operates on the workspace \
+         filesystem; 120s default timeout, output capped."
     }
     fn parallel_safe(&self) -> bool {
         false
