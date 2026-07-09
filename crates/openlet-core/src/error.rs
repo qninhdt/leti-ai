@@ -182,6 +182,7 @@ impl From<FsError> for ToolError {
             FsError::Binary(p) => ToolError::BinaryFile(p),
             FsError::InvalidInput(m) => ToolError::InvalidInput(m),
             FsError::Io(m) => ToolError::Io(m),
+            FsError::Unsupported(_) => ToolError::Unimplemented,
         }
     }
 }
@@ -207,6 +208,13 @@ pub enum FsError {
     InvalidInput(String),
     #[error("io: {0}")]
     Io(String),
+    /// The active `Filesystem` impl does not support this operation. The
+    /// cloud impl returns this for `write`/`append` (the presigned-PUT upload
+    /// path is not wired in this phase); the tool layer surfaces it as
+    /// `ToolError::Unimplemented` so the model sees a clean "not supported"
+    /// rather than an IO failure it might retry.
+    #[error("unsupported: {0}")]
+    Unsupported(String),
 }
 
 impl ToolError {

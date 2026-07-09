@@ -21,6 +21,26 @@ pub struct Config {
     pub permission_ruleset_path: Option<PathBuf>,
     pub log_format: LogFormat,
     pub plugins: PluginsConfig,
+    /// Cloud filesystem backend (openlet file-service gRPC). `None` = local
+    /// mode (the default): the agent's `Filesystem` is `LocalFilesystem` over
+    /// a workspace dir. `Some` = cloud mode: file ops route to file-service.
+    ///
+    /// Deploy-ordering contract (plan Phase 6): cloud mode MUST stay OFF until
+    /// file-service ships migration 000016 + the `GrepFiles` RPC. Enabling it
+    /// against an older backend makes `grep` return gRPC `Unimplemented`.
+    pub cloud_fs: Option<CloudFsConfig>,
+}
+
+/// Connection parameters for the cloud `Filesystem` (file-service gRPC).
+#[derive(Debug, Clone)]
+pub struct CloudFsConfig {
+    /// gRPC endpoint of file-service, e.g. `http://file-service:9003`.
+    pub endpoint: String,
+    /// Workspace the agent operates within. All file ops are scoped to it.
+    pub workspace_id: String,
+    /// Full `Bearer <jwt>` string forwarded in `authorization` metadata so
+    /// file-service resolves workspace membership (same gate as its HTTP API).
+    pub bearer: SecretString,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +93,33 @@ impl Config {
             .ok()
             .map(PathBuf::from);
 
+        // Cloud filesystem is opt-in and requires all three of endpoint +
+        // workspace + bearer. Partial config is a hard error rather than a
+        // silent fall-back to local, so a misconfigured cloud deploy fails
+        // loudly instead of quietly serving the wrong (local) filesystem.
+        let cloud_fs = match env::var("OPENLET_CLOUD_FS_ENDPOINT").ok() {
+            None => None,
+            Some(endpoint) => {
+                let workspace_id = env::var("OPENLET_CLOUD_FS_WORKSPACE_ID").map_err(|_| {
+                    ConfigError::Invalid(
+                        "OPENLET_CLOUD_FS_ENDPOINT set but OPENLET_CLOUD_FS_WORKSPACE_ID missing"
+                            .to_string(),
+                    )
+                })?;
+                let bearer = env::var("OPENLET_CLOUD_FS_BEARER").map_err(|_| {
+                    ConfigError::Invalid(
+                        "OPENLET_CLOUD_FS_ENDPOINT set but OPENLET_CLOUD_FS_BEARER missing"
+                            .to_string(),
+                    )
+                })?;
+                Some(CloudFsConfig {
+                    endpoint,
+                    workspace_id,
+                    bearer: SecretString::from(bearer),
+                })
+            }
+        };
+
         Ok(Self {
             bind_addr,
             data_dir,
@@ -81,6 +128,7 @@ impl Config {
             permission_ruleset_path,
             log_format,
             plugins: PluginsConfig::default(),
+            cloud_fs,
         })
     }
 }

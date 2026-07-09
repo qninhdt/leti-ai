@@ -226,6 +226,11 @@ impl From<FsError> for AppError {
             FsError::Binary(_) => Self::unsupported_media_type("fs_binary", "binary file"),
             FsError::InvalidInput(m) => Self::bad_request("fs_invalid_input", m),
             FsError::Io(m) => Self::internal("fs_io", m),
+            FsError::Unsupported(m) => Self::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "fs_unsupported",
+                m,
+            ),
         }
     }
 }
