@@ -13,8 +13,12 @@
 //! - `sed_awk`        — the sed / awk 80/20 subsets.
 //! - `tree_ops`       — directory + content search (ls, find, grep).
 //! - `mutation_ops`   — writes / deletes / moves (mkdir, rm, mv, cp, …).
+//! - `python_op`      — `python`/`python3` routed to the shared Monty
+//!   interpreter (the ONE exception to "coreutils only"; still sandboxed,
+//!   still `ctx.fs`-only, no host process).
 
 mod mutation_ops;
+mod python_op;
 mod sed_awk;
 mod text_ops;
 mod transform_ops;
@@ -105,6 +109,9 @@ pub async fn dispatch(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> Bui
         "cp" => mutation_ops::cp(ctx, argv).await,
         "touch" => mutation_ops::touch(ctx, argv).await,
         "tee" => mutation_ops::tee(ctx, argv, stdin).await,
+        // python interpreter (Monty) — same in-process executor the `python`
+        // tool uses, routed through `ctx.fs`. NOT a subprocess.
+        "python" | "python3" => python_op::python(ctx, argv, stdin).await,
         other => {
             // Security by construction: no exec branch. Unknown command is
             // exactly bash's own message + exit 127.

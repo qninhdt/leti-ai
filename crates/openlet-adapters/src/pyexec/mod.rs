@@ -16,4 +16,4 @@
 mod executor;
 mod mount_bridge;
 
-pub use executor::MontyExecutor;
+pub use executor::{default_max_memory, run_python, MontyExecutor};

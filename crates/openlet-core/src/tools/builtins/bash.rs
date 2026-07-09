@@ -74,8 +74,10 @@ impl Tool for BashTool {
     }
     fn description(&self) -> &'static str {
         "Run a bash command. Supports pipes, redirects, globs, variables, \
-         command substitution, and for/while/if. Operates on the workspace \
-         filesystem; 120s default timeout, output capped."
+         command substitution, and for/while/if. Also runs `python3`/`python` \
+         (in-process; `-c CODE`, a script file, or piped stdin — no sys.argv). \
+         Operates on the workspace filesystem; 120s default timeout, output \
+         capped."
     }
     fn parallel_safe(&self) -> bool {
         false

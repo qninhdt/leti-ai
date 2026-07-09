@@ -20,9 +20,11 @@ use monty::{
     ExcType, MontyException, MontyObject, MontyRun, NameLookupResult, PrintWriter, ResourceLimits,
     ResourceTracker, RunProgress,
 };
+use openlet_core::adapters::filesystem::Filesystem;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::error::ToolError;
 use openlet_core::tools::builtins::python::{PythonExecutor, PythonOutput};
+use tokio_util::sync::CancellationToken;
 
 use super::mount_bridge::{dispatch_os_call, Dispatched};
 
@@ -73,19 +75,46 @@ impl PythonExecutor for MontyExecutor {
         code: &str,
         timeout_ms: u64,
     ) -> Result<PythonOutput, ToolError> {
-        let limits = ResourceLimits::new()
-            .max_memory(self.max_memory)
-            .max_duration(Duration::from_millis(timeout_ms));
-        let tracker = monty::LimitedTracker::new(limits);
+        run_python(ctx.fs.as_ref(), &ctx.cancel, code, timeout_ms, self.max_memory).await
+    }
+}
 
-        // stdout is collected into this buffer via `PrintWriter::CollectString`;
-        // the module's trailing expression is appended afterwards (REPL-style).
-        let mut stdout = String::new();
+/// Default per-run memory budget for callers that don't build a full
+/// `MontyExecutor` (e.g. the emulated shell's `python` builtin). Same ceiling
+/// as `MontyExecutor::default`.
+#[must_use]
+pub fn default_max_memory() -> usize {
+    DEFAULT_MAX_MEMORY
+}
 
-        let outcome = drive(ctx, code, tracker, &mut stdout).await?;
+/// Run Python `code` to completion over the given `Filesystem` seam, returning
+/// a `PythonOutput` (stdout / stderr / exit code / timed-out + truncation
+/// flags). Shared by [`MontyExecutor`] (the `python` tool) and the emulated
+/// shell's `python`/`python3` builtin so both dispatch the SAME interpreter,
+/// resource guards, and error shaping — there is exactly one Monty drive loop.
+///
+/// Takes `fs` + `cancel` directly rather than a `ToolCtx` because the shell
+/// builtin only holds those two; the executor touches nothing else.
+pub async fn run_python(
+    fs: &dyn Filesystem,
+    cancel: &CancellationToken,
+    code: &str,
+    timeout_ms: u64,
+    max_memory: usize,
+) -> Result<PythonOutput, ToolError> {
+    let limits = ResourceLimits::new()
+        .max_memory(max_memory)
+        .max_duration(Duration::from_millis(timeout_ms));
+    let tracker = monty::LimitedTracker::new(limits);
 
-        let (stdout, stdout_truncated) = cap(stdout);
-        match outcome {
+    // stdout is collected into this buffer via `PrintWriter::CollectString`;
+    // the module's trailing expression is appended afterwards (REPL-style).
+    let mut stdout = String::new();
+
+    let outcome = drive(fs, cancel, code, tracker, &mut stdout).await?;
+
+    let (stdout, stdout_truncated) = cap(stdout);
+    match outcome {
             Outcome::Complete(value) => {
                 // Echo the module's last expression like a REPL, but skip a
                 // bare `None` (a trailing statement / assignment) so we don't
@@ -136,7 +165,6 @@ impl PythonExecutor for MontyExecutor {
                     stderr_truncated,
                 })
             }
-        }
     }
 }
 
@@ -147,9 +175,10 @@ enum Outcome {
 }
 
 /// Drive one Monty run to completion, resolving every `OsCall` against
-/// `ctx.fs`. `print` output accumulates into `stdout`.
+/// `fs`. `print` output accumulates into `stdout`.
 async fn drive<T: ResourceTracker>(
-    ctx: &ToolCtx,
+    fs: &dyn Filesystem,
+    cancel: &CancellationToken,
     code: &str,
     tracker: T,
     stdout: &mut String,
@@ -172,10 +201,10 @@ async fn drive<T: ResourceTracker>(
         // same contract the bash executor keeps (cancel => Err(Timeout)).
         // NOTE: `MontyRun::start`/`resume` are synchronous, so a purely
         // CPU-bound guest (e.g. `while True: pass`) never yields a pause and
-        // cannot be pre-empted by `ctx.cancel` mid-compute; the `max_duration`
+        // cannot be pre-empted by `cancel` mid-compute; the `max_duration`
         // budget below is the backstop that bounds such a guest (and the
         // worker thread it occupies).
-        if ctx.cancel.is_cancelled() {
+        if cancel.is_cancelled() {
             return Err(ToolError::Timeout);
         }
 
@@ -183,7 +212,7 @@ async fn drive<T: ResourceTracker>(
             RunProgress::Complete(value) => return Ok(Outcome::Complete(value)),
             RunProgress::OsCall(mut call) => {
                 let fc = call.take_function_call();
-                let dispatched = dispatch_os_call(ctx.fs.as_ref(), &fc).await;
+                let dispatched = dispatch_os_call(fs, &fc).await;
                 let resume: monty::ExtFunctionResult = match dispatched {
                     Dispatched::Ok(obj) => obj.into(),
                     Dispatched::Err(exc) => exc.into(),

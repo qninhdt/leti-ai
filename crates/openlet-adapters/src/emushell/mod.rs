@@ -9,7 +9,9 @@
 //! no code path that spawns a process, opens a socket, or touches the host
 //! filesystem directly, so there is nothing to sandbox. An unknown command
 //! is `command not found` (exit 127) because the dispatch table has no
-//! host-exec fallback.
+//! host-exec fallback. The one apparent exception — `python`/`python3` — is
+//! not an exec either: it routes to the same in-process Monty interpreter the
+//! `python` tool uses (still no process, still `ctx.fs`-only).
 //!
 //! Module layout:
 //! - `ast`      — the typed shell AST the evaluator walks
