@@ -19,10 +19,11 @@ use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::bash::ShellExecutor;
+use openlet_core::tools::builtins::python::PythonExecutor;
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_core::tools::builtins::{
     AskUserTool, BashTool, EditTool, EnterPlanModeTool, ExitPlanModeTool, GlobTool, GrepTool,
-    ListTool, ReadTool, SubagentTaskTool, TaskStatusTool, TodoTool, WriteTool,
+    ListTool, PythonTool, ReadTool, SubagentTaskTool, TaskStatusTool, TodoTool, WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -41,6 +42,11 @@ where
 pub struct CoreToolsPlugin {
     manifest: PluginManifest,
     shell: Arc<dyn ShellExecutor>,
+    /// Optional Python executor. `None` (the default) means the `python`
+    /// tool is not registered at all — integrators that don't wire a
+    /// `PythonExecutor` keep exactly today's tool set, so adding this
+    /// parameter is not a breaking change for them.
+    python: Option<Arc<dyn PythonExecutor>>,
     memory: Arc<dyn MemoryStore>,
     task_registry: Arc<TaskRegistry>,
     spawner: Arc<dyn SubagentSpawner>,
@@ -77,10 +83,21 @@ impl CoreToolsPlugin {
                 .default_priority(50)
                 .build(),
             shell,
+            python: None,
             memory,
             task_registry,
             spawner,
         }
+    }
+
+    /// Enable the `python` tool by wiring a [`PythonExecutor`] (production:
+    /// `openlet_adapters::pyexec::MontyExecutor`). Builder-style so the
+    /// four-arg `new` stays source-compatible for every existing integrator
+    /// and test — only callers that opt in gain the tool.
+    #[must_use]
+    pub fn with_python(mut self, python: Arc<dyn PythonExecutor>) -> Self {
+        self.python = Some(python);
+        self
     }
 }
 
@@ -98,6 +115,11 @@ impl Plugin for CoreToolsPlugin {
         ctx.register_tool(erase(WriteTool))?;
         ctx.register_tool(erase(EditTool))?;
         ctx.register_tool(erase(BashTool::with_executor(self.shell.clone())))?;
+        // `python` only registers when the host wired an executor — no
+        // executor means the tool is absent, preserving the old tool set.
+        if let Some(python) = &self.python {
+            ctx.register_tool(erase(PythonTool::with_executor(python.clone())))?;
+        }
         ctx.register_tool(erase(TodoTool))?;
         ctx.register_tool(erase(AskUserTool::new()))?;
         // Plan-mode tools land at the bottom of the list — sibling

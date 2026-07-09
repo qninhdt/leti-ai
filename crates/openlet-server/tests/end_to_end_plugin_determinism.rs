@@ -30,6 +30,7 @@ async fn install_all_tool_order_is_stable_across_boots() {
         let configs = HashMap::new();
         let plugins = all_plugins(
             stub_shell(),
+            None,
             stub_memory(),
             stub_task_registry(),
             stub_spawner(),
@@ -61,6 +62,7 @@ async fn install_all_agent_order_is_stable_across_boots() {
         let configs = HashMap::new();
         let plugins = all_plugins(
             stub_shell(),
+            None,
             stub_memory(),
             stub_task_registry(),
             stub_spawner(),
@@ -96,6 +98,7 @@ async fn install_all_hook_chain_lengths_stable_across_boots() {
         let configs = HashMap::new();
         let plugins = all_plugins(
             stub_shell(),
+            None,
             stub_memory(),
             stub_task_registry(),
             stub_spawner(),
@@ -129,6 +132,7 @@ async fn canonical_built_in_tools_appear_with_no_collision() {
     let configs = HashMap::new();
     let plugins = all_plugins(
         stub_shell(),
+        None,
         stub_memory(),
         stub_task_registry(),
         stub_spawner(),

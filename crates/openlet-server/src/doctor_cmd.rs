@@ -101,6 +101,7 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
     let installed = install_plugins(
         core_api,
         stack.shell.clone(),
+        Some(stack.python.clone()),
         stack.memory.clone(),
         task_registry.clone(),
         spawner_dyn,

@@ -30,6 +30,7 @@ fn test_config() -> Config {
         permission_ruleset_path: None,
         log_format: LogFormat::Pretty,
         plugins: PluginsConfig::default(),
+        cloud_fs: None,
     }
 }
 

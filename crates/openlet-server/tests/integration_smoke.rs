@@ -44,7 +44,7 @@ mod support;
 #[tokio::test]
 async fn canonical_plugin_set_drains_tools_and_agents() {
     let shell = stub_shell();
-    let plugins = all_plugins(shell, stub_memory(), stub_task_registry(), stub_spawner());
+    let plugins = all_plugins(shell, None, stub_memory(), stub_task_registry(), stub_spawner());
     let configs = HashMap::new();
     let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
 
@@ -113,6 +113,7 @@ async fn quota_stub_installs_with_default_config() {
     let baseline = install_all(
         all_plugins(
             stub_shell(),
+            None,
             stub_memory(),
             stub_task_registry(),
             stub_spawner(),
@@ -126,6 +127,7 @@ async fn quota_stub_installs_with_default_config() {
     // With the quota stub appended.
     let mut plugins = all_plugins(
         stub_shell(),
+        None,
         stub_memory(),
         stub_task_registry(),
         stub_spawner(),

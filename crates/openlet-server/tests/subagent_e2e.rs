@@ -154,6 +154,7 @@ impl Harness {
             permission_ruleset_path: None,
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
+            cloud_fs: None,
         };
         let runtime = Arc::new(ConversationRuntime::new(
             provider.clone(),

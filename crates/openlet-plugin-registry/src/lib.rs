@@ -15,6 +15,7 @@ use openlet_core::agent::AgentDefinition;
 use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::ToolHandle;
 use openlet_core::tools::builtins::bash::ShellExecutor;
+use openlet_core::tools::builtins::python::PythonExecutor;
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_plugin_api::context::{CoreApi, PluginContext};
 use openlet_plugin_api::dispatch::HookChains;
@@ -31,21 +32,28 @@ use semver::Version;
 /// in-process subagent bookkeeping into `subagent_task` / `task_status`
 /// registered by the core-tools plugin. The same shell + memory stay
 /// available to other plugins through `CoreApi` if they need them.
+/// `python` is the optional Python executor for the `python` tool. `None`
+/// (used by every test harness) leaves the tool unregistered; the server
+/// binary passes `Some(MontyExecutor)` so production ships it. This is a
+/// breaking positional-arg change — every existing caller must add an
+/// explicit `None` (all internal call sites are updated) — but callers that
+/// pass `None` get exactly today's tool set.
 #[must_use]
 pub fn all_plugins(
     shell: Arc<dyn ShellExecutor>,
+    python: Option<Arc<dyn PythonExecutor>>,
     memory: Arc<dyn MemoryStore>,
     task_registry: Arc<TaskRegistry>,
     spawner: Arc<dyn SubagentSpawner>,
 ) -> Vec<Arc<dyn Plugin>> {
+    let mut core_tools =
+        openlet_plugin_core_tools::CoreToolsPlugin::new(shell, memory, task_registry, spawner);
+    if let Some(python) = python {
+        core_tools = core_tools.with_python(python);
+    }
     vec![
         Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new()),
-        Arc::new(openlet_plugin_core_tools::CoreToolsPlugin::new(
-            shell,
-            memory,
-            task_registry,
-            spawner,
-        )),
+        Arc::new(core_tools),
     ]
 }
 

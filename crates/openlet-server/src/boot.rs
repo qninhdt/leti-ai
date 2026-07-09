@@ -109,11 +109,13 @@ pub fn single_default_agent(
 pub async fn install_plugins(
     core_api: Arc<dyn CoreApi>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
+    python: Option<Arc<dyn openlet_core::tools::builtins::python::PythonExecutor>>,
     memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
     task_registry: Arc<openlet_core::runtime::subagent::TaskRegistry>,
     spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner>,
 ) -> anyhow::Result<InstalledPlugins> {
-    let plugins = openlet_plugin_registry::all_plugins(shell, memory, task_registry, spawner);
+    let plugins =
+        openlet_plugin_registry::all_plugins(shell, python, memory, task_registry, spawner);
     let configs = std::collections::HashMap::new();
     install_all(plugins, &configs, core_api)
         .await

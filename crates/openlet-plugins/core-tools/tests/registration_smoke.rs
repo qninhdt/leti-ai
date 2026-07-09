@@ -21,6 +21,7 @@ use openlet_core::error::{MemoryError, ToolError};
 use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::runtime::subagent::task_types::{SpawnError, TaskId, TaskStatus};
 use openlet_core::tools::builtins::bash::{BashOutput, ShellExecutor};
+use openlet_core::tools::builtins::python::{PythonExecutor, PythonOutput};
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::AgentEvent;
@@ -47,6 +48,22 @@ impl ShellExecutor for StubShell {
         _timeout_ms: u64,
     ) -> Result<BashOutput, ToolError> {
         Err(ToolError::Io("stub shell".to_string()))
+    }
+}
+
+/// Python executor stub — never invoked; only needs to type-check so we can
+/// prove `.with_python()` registers the `python` tool.
+struct StubPython;
+
+#[async_trait]
+impl PythonExecutor for StubPython {
+    async fn run(
+        &self,
+        _ctx: &ToolCtx,
+        _code: &str,
+        _timeout_ms: u64,
+    ) -> Result<PythonOutput, ToolError> {
+        Err(ToolError::Io("stub python".to_string()))
     }
 }
 
@@ -245,4 +262,41 @@ async fn installs_all_thirteen_tools_without_collision() {
     // The plugin registers no agents or providers — only tools.
     assert!(regs.agents.is_empty(), "core-tools registers no agents");
     assert!(regs.provider.is_none(), "core-tools registers no provider");
+
+    // `python` is opt-in — the default `new` must NOT register it.
+    assert!(
+        !names.contains(&"python"),
+        "python must be absent unless `.with_python()` is wired; got {names:?}"
+    );
+}
+
+/// Wiring a `PythonExecutor` via `.with_python()` adds exactly one tool —
+/// `python` — on top of the default 13, and nothing else shifts. Locks the
+/// opt-in registration branch that the four-arg `new` leaves dormant.
+#[tokio::test]
+async fn with_python_registers_the_python_tool() {
+    let plugin = build_plugin().with_python(Arc::new(StubPython));
+    let mut ctx = PluginContext::new(
+        plugin.manifest().clone(),
+        serde_json::Value::Null,
+        Arc::new(NoopCoreApi),
+    );
+
+    plugin
+        .install(&mut ctx)
+        .await
+        .expect("core-tools install must succeed with python wired");
+
+    let regs = ctx.into_registrations();
+    let names: Vec<&str> = regs.tools.iter().map(|t| t.name()).collect();
+
+    assert_eq!(
+        names.len(),
+        14,
+        "wiring python must register exactly 14 tools, got {names:?}"
+    );
+    assert!(
+        names.contains(&"python"),
+        "python tool must be registered when `.with_python()` is set; got {names:?}"
+    );
 }
