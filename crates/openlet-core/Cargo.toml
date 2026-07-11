@@ -42,10 +42,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Pinned exact: pdf-extract has historically expanded its surface (and
 # panic profile) silently between 0.7 patch releases. Bumping requires
 # re-running the security review per F3.6.
-pdf-extract = "=0.7.7"
+pdf-extract = "=0.12.0"
 # Content-based MIME sniffing for the multipart upload route. F3.5 — we
 # never trust the client-supplied Content-Type.
-infer = "0.16"
+infer = "0.19"
 tera.workspace = true
 
 [lints]
@@ -55,4 +55,4 @@ workspace = true
 openlet-adapters = { path = "../openlet-adapters" }
 rstest.workspace = true
 proptest.workspace = true
-metrics-util = "0.19"
+metrics-util = "0.20"
