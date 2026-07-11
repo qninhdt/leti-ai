@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
@@ -37,15 +37,8 @@ pub struct BashInput {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct BashOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub timed_out: bool,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
-}
+/// Field-identical alias of [`crate::tools::builtins::ProcessOutput`].
+pub type BashOutput = super::ProcessOutput;
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -84,11 +77,7 @@ impl Tool for BashTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("bash:{}", input.command),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("bash:{}", input.command))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

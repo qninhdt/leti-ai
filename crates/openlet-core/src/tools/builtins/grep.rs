@@ -54,11 +54,7 @@ impl Tool for GrepTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("read:grep:{}", input.pattern),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("read:grep:{}", input.pattern))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

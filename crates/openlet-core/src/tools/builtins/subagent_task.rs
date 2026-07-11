@@ -126,11 +126,7 @@ impl Tool for SubagentTaskTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("subagent_task:{}", input.subagent_type),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("subagent_task:{}", input.subagent_type))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

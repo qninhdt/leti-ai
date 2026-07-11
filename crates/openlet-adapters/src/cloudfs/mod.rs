@@ -35,10 +35,11 @@
 //! returns gRPC `Unimplemented`, surfaced here as `FsError::Io`. Cloud mode
 //! must stay flag-OFF until the backend is deployed (see plan Phase 6).
 
+mod convert;
 mod literals;
 mod rematch;
+mod resolve;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -48,9 +49,10 @@ use openlet_core::adapters::filesystem::{
     ByteRange, DirEntry, FileMeta, Filesystem, GlobOpts, GrepArgs, GrepHit, WriteOpts,
 };
 use openlet_core::error::FsError;
+use tonic::Request;
 use tonic::transport::Channel;
-use tonic::{Request, Status};
 
+use self::convert::{file_info_to_meta, normalize_rel, status_to_fs};
 use self::rematch::Candidate;
 
 /// Generated tonic client + prost types for file-service. The module name is
@@ -128,67 +130,6 @@ impl CloudFilesystem {
         Ok(req)
     }
 
-    /// List EVERY child folder of `parent` (root when `None`), following
-    /// `next_page_token` to exhaustion. The single-page `page_size: 1000` calls
-    /// this replaced silently dropped children past the first page — making a
-    /// legitimate file past #1000 resolve to `NotFound` and `list`/glob omit
-    /// entries. Bounded by `MAX_PAGES` so a backend paging bug can't loop
-    /// forever.
-    async fn list_all_folders(&self, parent: Option<&str>) -> Result<Vec<pb::Folder>, FsError> {
-        let mut out: Vec<pb::Folder> = Vec::new();
-        let mut token = String::new();
-        for _ in 0..MAX_PAGES {
-            let resp = self
-                .client()
-                .list_folders(self.authed(pb::ListFoldersRequest {
-                    workspace_id: self.workspace_id.clone(),
-                    parent_folder_id: parent.unwrap_or_default().to_string(),
-                    page_size: PAGE_SIZE,
-                    page_token: token,
-                })?)
-                .await
-                .map_err(status_to_fs)?
-                .into_inner();
-            out.extend(resp.folders);
-            if resp.next_page_token.is_empty() {
-                return Ok(out);
-            }
-            token = resp.next_page_token;
-        }
-        Err(FsError::Io(
-            "cloud list_folders exceeded max pages (backend pagination loop?)".into(),
-        ))
-    }
-
-    /// List EVERY file directly in `folder` (root when `None`), following
-    /// `next_page_token` to exhaustion. See [`Self::list_all_folders`] for why
-    /// single-page listing was unsafe.
-    async fn list_all_files(&self, folder: Option<&str>) -> Result<Vec<pb::FileInfo>, FsError> {
-        let mut out: Vec<pb::FileInfo> = Vec::new();
-        let mut token = String::new();
-        for _ in 0..MAX_PAGES {
-            let resp = self
-                .client()
-                .list_files(self.authed(pb::ListFilesRequest {
-                    workspace_id: self.workspace_id.clone(),
-                    folder_id: folder.unwrap_or_default().to_string(),
-                    page_size: PAGE_SIZE,
-                    page_token: token,
-                })?)
-                .await
-                .map_err(status_to_fs)?
-                .into_inner();
-            out.extend(resp.files);
-            if resp.next_page_token.is_empty() {
-                return Ok(out);
-            }
-            token = resp.next_page_token;
-        }
-        Err(FsError::Io(
-            "cloud list_files exceeded max pages (backend pagination loop?)".into(),
-        ))
-    }
-
     /// Record a path in the session-dirty set (dedup on insert). Reserved for
     /// the `write`/`append` path (stubbed this phase); see `session_dirty` on
     /// why `rename` must NOT call it.
@@ -197,7 +138,7 @@ impl CloudFilesystem {
         reason = "wired when write/append land; see session_dirty doc"
     )]
     fn mark_dirty(&self, path: &Path) {
-        let mut d = self.session_dirty.lock().expect("session_dirty poisoned");
+        let mut d = self.session_dirty.lock().unwrap_or_else(|e| e.into_inner());
         let p = path.to_path_buf();
         if !d.contains(&p) {
             d.push(p);
@@ -208,57 +149,8 @@ impl CloudFilesystem {
     fn dirty_snapshot(&self) -> Vec<PathBuf> {
         self.session_dirty
             .lock()
-            .expect("session_dirty poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
-    }
-
-    /// Resolve a workspace-relative path to a `(folder_id, file_name)` pair by
-    /// walking the folder tree. `folder_id` is `None` for a workspace-root
-    /// file. The final segment is treated as the file name; leading segments
-    /// are folders matched by name.
-    async fn resolve_parent_folder(
-        &self,
-        path: &Path,
-    ) -> Result<(Option<String>, String), FsError> {
-        let rel = normalize_rel(path)?;
-        let segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
-        let Some((file_name, dirs)) = segments.split_last() else {
-            return Err(FsError::InvalidInput("empty path".into()));
-        };
-
-        let mut parent: Option<String> = None;
-        for dir in dirs {
-            let folders = self.list_all_folders(parent.as_deref()).await?;
-            // Detect duplicate names in one parent: resolution would otherwise
-            // pick an arbitrary row, so read/remove/rename could hit the wrong
-            // folder. Fail loud instead.
-            let mut matches = folders.into_iter().filter(|f| f.name == *dir);
-            match matches.next() {
-                None => return Err(FsError::NotFound(rel.clone())),
-                Some(_) if matches.next().is_some() => {
-                    return Err(FsError::InvalidInput(format!(
-                        "ambiguous path: multiple folders named {dir:?} under the same parent"
-                    )));
-                }
-                Some(f) => parent = Some(f.folder_id),
-            }
-        }
-        Ok((parent, (*file_name).to_string()))
-    }
-
-    /// Resolve a workspace-relative path to a `file_id`.
-    async fn resolve_file_id(&self, path: &Path) -> Result<String, FsError> {
-        let (folder, name) = self.resolve_parent_folder(path).await?;
-        let rel = normalize_rel(path)?;
-        let files = self.list_all_files(folder.as_deref()).await?;
-        let mut matches = files.into_iter().filter(|f| f.name == name);
-        match matches.next() {
-            None => Err(FsError::NotFound(rel)),
-            Some(_) if matches.next().is_some() => Err(FsError::InvalidInput(format!(
-                "ambiguous path: multiple files named {name:?} under the same folder"
-            ))),
-            Some(f) => Ok(f.file_id),
-        }
     }
 }
 
@@ -535,168 +427,3 @@ impl Filesystem for CloudFilesystem {
         Ok(hits)
     }
 }
-
-impl CloudFilesystem {
-    /// Resolve a directory path to its folder id (`None` = workspace root).
-    /// Unlike `resolve_parent_folder`, every segment is a folder.
-    async fn resolve_folder_id_for_dir(&self, path: &Path) -> Result<Option<String>, FsError> {
-        let rel = normalize_rel(path)?;
-        let segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
-        let mut parent: Option<String> = None;
-        for dir in segments {
-            let folders = self.list_all_folders(parent.as_deref()).await?;
-            parent = Some(unique_named(
-                &folders,
-                dir,
-                |f| &f.name,
-                |f| f.folder_id.clone(),
-                &rel,
-            )?);
-        }
-        Ok(parent)
-    }
-
-    /// Recursively collect every file path in the workspace as
-    /// `(relative_path, file_id)`. Bounded breadth-first walk of the folder
-    /// tree. Used by `glob`.
-    async fn walk_all_files(&self) -> Result<Vec<(PathBuf, String)>, FsError> {
-        let mut out: Vec<(PathBuf, String)> = Vec::new();
-        // (folder_id, prefix path) queue; root folder_id = None.
-        let mut queue: Vec<(Option<String>, PathBuf)> = vec![(None, PathBuf::new())];
-        let mut visited = 0usize;
-        const MAX_FOLDERS: usize = 10_000;
-
-        while let Some((folder_id, prefix)) = queue.pop() {
-            visited += 1;
-            if visited > MAX_FOLDERS {
-                break;
-            }
-            for f in self.list_all_files(folder_id.as_deref()).await? {
-                out.push((prefix.join(&f.name), f.file_id));
-            }
-            for sub in self.list_all_folders(folder_id.as_deref()).await? {
-                queue.push((Some(sub.folder_id), prefix.join(&sub.name)));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Build a `folder_id -> workspace-relative folder path` map by walking the
-    /// folder tree once. Used to reconstruct full paths for grep hits (reviewer
-    /// M1): the backend returns each candidate's `folder_id` + file `name`, and
-    /// this map turns that into the same workspace-relative path
-    /// `LocalFilesystem::grep` produces, so hit paths AND `path_glob` matching
-    /// behave identically across backends. Bounded by `MAX_PAGES`-paginated
-    /// listings and the folder count.
-    async fn folder_path_map(&self) -> Result<HashMap<String, PathBuf>, FsError> {
-        let mut map: HashMap<String, PathBuf> = HashMap::new();
-        let mut queue: Vec<(Option<String>, PathBuf)> = vec![(None, PathBuf::new())];
-        let mut visited = 0usize;
-        const MAX_FOLDERS: usize = 10_000;
-        while let Some((folder_id, prefix)) = queue.pop() {
-            visited += 1;
-            if visited > MAX_FOLDERS {
-                break;
-            }
-            for sub in self.list_all_folders(folder_id.as_deref()).await? {
-                let path = prefix.join(&sub.name);
-                map.insert(sub.folder_id.clone(), path.clone());
-                queue.push((Some(sub.folder_id), path));
-            }
-        }
-        Ok(map)
-    }
-}
-
-/// Find the single entry in `items` whose name equals `want`, returning its
-/// mapped value. Errors `NotFound` when absent and `InvalidInput` when the
-/// backend returns MORE THAN ONE match (ambiguous — resolving to an arbitrary
-/// row could target the wrong file; reviewer M4). `rel` is the original path
-/// for error context.
-fn unique_named<T, N, V>(
-    items: &[T],
-    want: &str,
-    name_of: N,
-    value_of: V,
-    rel: &str,
-) -> Result<String, FsError>
-where
-    N: Fn(&T) -> &str,
-    V: Fn(&T) -> String,
-{
-    let mut matches = items.iter().filter(|it| name_of(it) == want);
-    let Some(first) = matches.next() else {
-        return Err(FsError::NotFound(rel.to_string()));
-    };
-    if matches.next().is_some() {
-        return Err(FsError::InvalidInput(format!(
-            "ambiguous path '{rel}': multiple entries named '{want}' in one folder"
-        )));
-    }
-    Ok(value_of(first))
-}
-
-/// Normalize a workspace-relative path to a forward-slash string, rejecting
-/// absolute paths and `..` escapes (workspace-boundary invariant the trait
-/// imposes on every impl).
-fn normalize_rel(path: &Path) -> Result<String, FsError> {
-    if path.is_absolute() {
-        return Err(FsError::OutsideWorkspace(path.display().to_string()));
-    }
-    let mut parts: Vec<String> = Vec::new();
-    for comp in path.components() {
-        use std::path::Component;
-        match comp {
-            Component::Normal(s) => parts.push(s.to_string_lossy().into_owned()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                return Err(FsError::OutsideWorkspace(path.display().to_string()));
-            }
-            Component::RootDir | Component::Prefix(_) => {
-                return Err(FsError::OutsideWorkspace(path.display().to_string()));
-            }
-        }
-    }
-    Ok(parts.join("/"))
-}
-
-/// Map a `FileInfo` to trait `FileMeta`. `mtime_ms` from `updated_at`;
-/// `is_binary` inferred from the magika label (text vs not).
-fn file_info_to_meta(info: &pb::FileInfo) -> FileMeta {
-    let mtime_ms = info
-        .updated_at
-        .as_ref()
-        .map(|t| t.seconds * 1000 + i64::from(t.nanos) / 1_000_000)
-        .unwrap_or(0);
-    // Heuristic parity with local `is_binary`: treat non-text magika labels as
-    // binary. file-service classifies via Magika at extraction time.
-    let is_binary = !info.magika_label.is_empty()
-        && !info.magika_label.starts_with("text")
-        && info.magika_label != "txt"
-        && info.magika_label != "markdown"
-        && info.magika_label != "code";
-    FileMeta {
-        size: u64::try_from(info.size_bytes).unwrap_or(0),
-        mtime_ms,
-        is_binary,
-        sha256: None,
-    }
-}
-
-/// Map a gRPC `Status` to an `FsError`. `NotFound` → `FsError::NotFound`;
-/// everything else (including `Unimplemented` from a not-yet-deployed backend)
-/// → `FsError::Io` carrying the code + message.
-fn status_to_fs(s: Status) -> FsError {
-    match s.code() {
-        tonic::Code::NotFound => FsError::NotFound(s.message().to_string()),
-        tonic::Code::InvalidArgument => FsError::InvalidInput(s.message().to_string()),
-        tonic::Code::Unimplemented => FsError::Io(format!(
-            "file-service RPC unimplemented (deploy skew? backend must ship the \
-             GrepFiles/proto revision before cloud mode enables): {}",
-            s.message()
-        )),
-        code => FsError::Io(format!("file-service gRPC {code:?}: {}", s.message())),
-    }
-}
-
-pub use pb::file_service_client::FileServiceClient as GeneratedFileServiceClient;

@@ -30,13 +30,10 @@ pub fn project_for_llm(
             if emitted_summary_for.insert(*owner)
                 && let Some(summary) = summaries.get(owner)
             {
-                out.push(LlmMessage {
-                    role: LlmRole::System,
-                    content: format!("[Compacted conversation summary]\n{summary}"),
-                    reasoning: None,
-                    tool_calls: Vec::new(),
-                    tool_call_id: None,
-                });
+                out.push(LlmMessage::simple(
+                    LlmRole::System,
+                    format!("[Compacted conversation summary]\n{summary}"),
+                ));
             }
             continue;
         }
@@ -102,13 +99,7 @@ fn project_system(parts: &[Part], out: &mut Vec<LlmMessage>) {
     if content.is_empty() {
         return;
     }
-    out.push(LlmMessage {
-        role: LlmRole::System,
-        content,
-        reasoning: None,
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-    });
+    out.push(LlmMessage::simple(LlmRole::System, content));
 }
 
 fn project_user(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>) {
@@ -124,13 +115,7 @@ fn project_user(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>)
     if content.is_empty() && !has_image_part {
         return;
     }
-    out.push(LlmMessage {
-        role: LlmRole::User,
-        content,
-        reasoning: None,
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-    });
+    out.push(LlmMessage::simple(LlmRole::User, content));
 }
 
 /// Gather a text fallback for `Part::Image` / `Part::Document` parts.
@@ -255,13 +240,7 @@ fn project_tool(parts: &[Part], out: &mut Vec<LlmMessage>) {
             } else {
                 error.clone().unwrap_or_else(|| "tool error".to_string())
             };
-            out.push(LlmMessage {
-                role: LlmRole::Tool,
-                content: body,
-                reasoning: None,
-                tool_calls: Vec::new(),
-                tool_call_id: Some(call_id.clone()),
-            });
+            out.push(LlmMessage::tool(call_id.clone(), body));
         }
         // Part::Plan is durably persisted alongside the tool message
         // for audit/replay, but the model already sees the plan via

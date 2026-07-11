@@ -167,28 +167,8 @@ impl TaskRegistry {
         }
     }
 
-    #[must_use]
-    pub fn poll(&self, id: TaskId) -> Option<TaskSnapshot> {
-        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
-            // Lost the race with `finalize` — fall back to the terminal cache.
-            return self.terminal.lock().unwrap().get(id);
-        };
-        let status = handle.status.blocking_read().clone();
-        let output = handle.output.blocking_read().clone();
-        let cost = *handle.cost_usd.blocking_read();
-        let finished = status.is_terminal();
-        Some(TaskSnapshot {
-            task_id: id,
-            status,
-            output,
-            cost_usd: cost,
-            finished,
-        })
-    }
-
-    /// Async-friendly poll. Prefer this from `.await` contexts; the sync
-    /// [`Self::poll`] uses `blocking_read` and panics under a
-    /// `current_thread` runtime if the lock is held by an async writer.
+    /// Async poll of a task's current snapshot. Falls back to the
+    /// terminal cache when the live handle has already been finalized.
     pub async fn poll_async(&self, id: TaskId) -> Option<TaskSnapshot> {
         let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
             // Lost the race with `finalize` — fall back to the terminal cache.
@@ -321,11 +301,5 @@ impl TaskRegistry {
             let mut c = handle.cost_usd.write().await;
             *c += delta;
         }
-    }
-
-    /// Read-only handle clone (for testing).
-    #[must_use]
-    pub fn handle(&self, id: TaskId) -> Option<TaskHandle> {
-        self.tasks.get(&id).map(|h| h.clone())
     }
 }

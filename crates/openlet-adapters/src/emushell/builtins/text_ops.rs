@@ -2,9 +2,7 @@
 //! `cut`, `tr`. Each reads its file operands through `ctx.fs` (never the
 //! host) and falls back to `stdin` when no file operand is given.
 
-use std::path::Path;
-
-use super::{BuiltinCtx, BuiltinResult, fs_err_msg};
+use super::{BuiltinCtx, BuiltinResult, gather};
 
 /// `cat [-n] [file...]` — concatenate files (or stdin). `-n` numbers lines.
 pub(super) async fn cat(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> BuiltinResult {
@@ -304,24 +302,4 @@ fn expand_tr_set(set: &str) -> Vec<char> {
         i += 1;
     }
     out
-}
-
-/// Read file operands via `ctx.fs`, or return `stdin` when there are none.
-async fn gather(
-    ctx: &BuiltinCtx<'_>,
-    name: &str,
-    files: &[String],
-    stdin: &str,
-) -> Result<String, BuiltinResult> {
-    if files.is_empty() {
-        return Ok(stdin.to_string());
-    }
-    let mut out = String::new();
-    for f in files {
-        match ctx.fs.read(Path::new(f), None).await {
-            Ok(bytes) => out.push_str(&String::from_utf8_lossy(&bytes)),
-            Err(e) => return Err(BuiltinResult::err(format!("{name}: {}", fs_err_msg(&e)), 1)),
-        }
-    }
-    Ok(out)
 }

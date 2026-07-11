@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{BuiltinCtx, BuiltinResult, fs_err_msg, short_flags};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg, gather, short_flags};
 use std::path::Path;
 
 /// `echo [-n] args...` — join args with spaces. `-n` suppresses the
@@ -21,28 +21,6 @@ pub(super) fn echo(argv: &[String]) -> BuiltinResult {
         s.push('\n');
     }
     BuiltinResult::out(s)
-}
-
-/// Read the text a stream/file builtin should operate on: concatenate any
-/// file operands (via `ctx.fs`), or fall back to `stdin` when there are
-/// none. Returns `Err(stderr_result)` on the first unreadable file.
-async fn gather_input(
-    ctx: &BuiltinCtx<'_>,
-    name: &str,
-    files: &[String],
-    stdin: &str,
-) -> Result<String, BuiltinResult> {
-    if files.is_empty() {
-        return Ok(stdin.to_string());
-    }
-    let mut out = String::new();
-    for f in files {
-        match ctx.fs.read(Path::new(f), None).await {
-            Ok(bytes) => out.push_str(&String::from_utf8_lossy(&bytes)),
-            Err(e) => return Err(BuiltinResult::err(format!("{name}: {}", fs_err_msg(&e)), 1)),
-        }
-    }
-    Ok(out)
 }
 
 /// `sort [-r] [-n] [-u] [file...]` — sort lines. Flags: reverse, numeric,
@@ -64,7 +42,7 @@ pub(super) async fn sort(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> 
             files.push(arg.clone());
         }
     }
-    let input = match gather_input(ctx, "sort", &files, stdin).await {
+    let input = match gather(ctx, "sort", &files, stdin).await {
         Ok(s) => s,
         Err(e) => return e,
     };
@@ -121,7 +99,7 @@ pub(super) async fn uniq(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> 
             files.push(arg.clone());
         }
     }
-    let input = match gather_input(ctx, "uniq", &files, stdin).await {
+    let input = match gather(ctx, "uniq", &files, stdin).await {
         Ok(s) => s,
         Err(e) => return e,
     };

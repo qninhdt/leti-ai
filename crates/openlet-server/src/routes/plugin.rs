@@ -6,8 +6,6 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
-use openlet_core::adapters::event_sink::Persistence;
-use openlet_core::types::event::AgentEvent;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -62,17 +60,10 @@ pub async fn health(
 ) -> Result<Json<PluginHealthDto>, AppError> {
     let found = state.plugin_registry.iter().any(|p| p.manifest().id == id);
     if !found {
-        let _ = state
-            .events
-            .publish(
-                AgentEvent::Error {
-                    session_id: None,
-                    code: "plugin_not_found".to_string(),
-                    message: format!("plugin {id} not registered"),
-                },
-                Persistence::Durable,
-            )
-            .await;
+        // A 404 on a health probe is a client error, not a session fault —
+        // it previously published a DURABLE `AgentEvent::Error` (with no
+        // session), polluting the global event log + any sessionless SSE
+        // resume with a spurious error per probe. Just return the 404.
         return Err(AppError::not_found("plugin_not_found", "plugin not found"));
     }
     Ok(Json(PluginHealthDto { id, healthy: true }))

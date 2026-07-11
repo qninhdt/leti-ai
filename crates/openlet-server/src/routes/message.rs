@@ -4,8 +4,6 @@
 //! `202 Accepted` with the message id immediately. Errors propagate via
 //! SSE `error` events, not the HTTP response.
 
-use std::sync::Arc;
-
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -20,27 +18,11 @@ use openlet_protocol::{CompactAckDto, CreateMessageDto, MessageDto, PartDto, Pro
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::app_state::{AppState, TurnHandle};
+use crate::app_state::AppState;
 use crate::error::AppError;
 use crate::events::publish_status;
 use crate::mention::rewrite_mention_into_subagent_task;
-
-/// Drop-guard that releases the `active_turns` slot if any `?` propagates
-/// before we commit it to the spawned task. Once `committed = true`, the
-/// driving task owns slot lifecycle (closes slot leak).
-struct SlotGuard<'a> {
-    state: &'a AppState,
-    sid: SessionId,
-    committed: bool,
-}
-
-impl<'a> Drop for SlotGuard<'a> {
-    fn drop(&mut self) {
-        if !self.committed {
-            self.state.active_turns.remove(&self.sid);
-        }
-    }
-}
+use crate::turn_slot::{spawn_driven_turn, try_claim_turn_slot};
 
 #[utoipa::path(
     post,
@@ -89,28 +71,10 @@ pub async fn prompt_async(
     let user_parts = rewrite_mention_into_subagent_task(user_parts, &state);
 
     // Atomically claim the active-turn slot BEFORE we mutate session
-    // state. `contains_key` then `insert` would let two concurrent
-    // callers both pass and one would clobber the other, orphaning a
-    // running task. The `SlotGuard` Drop releases the slot if any `?`
+    // state. The returned `SlotGuard` releases the slot if any `?`
     // propagates before we commit it to the spawned task (closes
     // slot-leak on error path).
-    let handle = TurnHandle::new(sid);
-    match state.active_turns.entry(sid) {
-        dashmap::mapref::entry::Entry::Occupied(_) => {
-            return Err(AppError::conflict(
-                "turn_in_flight",
-                "a turn is already running for this session",
-            ));
-        }
-        dashmap::mapref::entry::Entry::Vacant(v) => {
-            v.insert(handle.clone());
-        }
-    }
-    let mut slot_guard = SlotGuard {
-        state: &state,
-        sid,
-        committed: false,
-    };
+    let (handle, mut slot_guard) = try_claim_turn_slot(&state, sid)?;
 
     let user_msg = Message {
         id: MessageId::new(),
@@ -155,44 +119,14 @@ pub async fn prompt_async(
 
     // All ?-propagating work is done. Commit the slot to the spawned
     // task — SlotGuard now drops without releasing.
-    slot_guard.committed = true;
+    slot_guard.commit();
     drop(slot_guard);
 
-    let task_state = state.clone();
-    let task_handle = handle.clone();
-    tokio::spawn(async move {
-        // Drop guard ensures `exited` is notified on success, error, OR
-        // panic. DELETE/abort awaiters resolve immediately on exit.
-        struct ExitGuard(Arc<tokio::sync::Notify>);
-        impl Drop for ExitGuard {
-            fn drop(&mut self) {
-                self.0.notify_waiters();
-            }
-        }
-        let _exit_guard = ExitGuard(task_handle.exited.clone());
-
-        let cancel = task_handle.cancel.clone();
-        let outcome = drive_loop(task_state.clone(), sid, meta.agent_id, cancel.clone()).await;
-        let final_status = match &outcome {
-            Ok(_) => SessionStatus::Idle,
-            Err(_) if cancel.is_cancelled() => SessionStatus::Cancelled,
-            Err(_) => SessionStatus::Errored,
-        };
-        // Remove ONLY our own handle. If a fresh prompt_async raced past
-        // a still-cancelling driver, this `remove_if` is a no-op so the
-        // dying loop's tail finalizer can't stomp the new turn's slot
-        // (closes stale-finalizer race).
-        task_state.active_turns.remove_if(&sid, |_, h| {
-            Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted)
-        });
-        let _ = task_state
-            .memory
-            .update_status(sid, final_status, status_reason(&outcome, &cancel))
-            .await;
-        publish_status(&task_state.events, sid, final_status).await;
-        if let Err(err) = outcome {
-            tracing::warn!(session = %sid, error = %err, "turn loop ended with error");
-        }
+    let agent_id = meta.agent_id;
+    let driver_state = state.clone();
+    let driver_cancel = handle.cancel.clone();
+    spawn_driven_turn(state, sid, handle, "turn loop", async move {
+        drive_loop(driver_state, sid, agent_id, driver_cancel).await
     });
 
     Ok((
@@ -235,23 +169,7 @@ pub async fn compact(
 
     // Claim the active-turn slot before dispatch — compaction drives a
     // model turn, so it must not race a concurrent prompt for the session.
-    let handle = TurnHandle::new(sid);
-    match state.active_turns.entry(sid) {
-        dashmap::mapref::entry::Entry::Occupied(_) => {
-            return Err(AppError::conflict(
-                "turn_in_flight",
-                "a turn is already running for this session",
-            ));
-        }
-        dashmap::mapref::entry::Entry::Vacant(v) => {
-            v.insert(handle.clone());
-        }
-    }
-    let mut slot_guard = SlotGuard {
-        state: &state,
-        sid,
-        committed: false,
-    };
+    let (handle, mut slot_guard) = try_claim_turn_slot(&state, sid)?;
 
     state
         .memory
@@ -259,39 +177,14 @@ pub async fn compact(
         .await?;
     publish_status(&state.events, sid, SessionStatus::Running).await;
 
-    slot_guard.committed = true;
+    slot_guard.commit();
     drop(slot_guard);
 
-    let task_state = state.clone();
-    let task_handle = handle.clone();
     let agent_id = meta.agent_id;
-    tokio::spawn(async move {
-        struct ExitGuard(Arc<tokio::sync::Notify>);
-        impl Drop for ExitGuard {
-            fn drop(&mut self) {
-                self.0.notify_waiters();
-            }
-        }
-        let _exit_guard = ExitGuard(task_handle.exited.clone());
-
-        let cancel = task_handle.cancel.clone();
-        let outcome = drive_compaction(task_state.clone(), sid, agent_id, cancel.clone()).await;
-        let final_status = match &outcome {
-            Ok(_) => SessionStatus::Idle,
-            Err(_) if cancel.is_cancelled() => SessionStatus::Cancelled,
-            Err(_) => SessionStatus::Errored,
-        };
-        task_state.active_turns.remove_if(&sid, |_, h| {
-            Arc::ptr_eq(&h.cancel_emitted, &task_handle.cancel_emitted)
-        });
-        let _ = task_state
-            .memory
-            .update_status(sid, final_status, status_reason(&outcome, &cancel))
-            .await;
-        publish_status(&task_state.events, sid, final_status).await;
-        if let Err(err) = outcome {
-            tracing::warn!(session = %sid, error = %err, "compaction ended with error");
-        }
+    let driver_state = state.clone();
+    let driver_cancel = handle.cancel.clone();
+    spawn_driven_turn(state, sid, handle, "compaction", async move {
+        drive_compaction(driver_state, sid, agent_id, driver_cancel).await
     });
 
     Ok((
@@ -358,15 +251,4 @@ async fn drive_loop(
         .run_loop(&setup.memory, setup.loop_ctx, setup.input, cancel)
         .await
         .map(|_| ())
-}
-
-fn status_reason(
-    outcome: &Result<(), openlet_core::error::CoreError>,
-    cancel: &CancellationToken,
-) -> &'static str {
-    match outcome {
-        Ok(_) => "turn finished",
-        Err(_) if cancel.is_cancelled() => "cancelled",
-        Err(_) => "loop error",
-    }
 }

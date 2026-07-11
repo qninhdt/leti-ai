@@ -1,6 +1,8 @@
-// Thin REST client. Once `npm run codegen` is run against a live server,
-// replace this hand-rolled fetcher with openapi-fetch + paths from
-// schema.d.ts. The interface stays stable so the store doesn't churn.
+// Thin hand-rolled REST client over the openlet-server surface. The DTOs it
+// speaks live in `types.ts`; `npm run codegen` regenerates `schema.d.ts` as
+// the contract-drift reference snapshot only (see types.ts / schema.d.ts
+// headers). This fetcher is the intended client — it is NOT slated for an
+// openapi-fetch swap.
 
 import type {
   AbortAckDto,

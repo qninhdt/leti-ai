@@ -259,10 +259,7 @@ fn cap(mut s: String) -> (String, bool) {
     if s.len() <= MAX_STDOUT {
         return (s, false);
     }
-    let mut end = MAX_STDOUT;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::util::floor_char_boundary(&s, MAX_STDOUT);
     s.truncate(end);
     (s, true)
 }

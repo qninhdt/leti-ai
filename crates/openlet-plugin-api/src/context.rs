@@ -28,31 +28,54 @@ use crate::hooks::{
 use crate::manifest::{Capability, PluginManifest};
 use crate::plugin::PluginError;
 
-/// Registration API exposed to plugins during `install`.
-pub struct PluginContext {
-    manifest: PluginManifest,
-    raw_config: serde_json::Value,
-    core_api: Arc<dyn CoreApi>,
-    registered_agents: Vec<AgentDefinition>,
-    registered_tools: Vec<ToolHandle>,
-    registered_provider: Option<Arc<dyn ModelProvider>>,
-    next_index: usize,
-    pub(crate) before_turn: Vec<HookEntry<BeforeTurnCtx>>,
-    pub(crate) after_turn: Vec<HookEntry<AfterTurnCtx>>,
-    pub(crate) on_chat_params: Vec<HookEntry<OnChatParamsCtx>>,
-    pub(crate) on_chat_messages: Vec<HookEntry<OnChatMessagesCtx>>,
-    pub(crate) on_chat_headers: Vec<HookEntry<OnChatHeadersCtx>>,
-    pub(crate) before_tool_call: Vec<HookEntry<BeforeToolCallCtx>>,
-    pub(crate) after_tool_call: Vec<HookEntry<AfterToolCallCtx>>,
-    pub(crate) on_permission_ask: Vec<HookEntry<OnPermissionAskCtx>>,
-    pub(crate) on_message: Vec<HookEntry<OnMessageCtx>>,
-    pub(crate) on_cost_tick: Vec<HookEntry<OnCostTickCtx>>,
-    pub(crate) on_step_finish: Vec<HookEntry<OnStepFinishCtx>>,
-    pub(crate) on_compaction: Vec<HookEntry<OnCompactionCtx>>,
-    pub(crate) on_session_status: Vec<HookEntry<OnSessionStatusCtx>>,
-    pub(crate) on_event: Vec<HookEntry<OnEventCtx>>,
-    pub(crate) notification: Vec<HookEntry<NotificationCtx>>,
+/// The ONE canonical hook-kind list. Every per-kind site — the
+/// [`PluginContext`] chain fields, their `new()` initializers, the
+/// `into_registrations` mapping, and the `on_*` registration methods — is
+/// generated from this single list by [`hook_registration_sites!`]. Adding a
+/// hook kind is now a single-line edit here (plus the `HookKind` variant,
+/// `HookChains` field, and `io` ctx struct in openlet-core).
+///
+/// Tuple shape: `(method_name, chain_field, HookKind variant, CtxType)`.
+macro_rules! for_each_hook_kind {
+    ($macro:ident) => {
+        $macro! {
+            (on_before_turn,     before_turn,       BeforeTurn,      BeforeTurnCtx),
+            (on_after_turn,      after_turn,        AfterTurn,       AfterTurnCtx),
+            (on_chat_params,     on_chat_params,    OnChatParams,    OnChatParamsCtx),
+            (on_chat_messages,   on_chat_messages,  OnChatMessages,  OnChatMessagesCtx),
+            (on_chat_headers,    on_chat_headers,   OnChatHeaders,   OnChatHeadersCtx),
+            (on_before_tool_call, before_tool_call, BeforeToolCall,  BeforeToolCallCtx),
+            (on_after_tool_call, after_tool_call,   AfterToolCall,   AfterToolCallCtx),
+            (on_permission_ask,  on_permission_ask, OnPermissionAsk, OnPermissionAskCtx),
+            (on_message,         on_message,        OnMessage,       OnMessageCtx),
+            (on_cost_tick,       on_cost_tick,      OnCostTick,      OnCostTickCtx),
+            (on_step_finish,     on_step_finish,    OnStepFinish,    OnStepFinishCtx),
+            (on_compaction,      on_compaction,     OnCompaction,    OnCompactionCtx),
+            (on_session_status,  on_session_status, OnSessionStatus, OnSessionStatusCtx),
+            (on_event,           on_event,          OnEvent,         OnEventCtx),
+            (on_notification,    notification,      Notification,    NotificationCtx),
+        }
+    };
 }
+
+/// Generate the `PluginContext` struct with its fixed fields plus one
+/// `Vec<HookEntry<Ctx>>` chain field per hook kind.
+macro_rules! define_plugin_context {
+    ($( ($method:ident, $field:ident, $kind:ident, $ctx:ty) ),+ $(,)?) => {
+        /// Registration API exposed to plugins during `install`.
+        pub struct PluginContext {
+            manifest: PluginManifest,
+            raw_config: serde_json::Value,
+            core_api: Arc<dyn CoreApi>,
+            registered_agents: Vec<AgentDefinition>,
+            registered_tools: Vec<ToolHandle>,
+            registered_provider: Option<Arc<dyn ModelProvider>>,
+            next_index: usize,
+            $( pub(crate) $field: Vec<HookEntry<$ctx>>, )+
+        }
+    };
+}
+for_each_hook_kind!(define_plugin_context);
 
 /// Drained registrations from a `PluginContext`. The host merges every
 /// chain into the global [`HookChains`] then calls `sort_all`.
@@ -70,30 +93,21 @@ impl PluginContext {
         raw_config: serde_json::Value,
         core_api: Arc<dyn CoreApi>,
     ) -> Self {
-        Self {
-            manifest,
-            raw_config,
-            core_api,
-            registered_agents: Vec::new(),
-            registered_tools: Vec::new(),
-            registered_provider: None,
-            next_index: 0,
-            before_turn: Vec::new(),
-            after_turn: Vec::new(),
-            on_chat_params: Vec::new(),
-            on_chat_messages: Vec::new(),
-            on_chat_headers: Vec::new(),
-            before_tool_call: Vec::new(),
-            after_tool_call: Vec::new(),
-            on_permission_ask: Vec::new(),
-            on_message: Vec::new(),
-            on_cost_tick: Vec::new(),
-            on_step_finish: Vec::new(),
-            on_compaction: Vec::new(),
-            on_session_status: Vec::new(),
-            on_event: Vec::new(),
-            notification: Vec::new(),
+        macro_rules! init_context {
+            ($( ($method:ident, $field:ident, $kind:ident, $ctx:ty) ),+ $(,)?) => {
+                Self {
+                    manifest,
+                    raw_config,
+                    core_api,
+                    registered_agents: Vec::new(),
+                    registered_tools: Vec::new(),
+                    registered_provider: None,
+                    next_index: 0,
+                    $( $field: Vec::new(), )+
+                }
+            };
         }
+        for_each_hook_kind!(init_context)
     }
 
     #[must_use]
@@ -154,27 +168,16 @@ impl PluginContext {
     /// Drain all registrations into a single struct the host consumes.
     #[must_use]
     pub fn into_registrations(self) -> PluginRegistrations {
+        macro_rules! drain_chains {
+            ($( ($method:ident, $field:ident, $kind:ident, $ctx:ty) ),+ $(,)?) => {
+                HookChains { $( $field: self.$field, )+ }
+            };
+        }
         PluginRegistrations {
             agents: self.registered_agents,
             tools: self.registered_tools,
             provider: self.registered_provider,
-            chains: HookChains {
-                before_turn: self.before_turn,
-                after_turn: self.after_turn,
-                on_chat_params: self.on_chat_params,
-                on_chat_messages: self.on_chat_messages,
-                on_chat_headers: self.on_chat_headers,
-                before_tool_call: self.before_tool_call,
-                after_tool_call: self.after_tool_call,
-                on_permission_ask: self.on_permission_ask,
-                on_message: self.on_message,
-                on_cost_tick: self.on_cost_tick,
-                on_step_finish: self.on_step_finish,
-                on_compaction: self.on_compaction,
-                on_session_status: self.on_session_status,
-                on_event: self.on_event,
-                notification: self.notification,
-            },
+            chains: for_each_hook_kind!(drain_chains),
         }
     }
 
@@ -227,112 +230,38 @@ impl PluginContext {
     }
 }
 
-/// Per-hook registration — generated for all 15 hook kinds via the
-/// macro below. Each method signature is identical except for the
-/// closure context type and the chain it pushes into.
+/// Per-hook registration — generates one `on_*` method per hook kind
+/// from the canonical [`for_each_hook_kind!`] list. Each method signature
+/// is identical except for the closure context type and the chain it
+/// pushes into.
 ///
-/// Adding a new hook kind requires updating N sites:
-///   1. `HookKind` enum variant (openlet-core/src/hooks.rs)
-///   2. `HookChains` struct field + `merge()` + `sort_all!` (openlet-core/src/dispatch.rs)
-///   3. `PluginContext` struct field + `into_registrations()` chain (this file, above)
-///   4. `impl_on_hook!` invocation (this file, below)
-///   5. `io` module context struct (openlet-core/src/hooks/io.rs)
+/// Adding a new hook kind is now a single-line edit to `for_each_hook_kind!`
+/// (which drives the struct fields, `new()`, `into_registrations`, AND these
+/// methods) plus its `HookKind` variant + `HookChains` field + `io` ctx
+/// struct in openlet-core.
 macro_rules! impl_on_hook {
-    ($method:ident, $field:ident, $kind:expr, $ctx:ty) => {
+    ($( ($method:ident, $field:ident, $kind:ident, $ctx:ty) ),+ $(,)?) => {
         impl PluginContext {
-            pub fn $method<F, Fut>(
-                &mut self,
-                priority: Priority,
-                func: F,
-            ) -> Result<(), PluginError>
-            where
-                F: Fn($ctx) -> Fut + Send + Sync + 'static,
-                Fut: Future<Output = HookResult<$ctx>> + Send + 'static,
-            {
-                self.assert_hook_capability($kind)?;
-                let entry = self.make_entry($kind, priority, func);
-                self.$field.push(entry);
-                Ok(())
-            }
+            $(
+                pub fn $method<F, Fut>(
+                    &mut self,
+                    priority: Priority,
+                    func: F,
+                ) -> Result<(), PluginError>
+                where
+                    F: Fn($ctx) -> Fut + Send + Sync + 'static,
+                    Fut: Future<Output = HookResult<$ctx>> + Send + 'static,
+                {
+                    self.assert_hook_capability(HookKind::$kind)?;
+                    let entry = self.make_entry(HookKind::$kind, priority, func);
+                    self.$field.push(entry);
+                    Ok(())
+                }
+            )+
         }
     };
 }
-
-impl_on_hook!(
-    on_before_turn,
-    before_turn,
-    HookKind::BeforeTurn,
-    BeforeTurnCtx
-);
-impl_on_hook!(on_after_turn, after_turn, HookKind::AfterTurn, AfterTurnCtx);
-impl_on_hook!(
-    on_chat_params,
-    on_chat_params,
-    HookKind::OnChatParams,
-    OnChatParamsCtx
-);
-impl_on_hook!(
-    on_chat_messages,
-    on_chat_messages,
-    HookKind::OnChatMessages,
-    OnChatMessagesCtx
-);
-impl_on_hook!(
-    on_chat_headers,
-    on_chat_headers,
-    HookKind::OnChatHeaders,
-    OnChatHeadersCtx
-);
-impl_on_hook!(
-    on_before_tool_call,
-    before_tool_call,
-    HookKind::BeforeToolCall,
-    BeforeToolCallCtx
-);
-impl_on_hook!(
-    on_after_tool_call,
-    after_tool_call,
-    HookKind::AfterToolCall,
-    AfterToolCallCtx
-);
-impl_on_hook!(
-    on_permission_ask,
-    on_permission_ask,
-    HookKind::OnPermissionAsk,
-    OnPermissionAskCtx
-);
-impl_on_hook!(on_message, on_message, HookKind::OnMessage, OnMessageCtx);
-impl_on_hook!(
-    on_cost_tick,
-    on_cost_tick,
-    HookKind::OnCostTick,
-    OnCostTickCtx
-);
-impl_on_hook!(
-    on_step_finish,
-    on_step_finish,
-    HookKind::OnStepFinish,
-    OnStepFinishCtx
-);
-impl_on_hook!(
-    on_compaction,
-    on_compaction,
-    HookKind::OnCompaction,
-    OnCompactionCtx
-);
-impl_on_hook!(
-    on_session_status,
-    on_session_status,
-    HookKind::OnSessionStatus,
-    OnSessionStatusCtx
-);
-impl_on_hook!(on_event, on_event, HookKind::OnEvent, OnEventCtx);
-impl_on_hook!(
-    on_notification,
-    notification,
-    HookKind::Notification,
-    NotificationCtx
-);
+for_each_hook_kind!(impl_on_hook);
 
 impl PluginContext {
     /// Emit a user-facing notification. Pushes a [`NotificationCtx`]

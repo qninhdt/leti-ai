@@ -93,18 +93,7 @@ pub(crate) async fn build_loop_context(
 
     let loop_ctx = LoopContext {
         agent_id,
-        handles: RuntimeHandles {
-            fs: agent.fs.clone(),
-            permission: state.permission.clone(),
-            events: state.events.clone(),
-            artifacts: state.artifacts.clone(),
-            registry: state.tool_registry.clone(),
-            hook_chains: state.hook_chains.clone(),
-            questions: state.questions.clone(),
-            memory: state.memory.clone(),
-            task_registry: state.task_registry.clone(),
-            agent_registry: state.agent_registry.clone(),
-        },
+        handles: runtime_handles(state, agent.fs.clone(), state.permission.clone()),
         read_history,
         mode: session_meta.permission_mode,
         max_steps: MAX_TURN_STEPS,
@@ -124,6 +113,32 @@ pub(crate) async fn build_loop_context(
         input,
         memory: memory_arc(state),
     })
+}
+
+/// Assemble the `RuntimeHandles` bundle a loop context needs. All ten
+/// handles come straight off `AppState` EXCEPT `fs` and `permission`, which
+/// differ per driver (session agent fs + shared permission for a top-level
+/// turn; scoped child fs + child permission for a subagent). Both drivers
+/// route through this so adding a handle is a single-site edit and the two
+/// assemblies cannot drift apart.
+#[must_use]
+pub(crate) fn runtime_handles(
+    state: &AppState,
+    fs: Arc<dyn openlet_core::adapters::Filesystem>,
+    permission: Arc<dyn openlet_core::adapters::permission_manager::PermissionManager>,
+) -> RuntimeHandles {
+    RuntimeHandles {
+        fs,
+        permission,
+        events: state.events.clone(),
+        artifacts: state.artifacts.clone(),
+        registry: state.tool_registry.clone(),
+        hook_chains: state.hook_chains.clone(),
+        questions: state.questions.clone(),
+        memory: state.memory.clone(),
+        task_registry: state.task_registry.clone(),
+        agent_registry: state.agent_registry.clone(),
+    }
 }
 
 /// Per-turn step ceiling shared by every turn driver (top-level prompt

@@ -69,11 +69,7 @@ impl Tool for TodoTool {
     }
 
     fn permission(&self, _input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: "todo".to_string(),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple("todo")
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

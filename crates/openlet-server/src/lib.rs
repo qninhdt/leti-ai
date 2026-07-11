@@ -26,6 +26,7 @@ pub mod shutdown;
 pub mod subagent_driver;
 pub mod subagent_spawner;
 pub mod turn_driver;
+pub mod turn_slot;
 pub mod workspace_resolver;
 
 pub use app_state::{AgentResources, AppState, TurnHandle};

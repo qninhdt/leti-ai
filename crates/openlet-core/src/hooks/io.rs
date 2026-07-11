@@ -191,14 +191,7 @@ pub struct OnEventCtx {
 /// integrator log level. `Error` does NOT terminate the turn — the
 /// notification surface is observation-only; quota / safety stops
 /// still go through `OnCostTick` / `BeforeToolCall::Deny`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NotificationLevel {
-    #[default]
-    Info,
-    Warn,
-    Error,
-}
+pub use crate::types::event::NotificationLevel;
 
 /// User-facing notification emitted by a plugin via
 /// `PluginContext::emit_notification`. Other notification hooks

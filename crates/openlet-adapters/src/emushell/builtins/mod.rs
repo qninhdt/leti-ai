@@ -10,22 +10,22 @@
 //! Grouped by data-flow so each file stays small:
 //! - `transform_ops` — pure stream/arg transforms (echo, sort, uniq, …).
 //! - `text_ops`       — single-file content reads (cat, head, tail, …).
-//! - `sed_awk`        — the sed / awk 80/20 subsets.
+//! - `sed` / `awk`   — the sed / awk 80/20 subsets.
 //! - `tree_ops`       — directory + content search (ls, find, grep).
 //! - `mutation_ops`   — writes / deletes / moves (mkdir, rm, mv, cp, …).
 //! - `python_op`      — `python`/`python3` routed to the shared Monty
 //!   interpreter (the ONE exception to "coreutils only"; still sandboxed,
 //!   still `ctx.fs`-only, no host process).
 
+mod awk;
 mod mutation_ops;
 mod python_op;
-mod sed_awk;
+mod sed;
 mod text_ops;
 mod transform_ops;
 mod tree_ops;
 
 use openlet_core::adapters::filesystem::Filesystem;
-use openlet_core::error::FsError;
 use tokio_util::sync::CancellationToken;
 
 /// Seam handed to every builtin: the injected filesystem and the run's
@@ -96,8 +96,8 @@ pub async fn dispatch(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> Bui
         "cut" => text_ops::cut(ctx, argv, stdin).await,
         "tr" => text_ops::tr(argv, stdin),
         // sed / awk
-        "sed" => sed_awk::sed(ctx, argv, stdin).await,
-        "awk" => sed_awk::awk(ctx, argv, stdin).await,
+        "sed" => sed::sed(ctx, argv, stdin).await,
+        "awk" => awk::awk(ctx, argv, stdin).await,
         // tree_ops
         "ls" => tree_ops::ls(ctx, argv).await,
         "find" => tree_ops::find(ctx, argv).await,
@@ -120,18 +120,31 @@ pub async fn dispatch(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> Bui
     }
 }
 
-/// Human-readable one-liner for an `FsError`, matching the shape a real
-/// coreutil prints (`No such file or directory`, etc.) so the LLM sees a
-/// familiar message.
-pub(crate) fn fs_err_msg(e: &FsError) -> String {
-    match e {
-        FsError::NotFound(p) => format!("{p}: No such file or directory"),
-        FsError::OutsideWorkspace(p) => format!("{p}: Permission denied"),
-        FsError::Binary(p) => format!("{p}: binary file"),
-        FsError::TooLarge { path, .. } => format!("{path}: file too large"),
-        FsError::InvalidInput(m) | FsError::Io(m) => m.clone(),
-        FsError::Unsupported(m) => format!("operation not supported: {m}"),
+/// Re-exported from [`super::error`] — the single canonical `fs_err_msg`.
+/// Builtins reach it via `super::fs_err_msg` (unchanged call sites).
+pub(crate) use super::error::fs_err_msg;
+
+/// Read file operands into one buffer, else return `stdin`. Shared by
+/// every content builtin (cat/head/tail/wc/cut/sort/uniq/sed/awk) — the
+/// single canonical copy of what used to be triplicated as `gather`
+/// (text_ops, sed_awk) and `gather_input` (transform_ops).
+pub(super) async fn gather(
+    ctx: &BuiltinCtx<'_>,
+    name: &str,
+    files: &[String],
+    stdin: &str,
+) -> Result<String, BuiltinResult> {
+    if files.is_empty() {
+        return Ok(stdin.to_string());
     }
+    let mut out = String::new();
+    for f in files {
+        match ctx.fs.read(std::path::Path::new(f), None).await {
+            Ok(bytes) => out.push_str(&String::from_utf8_lossy(&bytes)),
+            Err(e) => return Err(BuiltinResult::err(format!("{name}: {}", fs_err_msg(&e)), 1)),
+        }
+    }
+    Ok(out)
 }
 
 /// Split a flag-cluster arg like `-la` into individual short flags. Returns

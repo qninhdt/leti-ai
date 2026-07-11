@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
@@ -43,15 +43,8 @@ pub struct PythonInput {
     pub timeout_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct PythonOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-    pub timed_out: bool,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
-}
+/// Field-identical alias of [`crate::tools::builtins::ProcessOutput`].
+pub type PythonOutput = super::ProcessOutput;
 
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const MAX_TIMEOUT_MS: u64 = 120_000;
@@ -88,11 +81,7 @@ impl Tool for PythonTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("python:{}", input.code),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("python:{}", input.code))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

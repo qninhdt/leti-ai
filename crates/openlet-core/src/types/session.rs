@@ -153,7 +153,7 @@ impl SessionMeta {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SessionCapabilities {
     /// Caller can answer interactive `ask_user` prompts via the
-    /// `POST /v1/sessions/:id/question/answer` endpoint.
+    /// `POST /v1/session/:id/question/answer` endpoint.
     #[serde(default)]
     pub user_questions: bool,
 }

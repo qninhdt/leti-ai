@@ -55,11 +55,7 @@ impl Tool for EditTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("edit:{}", input.path.display()),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("edit:{}", input.path.display()))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

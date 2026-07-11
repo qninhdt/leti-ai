@@ -17,8 +17,9 @@ use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::runtime::{ConversationRuntime, RuntimeConfig};
 use openlet_plugin_api::context::CoreApi;
 use openlet_server::boot::{
-    build_tool_registry, install_plugins, openrouter_config_from_env, resolve_model_base_url,
-    resolve_workspace_root, single_default_agent,
+    build_tool_registry, install_plugins, openrouter_config_from_env,
+    recover_stale_running_sessions, resolve_model_base_url, resolve_workspace_root,
+    single_default_agent,
 };
 use openlet_server::permission_seed::default_permission_rules;
 use openlet_server::{
@@ -167,32 +168,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     ));
 
     // Crash recovery — mark any leftover Running sessions as Errored.
-    let stale = memory
-        .list_sessions(openlet_core::types::session::SessionFilter {
-            status: Some(openlet_core::types::session::SessionStatus::Running),
-            ..Default::default()
-        })
-        .await
-        .context("listing stale running sessions")?;
-    for s in stale {
-        let _ = memory
-            .update_status(
-                s.id,
-                openlet_core::types::session::SessionStatus::Errored,
-                "crashed",
-            )
-            .await;
-        let _ = events
-            .publish(
-                openlet_core::types::event::AgentEvent::SessionStatus {
-                    session_id: s.id,
-                    status: openlet_core::types::session::SessionStatus::Errored,
-                    at: chrono::Utc::now(),
-                },
-                openlet_core::adapters::event_sink::Persistence::Durable,
-            )
-            .await;
-    }
+    recover_stale_running_sessions(&memory, &events).await?;
 
     let runtime = Arc::new(ConversationRuntime::with_hook_chains(
         provider.clone(),
@@ -286,38 +262,10 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         .with_context(|| format!("binding {}", config.bind_addr))?;
     let local_addr = listener.local_addr().ok();
 
-    // Refuse non-loopback binds unless BOTH an explicit operator opt-in
-    // (OPENLET_ALLOW_NON_LOOPBACK=1) AND a non-dev authenticator are in
-    // place. A dev authenticator admits every request as the same
-    // principal, so exposing it beyond loopback would hand the whole API
-    // to the network — a warn is not access control. Fail-closed.
+    // Fail-closed guard on the resolved listener address (see
+    // `boot::assert_bind_safe`).
     if let Some(addr) = local_addr {
-        let allow_non_loopback = std::env::var("OPENLET_ALLOW_NON_LOOPBACK")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        if !addr.ip().is_loopback() {
-            if !allow_non_loopback {
-                anyhow::bail!(
-                    "refusing to bind non-loopback address {addr} without \
-                     OPENLET_ALLOW_NON_LOOPBACK=1",
-                );
-            }
-            if authenticator_is_dev {
-                anyhow::bail!(
-                    "refusing to bind non-loopback address {addr} with the dev authenticator; \
-                     it admits every request as one principal. Run with \
-                     OPENLET_RUNTIME_PROFILE=cloud and a real Authenticator before exposing \
-                     beyond loopback",
-                );
-            }
-            tracing::warn!(
-                bind = %addr,
-                "bound NON-LOOPBACK address with a non-dev authenticator; \
-                 ensure the deployment fronts this listener appropriately"
-            );
-        } else {
-            info!(bind = %addr, "bound loopback at http://{addr}");
-        }
+        openlet_server::boot::assert_bind_safe(addr, authenticator_is_dev)?;
     }
 
     // Spawn the metrics scrape endpoint on its own listener (separate

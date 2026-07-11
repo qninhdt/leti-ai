@@ -259,10 +259,7 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let mut end = max;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = crate::util::floor_char_boundary(s, max);
     format!("{}…", &s[..end])
 }
 

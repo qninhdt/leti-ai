@@ -13,7 +13,7 @@ function emptyMessage(sessionId: string, messageId: string): MessageView {
   };
 }
 
-export function getOrCreateMessage(
+function getOrCreateMessage(
   list: MessageView[],
   sessionId: string,
   messageId: string,
@@ -41,7 +41,7 @@ function upsertPart(parts: PartView[], partId: string): { parts: PartView[]; ind
 
 // Immutably replace the message at `index` within a session's list and
 // return the new top-level `messages` map.
-export function withMessage(
+function withMessage(
   messages: Record<string, MessageView[]>,
   sessionId: string,
   list: MessageView[],

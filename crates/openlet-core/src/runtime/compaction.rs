@@ -135,13 +135,7 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
         .iter()
         .filter(|m| !matches!(m.role, LlmRole::System))
         .collect();
-    let request = LlmMessage {
-        role: LlmRole::User,
-        content: COMPACTION_REQUEST.to_owned(),
-        reasoning: None,
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-    };
+    let request = LlmMessage::simple(LlmRole::User, COMPACTION_REQUEST.clone());
     if body.len() > keep {
         let split = body.len() - keep;
         for m in &body[..split] {

@@ -13,6 +13,8 @@ use openlet_core::adapters::filesystem::{GlobOpts, GlobSort, GrepArgs, GrepHit};
 use openlet_core::error::FsError;
 use regex::RegexBuilder;
 
+use crate::util::floor_char_boundary;
+
 /// Cap grep file size to bound memory + tail-latency on accidental
 /// loopback symlinks (e.g. `/proc/self/mem`) and giant binaries.
 const GREP_MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
@@ -23,17 +25,6 @@ const GREP_MAX_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Cap files visited so a workspace of millions of small files cannot
 /// stall a single grep dispatch indefinitely.
 const GREP_MAX_FILES: usize = 50_000;
-
-/// Floor `index` to the nearest UTF-8 char boundary at or below it.
-fn floor_char_boundary(s: &str, mut index: usize) -> usize {
-    if index >= s.len() {
-        return s.len();
-    }
-    while !s.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
-}
 
 pub(crate) async fn glob(
     root: &Path,

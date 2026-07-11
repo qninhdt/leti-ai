@@ -33,18 +33,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.OPENLET_NIGHTLY_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install toolchain
-        run: rustup show
-
-      - name: Cache cargo + target
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: ${{ runner.os }}-cargo-
+      - uses: ./.github/actions/rust-setup
 
       - name: Run gated acceptance suite
         env:

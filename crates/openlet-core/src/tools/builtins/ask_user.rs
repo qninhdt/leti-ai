@@ -11,7 +11,7 @@
 //! 3. Registers a oneshot in [`QuestionRegistry`], emits
 //!    [`AgentEvent::QuestionRequested`], and awaits the receiver under
 //!    a timeout.
-//! 4. Frontend POSTs to `/v1/sessions/:id/question/answer` with the
+//! 4. Frontend POSTs to `/v1/session/:id/question/answer` with the
 //!    `question_id` + selected option indices.
 //!
 //! Permission string: `ask_user` (no per-input parameterization — the
@@ -121,11 +121,7 @@ impl Tool for AskUserTool {
     }
 
     fn permission(&self, _input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: "ask_user".to_string(),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple("ask_user")
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

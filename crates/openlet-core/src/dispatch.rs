@@ -80,41 +80,13 @@ pub struct HookChains {
     pub notification: Vec<HookEntry<NotificationCtx>>,
 }
 
-impl HookChains {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Extend every chain from `other`, consuming it. Replaces the
-    /// 15-line hand-written extend block in the plugin registry.
-    pub fn merge(&mut self, other: HookChains) {
-        self.before_turn.extend(other.before_turn);
-        self.after_turn.extend(other.after_turn);
-        self.on_chat_params.extend(other.on_chat_params);
-        self.on_chat_messages.extend(other.on_chat_messages);
-        self.on_chat_headers.extend(other.on_chat_headers);
-        self.before_tool_call.extend(other.before_tool_call);
-        self.after_tool_call.extend(other.after_tool_call);
-        self.on_permission_ask.extend(other.on_permission_ask);
-        self.on_message.extend(other.on_message);
-        self.on_cost_tick.extend(other.on_cost_tick);
-        self.on_step_finish.extend(other.on_step_finish);
-        self.on_compaction.extend(other.on_compaction);
-        self.on_session_status.extend(other.on_session_status);
-        self.on_event.extend(other.on_event);
-        self.notification.extend(other.notification);
-    }
-
-    /// Sort every chain in canonical order: priority desc, manifest_id
-    /// asc, registration_index asc. Idempotent.
-    pub fn sort_all(&mut self) {
-        macro_rules! sort_each {
-            ($($field:ident),+ $(,)?) => {
-                $(sort_chain(&mut self.$field);)+
-            };
-        }
-        sort_each!(
+/// The single canonical list of every hook-chain field. Invokes `$m!` with
+/// all field idents so `merge`/`sort_all` (and any future per-chain sweep)
+/// stay driven by ONE list — adding a hook kind is a single-line edit here
+/// plus the struct field itself.
+macro_rules! for_each_chain {
+    ($m:ident) => {
+        $m!(
             before_turn,
             after_turn,
             on_chat_params,
@@ -131,6 +103,37 @@ impl HookChains {
             on_event,
             notification,
         );
+    };
+}
+
+impl HookChains {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Extend every chain from `other`, consuming it. Driven by the same
+    /// field list as [`Self::sort_all`] via [`for_each_chain!`], so adding
+    /// a hook kind is a single-line edit to that list.
+    pub fn merge(&mut self, other: HookChains) {
+        let mut other = other;
+        macro_rules! extend_each {
+            ($($field:ident),+ $(,)?) => {
+                $(self.$field.extend(std::mem::take(&mut other.$field));)+
+            };
+        }
+        for_each_chain!(extend_each);
+    }
+
+    /// Sort every chain in canonical order: priority desc, manifest_id
+    /// asc, registration_index asc. Idempotent.
+    pub fn sort_all(&mut self) {
+        macro_rules! sort_each {
+            ($($field:ident),+ $(,)?) => {
+                $(sort_chain(&mut self.$field);)+
+            };
+        }
+        for_each_chain!(sort_each);
     }
 }
 

@@ -128,12 +128,14 @@ impl AppStateBuilder {
         self
     }
 
+    /// Retained as a cloud-binary extension point; unused in-tree.
     #[must_use]
     pub fn read_histories(mut self, v: Arc<DashMap<SessionId, ReadHistory>>) -> Self {
         self.read_histories = Some(v);
         self
     }
 
+    /// Retained as a cloud-binary extension point; unused in-tree.
     #[must_use]
     pub fn active_turns(mut self, v: Arc<DashMap<SessionId, TurnHandle>>) -> Self {
         self.active_turns = Some(v);

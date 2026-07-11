@@ -51,11 +51,7 @@ impl Tool for ListTool {
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: format!("read:{}", input.path.display()),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple(format!("read:{}", input.path.display()))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

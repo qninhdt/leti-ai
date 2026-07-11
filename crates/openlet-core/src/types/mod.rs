@@ -6,6 +6,7 @@ pub mod message;
 pub mod pagination;
 pub mod part;
 pub mod permission;
+pub mod question;
 pub mod session;
 
 pub use agent::{AgentId, AgentSpec};
@@ -13,4 +14,5 @@ pub use event::{AgentEvent, EventFilter};
 pub use message::{Message, MessageId, Role};
 pub use part::{Part, PartId};
 pub use permission::{AlwaysScope, Decision, PermissionMode, PermissionRequest, PermissionRule};
+pub use question::QuestionId;
 pub use session::{SessionFilter, SessionId, SessionMeta, SessionStatus};

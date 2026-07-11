@@ -56,3 +56,32 @@ pub struct LlmMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
 }
+
+impl LlmMessage {
+    /// Plain message with only a role + content — no reasoning, no tool
+    /// calls, no tool_call_id. Collapses the identical struct literal
+    /// projection/compaction repeat for system/user summaries.
+    #[must_use]
+    pub fn simple(role: LlmRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            reasoning: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+        }
+    }
+
+    /// `tool`-role result message paired with an assistant tool call by
+    /// `call_id`.
+    #[must_use]
+    pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: LlmRole::Tool,
+            content: content.into(),
+            reasoning: None,
+            tool_calls: Vec::new(),
+            tool_call_id: Some(call_id.into()),
+        }
+    }
+}

@@ -283,6 +283,20 @@ impl From<Usage> for UsageDto {
 }
 
 impl From<AgentEvent> for EventDto {
+    // COMPILE-TIME EXHAUSTIVENESS GUARD: this `match` has NO wildcard (`_`)
+    // arm by design. Adding a variant to core `AgentEvent` therefore fails to
+    // compile here until a matching `EventDto` arm is written — the DTO mirror
+    // can never silently drop a new event kind. `event_dto_roundtrip.rs`
+    // exercises every arm at runtime as the second backstop.
+    //
+    // The mirror is retained (rather than feature-gating `ToSchema` onto core
+    // types) because the conversion is intentionally LOSSY on the wire —
+    // `UsageDto` sums `cache_write_tokens + cache_creation_input_tokens` into
+    // one field and drops `cost_usd`, and `PermissionAsked` folds `ask_id`
+    // into `PermissionRequestDto`. A derived schema on the 7-field core `Usage`
+    // would change the published OpenAPI contract the TUI consumes, so the
+    // hand-written mirror is the contract boundary. See the plan's Phase 7
+    // decision (Option (b)): keep the mirror + this exhaustiveness guard.
     fn from(ev: AgentEvent) -> Self {
         match ev {
             AgentEvent::SessionStatus {

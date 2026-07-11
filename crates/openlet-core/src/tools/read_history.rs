@@ -35,12 +35,6 @@ impl ReadHistory {
         let g = self.inner.lock().await;
         g.contains(path)
     }
-
-    /// Snapshot — primarily for tests and diagnostic dumps.
-    pub async fn snapshot(&self) -> Vec<PathBuf> {
-        let g = self.inner.lock().await;
-        g.iter().cloned().collect()
-    }
 }
 
 #[cfg(test)]

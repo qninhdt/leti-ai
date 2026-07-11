@@ -1,5 +1,5 @@
 //! `QuestionRegistry` — single-use rendezvous between an `ask_user` tool
-//! invocation and the eventual `POST /v1/sessions/:id/question/answer`
+//! invocation and the eventual `POST /v1/session/:id/question/answer`
 //! reply.
 //!
 //! The tool registers a fresh [`QuestionId`] (UUIDv7) plus a
@@ -15,50 +15,15 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::oneshot;
-use uuid::Uuid;
 
 use crate::types::session::SessionId;
 
-/// Strongly-typed question identifier (UUIDv7 — sortable by issue time).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct QuestionId(pub Uuid);
-
-impl QuestionId {
-    /// Mint a fresh UUIDv7-based id. Time-ordered so registry entries
-    /// inserted close together stay clustered, which keeps DashMap
-    /// shard locality reasonable under load.
-    #[must_use]
-    pub fn new() -> Self {
-        Self(Uuid::now_v7())
-    }
-
-    #[must_use]
-    pub fn as_uuid(&self) -> Uuid {
-        self.0
-    }
-}
-
-impl Default for QuestionId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl std::fmt::Display for QuestionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl From<Uuid> for QuestionId {
-    fn from(v: Uuid) -> Self {
-        Self(v)
-    }
-}
+/// [`QuestionId`] now lives in `types/question.rs` (IO-free domain data)
+/// so `types/event.rs` can reference it without a `types → runtime` edge.
+/// Re-exported here for back-compat with existing `runtime::question_registry::QuestionId` paths.
+pub use crate::types::question::QuestionId;
 
 /// Failure modes for [`QuestionRegistry::resolve`]. Single-use semantics
 /// mean the only happy path returns `Ok(())`; everything else maps to a
@@ -79,7 +44,7 @@ pub enum ResolveError {
     /// The path session id doesn't match the session that registered
     /// this question. The HTTP route asserts this so an attacker who
     /// guessed (or sniffed) a `question_id` for session B can't resolve
-    /// it through `/v1/sessions/A/question/answer`.
+    /// it through `/v1/session/A/question/answer`.
     #[error("question_session_mismatch")]
     SessionMismatch,
 }
@@ -129,7 +94,7 @@ impl QuestionRegistry {
     /// Register a fresh sender keyed by `qid`, scoped to `session_id`.
     /// `resolve` later verifies the caller's path session matches —
     /// without that check, a question_id leaked from session B could be
-    /// answered via `/v1/sessions/A/question/answer`. Replacing an
+    /// answered via `/v1/session/A/question/answer`. Replacing an
     /// existing key is a programmer bug — UUIDv7 ids must be unique by
     /// construction — but we tolerate it by closing the previous sender
     /// so its awaiter observes the cancel branch instead of hanging

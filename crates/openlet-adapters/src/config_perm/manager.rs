@@ -109,6 +109,8 @@ impl ConfigPermissionMgr {
     }
 
     /// Read-only peek at a pending ask's request for SSE rendering.
+    ///
+    /// Retained as a cloud-binary extension point; unused in-tree.
     pub fn peek_request(&self, ask_id: AskId) -> Option<PermissionRequest> {
         self.pending.get(&ask_id).map(|e| e.request.clone())
     }

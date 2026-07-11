@@ -38,7 +38,7 @@ pub struct ToolCtx {
     pub cancel: CancellationToken,
     /// In-flight `ask_user` rendezvous map. The `ask_user` tool registers
     /// a oneshot here at run-time; the REST handler resolves the entry on
-    /// the matching `POST /v1/sessions/:id/question/answer` reply.
+    /// the matching `POST /v1/session/:id/question/answer` reply.
     pub questions: Arc<QuestionRegistry>,
     /// Memory-store handle. Tools that need to inspect session-level
     /// state (capabilities, extensions, permission mode) read through

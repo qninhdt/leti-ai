@@ -4,15 +4,17 @@
 // Enter submits, Shift+Enter newlines, Up/Down walk prompt history, and Esc
 // arms the interrupt while a turn streams.
 
-import { createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
+import { createEffect, createSignal, on, onCleanup } from "solid-js";
 
 import { theme } from "../theme/index.js";
-import { useStore } from "../store/index.js";
 import { useStoreSelector } from "../render/store-bridge.js";
 import { useRuntime } from "../render/app-context.js";
 import { createPromptSubmit } from "../render/use-prompt-submit.js";
 import { createMentionAutocomplete } from "../hooks/use-mention-autocomplete.js";
 import { createSlashAutocomplete } from "../hooks/use-slash-autocomplete.js";
+import { createPromptDerived } from "./use-prompt-derived.js";
+import { createInterruptArm } from "./use-interrupt-arm.js";
+import { createPromptKeyHandler } from "./create-prompt-key-handler.js";
 import { PromptMetaRow } from "./prompt-meta-row.js";
 import { ContextBar } from "./context-bar.js";
 import { PromptShelf } from "./prompt-shelf.js";
@@ -20,7 +22,6 @@ import { PromptHintRow } from "./prompt-hint-row.js";
 import { FileAutocomplete } from "../dialogs/file-autocomplete.js";
 import { SlashAutocomplete } from "../dialogs/slash-autocomplete.js";
 import { PROMPT_BODY_BORDER } from "../utils/border-chars.js";
-import { formatTokens, formatUsd } from "../utils/format.js";
 import { placeholderText, randomPlaceholderIndex } from "../utils/placeholder-rotation.js";
 
 import { Show } from "solid-js";
@@ -28,7 +29,6 @@ import type { TextareaRenderable, KeyEvent, MouseEvent } from "@opentui/core";
 import type { MessageView } from "../store/index.js";
 
 const PALETTE_SHORTCUT = process.platform === "darwin" ? "⌘K" : "ctrl+k";
-const INTERRUPT_RESET_MS = 5000;
 const EMPTY_MESSAGES: MessageView[] = [];
 
 const PROMPT_KEY_BINDINGS = [
@@ -47,9 +47,7 @@ export function PromptEditor() {
   let input: TextareaRenderable | undefined;
   const [value, setValue] = createSignal("");
   const [historyIdx, setHistoryIdx] = createSignal<number | null>(null);
-  const [interruptCount, setInterruptCount] = createSignal(0);
   const [placeholderIdx, setPlaceholderIdx] = createSignal(randomPlaceholderIndex());
-  let interruptTimer: ReturnType<typeof setTimeout> | undefined;
 
   const mention = createMentionAutocomplete(() => input);
   const slash = createSlashAutocomplete(() => input, runtime);
@@ -63,56 +61,16 @@ export function PromptEditor() {
   });
   const overlayCount = useStoreSelector((s) => s.overlays.length);
 
-  const session = createMemo(() => {
-    const id = activeSessionId();
-    return id ? sessions()[id] ?? null : null;
-  });
-  const agent = createMemo(() => {
-    const s = session();
-    const list = agents();
-    return s ? list.find((a) => a.id === s.agent_id) ?? null : list[0] ?? null;
-  });
-  const model = createMemo(() => agent()?.model ?? "—");
-  const accent = createMemo(() => (agent() ? oc.borderActive : oc.border));
-  const streaming = createMemo(() => session()?.status === "running");
+  const { agent, model, accent, streaming, usageText, costText, contextTokens } =
+    createPromptDerived({ activeSessionId, sessions, agents, messages, oc });
 
-  const usageText = createMemo(() => {
-    const list = messages();
-    for (let i = list.length - 1; i >= 0; i--) {
-      const total = list[i]?.step_finish?.usage_total;
-      if (total && total > 0) return formatTokens(total);
-    }
-    return undefined;
-  });
-  const costText = createMemo(() => {
-    const raw = session()?.cost_decimal_str;
-    if (!raw) return undefined;
-    return Number.parseFloat(raw) > 0 ? formatUsd(raw) : undefined;
-  });
-
-  // Latest provider-reported prompt tokens — the compaction anchor, so the
-  // context bar tracks the same number should_compact does. Undefined before
-  // the first turn returns usage (bar degrades to window size only).
-  const contextTokens = createMemo(() => {
-    const list = messages();
-    for (let i = list.length - 1; i >= 0; i--) {
-      const tok = list[i]?.step_finish?.context_tokens;
-      if (tok && tok > 0) return tok;
-    }
-    return undefined;
+  const { interruptCount, armInterrupt, resetInterrupt } = createInterruptArm({
+    activeSessionId,
+    streaming,
+    runtime,
   });
 
   createEffect(on(activeSessionId, () => setPlaceholderIdx(randomPlaceholderIndex()), { defer: true }));
-
-  createEffect(
-    on(
-      streaming,
-      (s) => {
-        if (!s) setInterruptCount(0);
-      },
-      { defer: true },
-    ),
-  );
 
   createEffect(() => {
     if (!input || input.isDestroyed) return;
@@ -121,10 +79,6 @@ export function PromptEditor() {
     } else if (!input.focused) {
       input.focus();
     }
-  });
-
-  onCleanup(() => {
-    if (interruptTimer) clearTimeout(interruptTimer);
   });
 
   function recallHistory(delta: -1 | 1): void {
@@ -149,105 +103,18 @@ export function PromptEditor() {
     input.gotoBufferEnd();
   }
 
-  function armInterrupt(): void {
-    const id = activeSessionId();
-    if (!streaming() || !id) return;
-    const next = interruptCount() + 1;
-    setInterruptCount(next);
-    if (interruptTimer) clearTimeout(interruptTimer);
-    interruptTimer = setTimeout(() => setInterruptCount(0), INTERRUPT_RESET_MS);
-    if (next >= 2) {
-      void runtime.client.abort(id).catch(() => {});
-      setInterruptCount(0);
-    }
-  }
-
-  const onKeyDown = (event: KeyEvent): void => {
-    if (mention.popupOpen()) {
-      if (event.name === "up") {
-        event.preventDefault();
-        mention.setAcIndex((i: number) => Math.max(0, i - 1));
-        return;
-      }
-      if (event.name === "down") {
-        event.preventDefault();
-        mention.setAcIndex((i: number) => Math.min(mention.acFiles().length - 1, i + 1));
-        return;
-      }
-      if (event.name === "return" || event.name === "tab") {
-        event.preventDefault();
-        const choice = mention.acFiles()[mention.acIndex()];
-        if (choice) mention.acceptMention(choice.path);
-        return;
-      }
-      if (event.name === "escape") {
-        event.preventDefault();
-        mention.setAcIndex(0);
-        return;
-      }
-    }
-    if (slash.popupOpen()) {
-      if (event.name === "up") {
-        event.preventDefault();
-        slash.setIndex((i: number) => Math.max(0, i - 1));
-        return;
-      }
-      if (event.name === "down") {
-        event.preventDefault();
-        slash.setIndex((i: number) => Math.min(slash.suggestions().length - 1, i + 1));
-        return;
-      }
-      if (event.name === "return") {
-        // Run the highlighted command and clear the buffer — a slash prompt is
-        // a command invocation, not text to submit to the model.
-        event.preventDefault();
-        slash.runSelection();
-        return;
-      }
-      if (event.name === "tab") {
-        event.preventDefault();
-        slash.completeSelection();
-        return;
-      }
-      if (event.name === "escape") {
-        event.preventDefault();
-        slash.dismiss();
-        return;
-      }
-    }
-    handleKey(event);
-  };
-
-  function handleKey(event: KeyEvent): void {
-    if (event.name === "k" && event.ctrl) {
-      event.preventDefault();
-      useStore.getState().pushOverlay({ kind: "command_palette" });
-      return;
-    }
-    if (event.name === "up" && (input?.cursorOffset ?? 0) === 0) {
-      event.preventDefault();
-      recallHistory(-1);
-      return;
-    }
-    if (event.name === "down" && input && input.cursorOffset === input.plainText.length) {
-      event.preventDefault();
-      recallHistory(1);
-      return;
-    }
-    if (event.name === "tab") {
-      event.preventDefault();
-      return;
-    }
-    if (event.name === "escape") {
-      event.preventDefault();
-      armInterrupt();
-    }
-  }
+  const onKeyDown = createPromptKeyHandler({
+    mention,
+    slash,
+    getInput: () => input,
+    recallHistory,
+    armInterrupt,
+  });
 
   function onSubmit(): void {
     const text = input && !input.isDestroyed ? input.plainText : value();
     setHistoryIdx(null);
-    setInterruptCount(0);
+    resetInterrupt();
     applyText("");
     void submit(text);
   }

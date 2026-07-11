@@ -17,19 +17,22 @@ use crate::hooks::io::{OnChatHeadersCtx, OnChatMessagesCtx, OnChatParamsCtx};
 use crate::projection::LlmMessage;
 use crate::types::session::SessionId;
 
-/// Run the OnChatParams chain. Returns the (possibly mutated) ctx; on
-/// Denied surfaces a `Provider(Cancelled)` error after publishing the
-/// fault + warn so the runtime halts the turn cleanly.
-pub(super) async fn run_chat_params(
-    chains: &HookChains,
+/// Run a denyable hook chain that threads a ctx `I` through and halts
+/// the turn on `Denied`. Collapses the byte-identical param/messages
+/// bodies: empty-chain fast path → return `initial`; otherwise dispatch,
+/// return the mutated ctx on `Completed`/`Stopped`, or publish the
+/// fault + warn and surface `Provider(Cancelled)` on `Denied`.
+async fn run_denyable_chain<I: Send + 'static>(
+    chain: &[crate::dispatch::HookEntry<I>],
     events: &Arc<dyn EventSink>,
     session_id: SessionId,
-    initial: OnChatParamsCtx,
-) -> Result<OnChatParamsCtx, CoreError> {
-    if chains.on_chat_params.is_empty() {
+    label: &'static str,
+    initial: I,
+) -> Result<I, CoreError> {
+    if chain.is_empty() {
         return Ok(initial);
     }
-    match dispatch(&chains.on_chat_params, initial).await {
+    match dispatch(chain, initial).await {
         DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => Ok(c),
         DispatchOutcome::Denied {
             reason,
@@ -39,7 +42,7 @@ pub(super) async fn run_chat_params(
             publish_denied_warn(
                 events,
                 Some(session_id),
-                "on_chat_params",
+                label,
                 &reason,
                 &feedback,
                 plugin_fault.as_ref(),
@@ -50,6 +53,25 @@ pub(super) async fn run_chat_params(
     }
 }
 
+/// Run the OnChatParams chain. Returns the (possibly mutated) ctx; on
+/// Denied surfaces a `Provider(Cancelled)` error after publishing the
+/// fault + warn so the runtime halts the turn cleanly.
+pub(super) async fn run_chat_params(
+    chains: &HookChains,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
+    initial: OnChatParamsCtx,
+) -> Result<OnChatParamsCtx, CoreError> {
+    run_denyable_chain(
+        &chains.on_chat_params,
+        events,
+        session_id,
+        "on_chat_params",
+        initial,
+    )
+    .await
+}
+
 /// Run the OnChatMessages chain. Returns the (possibly mutated) ctx;
 /// see `run_chat_params` for Denied semantics.
 pub(super) async fn run_chat_messages(
@@ -58,28 +80,14 @@ pub(super) async fn run_chat_messages(
     session_id: SessionId,
     initial: OnChatMessagesCtx,
 ) -> Result<OnChatMessagesCtx, CoreError> {
-    if chains.on_chat_messages.is_empty() {
-        return Ok(initial);
-    }
-    match dispatch(&chains.on_chat_messages, initial).await {
-        DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => Ok(c),
-        DispatchOutcome::Denied {
-            reason,
-            feedback,
-            plugin_fault,
-        } => {
-            publish_denied_warn(
-                events,
-                Some(session_id),
-                "on_chat_messages",
-                &reason,
-                &feedback,
-                plugin_fault.as_ref(),
-            )
-            .await;
-            Err(CoreError::Provider(ProviderError::Cancelled))
-        }
-    }
+    run_denyable_chain(
+        &chains.on_chat_messages,
+        events,
+        session_id,
+        "on_chat_messages",
+        initial,
+    )
+    .await
 }
 
 /// Run the OnChatHeaders chain (observation-only today; phase 4

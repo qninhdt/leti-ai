@@ -29,10 +29,13 @@ services:
   # selected by env, so no real OpenRouter key is needed.
   server-mock:
     profiles: ["mock"]
-    image: openlet-server:local
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Inherit the image + build block from the base `server` service instead
+    # of re-declaring `context`/`dockerfile` — one source of truth for how the
+    # image is built. `extends` merges the referenced service's config; the
+    # keys below override/extend it.
+    extends:
+      file: docker-compose.yml
+      service: server
     environment:
       OPENLET_BIND: 0.0.0.0:8787
       OPENLET_DATA_DIR: /data

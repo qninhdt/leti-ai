@@ -89,3 +89,4 @@ jobs:
           push: true
           tags: ${{ vars.REGISTRY }}/openlet-server:latest
           cache-from: type=gha
+          cache-to: type=gha,mode=max

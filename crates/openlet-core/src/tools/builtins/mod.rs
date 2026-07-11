@@ -7,6 +7,23 @@
 //! (`crates/openlet-plugins/core-tools/src/lib.rs`), which is the
 //! canonical custom-tool example for downstream integrators.
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Shared captured output of a subprocess-style tool (`bash` / `python`).
+/// `BashOutput` and `PythonOutput` are field-identical aliases of this —
+/// the two executors return the same shape, only their permission string
+/// and default timeout differ.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProcessOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub timed_out: bool,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
 pub mod ask_user;
 pub(crate) mod ask_user_runner;
 pub mod bash;

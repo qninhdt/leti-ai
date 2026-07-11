@@ -88,11 +88,7 @@ impl Tool for EnterPlanModeTool {
     }
 
     fn permission(&self, _: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: "agent:enter_plan_mode".into(),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple("agent:enter_plan_mode")
     }
 
     async fn run(&self, ctx: ToolCtx, _: Self::Input) -> Result<Self::Output, ToolError> {
@@ -143,11 +139,7 @@ impl Tool for ExitPlanModeTool {
     }
 
     fn permission(&self, _: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: "agent:exit_plan_mode".into(),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple("agent:exit_plan_mode")
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

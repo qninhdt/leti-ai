@@ -1,6 +1,7 @@
-// Hand-rolled DTOs mirroring crates/openlet-protocol. Replaced at runtime by
-// `npm run codegen` which writes openapi-fetch's `paths` map to schema.d.ts.
-// Keep these in sync with openlet_protocol::dto::*.
+// Hand-rolled DTOs mirroring crates/openlet-protocol — the actual types the
+// client + store speak. `npm run codegen` writes `schema.d.ts` as a
+// contract-drift reference snapshot (imported by nothing); it does NOT replace
+// these. Keep these in sync with openlet_protocol::dto::*.
 
 export type DeltaKind = "text" | "reasoning" | "tool_args";
 
@@ -161,11 +162,6 @@ export interface AbortAckDto {
 
 export interface CompactAckDto {
   compacted: boolean;
-}
-
-export interface ErrorDto {
-  code: string;
-  message: string;
 }
 
 export interface PluginInfoDto {

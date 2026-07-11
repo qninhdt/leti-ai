@@ -14,6 +14,8 @@ use openlet_core::error::FsError;
 use regex::{Regex, RegexBuilder};
 use std::path::PathBuf;
 
+use crate::util::floor_char_boundary;
+
 /// A candidate row to re-match: workspace-relative path + its indexed body.
 pub(crate) struct Candidate {
     pub path: PathBuf,
@@ -28,18 +30,6 @@ pub(crate) fn compile(args: &GrepArgs) -> Result<Regex, FsError> {
         .case_insensitive(args.case_insensitive)
         .build()
         .map_err(|e| FsError::InvalidInput(e.to_string()))
-}
-
-/// Floor `index` to the nearest UTF-8 char boundary at or below it. Mirrors the
-/// local engine so truncated hit text is byte-identical across backends.
-fn floor_char_boundary(s: &str, mut index: usize) -> usize {
-    if index >= s.len() {
-        return s.len();
-    }
-    while !s.is_char_boundary(index) {
-        index -= 1;
-    }
-    index
 }
 
 /// Re-match `candidates` against the compiled pattern, emitting `GrepHit`s in

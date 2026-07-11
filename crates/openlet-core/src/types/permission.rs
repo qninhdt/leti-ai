@@ -85,6 +85,20 @@ pub struct PermissionRequest {
     pub timeout: Option<Duration>,
 }
 
+impl PermissionRequest {
+    /// Construct a request carrying only a permission string (no reason,
+    /// no timeout). Collapses the identical `PermissionRequest { .. }`
+    /// literal that every builtin tool's `permission()` returns.
+    #[must_use]
+    pub fn simple(permission: impl Into<String>) -> Self {
+        Self {
+            permission: permission.into(),
+            reason: None,
+            timeout: None,
+        }
+    }
+}
+
 /// Outcome of a permission check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]

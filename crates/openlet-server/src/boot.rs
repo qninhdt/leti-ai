@@ -107,6 +107,82 @@ pub fn single_default_agent(
     (default_agent_id, agents)
 }
 
+/// Crash recovery — mark any leftover `Running` sessions as `Errored` and
+/// publish the durable status transition. A `Running` row at boot means the
+/// process died mid-turn; without this sweep the session would look live
+/// forever. Extracted verbatim from `main.rs` boot.
+pub async fn recover_stale_running_sessions(
+    memory: &Arc<dyn openlet_core::adapters::MemoryStore>,
+    events: &Arc<dyn openlet_core::adapters::EventSink>,
+) -> anyhow::Result<()> {
+    let stale = memory
+        .list_sessions(openlet_core::types::session::SessionFilter {
+            status: Some(openlet_core::types::session::SessionStatus::Running),
+            ..Default::default()
+        })
+        .await
+        .context("listing stale running sessions")?;
+    for s in stale {
+        let _ = memory
+            .update_status(
+                s.id,
+                openlet_core::types::session::SessionStatus::Errored,
+                "crashed",
+            )
+            .await;
+        let _ = events
+            .publish(
+                openlet_core::types::event::AgentEvent::SessionStatus {
+                    session_id: s.id,
+                    status: openlet_core::types::session::SessionStatus::Errored,
+                    at: chrono::Utc::now(),
+                },
+                openlet_core::adapters::event_sink::Persistence::Durable,
+            )
+            .await;
+    }
+    Ok(())
+}
+
+/// Fail-closed guard on the resolved listener address. Refuses a
+/// non-loopback bind unless BOTH an explicit operator opt-in
+/// (`OPENLET_ALLOW_NON_LOOPBACK=1`) AND a non-dev authenticator are in place —
+/// a dev authenticator admits every request as one principal, so exposing it
+/// beyond loopback would hand the whole API to the network. Extracted verbatim
+/// from `main.rs` boot.
+pub fn assert_bind_safe(
+    addr: std::net::SocketAddr,
+    authenticator_is_dev: bool,
+) -> anyhow::Result<()> {
+    let allow_non_loopback = std::env::var("OPENLET_ALLOW_NON_LOOPBACK")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !addr.ip().is_loopback() {
+        if !allow_non_loopback {
+            anyhow::bail!(
+                "refusing to bind non-loopback address {addr} without \
+                 OPENLET_ALLOW_NON_LOOPBACK=1",
+            );
+        }
+        if authenticator_is_dev {
+            anyhow::bail!(
+                "refusing to bind non-loopback address {addr} with the dev authenticator; \
+                 it admits every request as one principal. Run with \
+                 OPENLET_RUNTIME_PROFILE=cloud and a real Authenticator before exposing \
+                 beyond loopback",
+            );
+        }
+        tracing::warn!(
+            bind = %addr,
+            "bound NON-LOOPBACK address with a non-dev authenticator; \
+             ensure the deployment fronts this listener appropriately"
+        );
+    } else {
+        tracing::info!(bind = %addr, "bound loopback at http://{addr}");
+    }
+    Ok(())
+}
+
 /// Install all compile-time plugins via `install_all` and return the
 /// fully-drained registry. Called once during boot.
 pub async fn install_plugins(

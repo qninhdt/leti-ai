@@ -15,3 +15,4 @@ pub mod openai;
 pub mod openrouter;
 pub mod pyexec;
 pub mod sqlite;
+pub(crate) mod util;

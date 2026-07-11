@@ -77,11 +77,7 @@ impl Tool for TaskStatusTool {
     }
 
     fn permission(&self, _input: &Self::Input) -> PermissionRequest {
-        PermissionRequest {
-            permission: "task_status".to_string(),
-            reason: None,
-            timeout: None,
-        }
+        PermissionRequest::simple("task_status")
     }
 
     async fn run(&self, _ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {

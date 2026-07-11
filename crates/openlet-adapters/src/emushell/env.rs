@@ -120,6 +120,6 @@ pub async fn expand_glob(fs: &dyn Filesystem, word: &str) -> Vec<String> {
     }
 }
 
-fn has_glob_meta(s: &str) -> bool {
+pub(super) fn has_glob_meta(s: &str) -> bool {
     s.chars().any(|c| matches!(c, '*' | '?' | '['))
 }

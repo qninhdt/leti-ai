@@ -1,0 +1,23 @@
+name: rust-setup
+description: >-
+  Resolve the pinned toolchain from rust-toolchain.toml (`rustup show`) and
+  restore the shared cargo + target cache. Consolidates the identical
+  toolchain-install + actions/cache block that the rust, contract-drift, and
+  nightly jobs each hand-rolled, so the cache key lives in exactly one place.
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolchain (from rust-toolchain.toml)
+      shell: bash
+      run: rustup show
+
+    - name: Cache cargo + target
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+        restore-keys: ${{ runner.os }}-cargo-

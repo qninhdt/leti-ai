@@ -6,13 +6,14 @@
 # runs on the cached deps; the runtime image is a slim, non-root Debian
 # carrying only the binary + a healthcheck.
 
-# Build with the latest stable Rust to mirror `rust-toolchain.toml`
-# (`channel = "stable"`, the same toolchain CI's `rustup show` resolves).
-# Do NOT pin to the workspace `rust-version` (1.85) — that is the MSRV floor,
-# and modern build tooling (cargo-chef) needs a newer compiler than the floor.
+# Pin the build image to the SAME toolchain `rust-toolchain.toml` selects
+# (`channel = "1.96.1"`), which is also what CI's `rustup show` resolves.
+# This must be >= the workspace `rust-version` MSRV floor (1.95, the Monty
+# floor); an older base (the previous `1.88`) is below the floor and fails
+# to compile. Keep this in lockstep with `rust-toolchain.toml`.
 
 # --- planner: compute the dependency recipe -------------------------------
-FROM rust:1.88-slim AS chef
+FROM rust:1.96.1-slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -22,11 +23,18 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # --- builder: cook deps (cached), then build the binary -------------------
 FROM chef AS builder
-# System deps for the build: pkg-config + libssl headers are commonly
-# needed by transitive crates; curl is required by utoipa-swagger-ui's
-# build script, which downloads the Swagger UI assets at compile time.
+# System deps for the build:
+#  - protobuf-compiler (protoc) + libprotobuf-dev: openlet-adapters/build.rs
+#    compiles the vendored file-service proto into the cloudfs gRPC client via
+#    tonic-build. libprotobuf-dev ships the well-known-type includes
+#    (`google/protobuf/timestamp.proto`) the vendored proto imports — protoc
+#    alone (with --no-install-recommends) does not carry them.
+#  - curl: required by utoipa-swagger-ui's build script, which downloads the
+#    Swagger UI assets at compile time.
+# (The tree is all-rustls — no OpenSSL — so pkg-config/libssl-dev are NOT
+# installed; see Cargo.toml "no OpenSSL in the tree".)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends pkg-config libssl-dev curl \
+    && apt-get install -y --no-install-recommends curl protobuf-compiler libprotobuf-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=planner /app/recipe.json recipe.json
 # Cook ONLY dependencies — this layer is cached until Cargo.lock/Cargo.toml

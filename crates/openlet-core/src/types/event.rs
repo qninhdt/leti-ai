@@ -6,8 +6,8 @@ use uuid::Uuid;
 use super::message::MessageId;
 use super::part::PartId;
 use super::permission::{AskId, Decision, PermissionRequest};
+use super::question::QuestionId;
 use super::session::{SessionId, SessionStatus};
-use crate::runtime::question_registry::QuestionId;
 
 /// Domain event published on the bus and (depending on `Persistence`)
 /// persisted to SQLite via the two-tier publisher.
@@ -86,7 +86,7 @@ pub enum AgentEvent {
     /// `question.requested` — durable. Emitted when an `ask_user` tool
     /// invocation suspends waiting for a frontend reply. The frontend
     /// observes this event and POSTs back to
-    /// `/v1/sessions/:id/question/answer` with `question_id` + selected
+    /// `/v1/session/:id/question/answer` with `question_id` + selected
     /// option indices.
     QuestionRequested {
         session_id: SessionId,
@@ -259,9 +259,9 @@ pub struct AskOption {
     pub description: Option<String>,
 }
 
-/// Severity for `NotificationEmitted`. Wire mirror of
-/// [`crate::hooks::io::NotificationLevel`] — kept here so adapters /
-/// DTOs depend on `event.rs` only.
+/// Severity for `NotificationEmitted`. Canonical definition — kept here
+/// (IO-free `types/`) so adapters / DTOs depend on `event.rs` only.
+/// [`crate::hooks::io`] re-exports this for the plugin hook API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationLevel {

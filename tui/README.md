@@ -50,74 +50,61 @@ binary on `$PATH`.
 ```
 src/
   cli.tsx            entry, mounts <App/>
-  app.tsx            view router + bootstrap + submit
+  app.tsx            route switch + bootstrap + submit
   api/
-    client.ts        REST wrapper (replace with openapi-fetch on codegen)
+    client.ts        hand-rolled REST wrapper
     sse.ts           eventsource@3 + reconnect (header-only Last-Event-ID)
-    types.ts         hand-rolled DTOs; replaced by schema.d.ts after codegen
+    types.ts         hand-rolled DTOs (contract source; see schema.d.ts note)
+    schema.d.ts      generated OpenAPI snapshot — reference for contract-drift CI, NOT imported
   store/
-    index.ts         zustand root + applyEvent
+    index.ts         zustand root (wires applyEvent + reducers)
+    apply-event.ts   pure SSE reducer: (state, ev) => Partial<State>
+    reducers.ts      immutable message/part update helpers
+    message-hydration.ts  REST-fetched message → store shape
   components/
-    status-bar.tsx
-    prompt-editor.tsx
-    message-list.tsx
-    tool-call-card.tsx
-    markdown-renderer.tsx
-  views/
-    chat-view.tsx
-    agent-picker.tsx
-    session-picker.tsx
-    permission-modal.tsx
-    plugins-view.tsx
-    help-view.tsx
+    prompt-editor.tsx           prompt input layout + wiring
+    create-prompt-key-handler.ts  mention/slash/history/interrupt key routing
+    use-prompt-derived.ts       agent/model/usage/cost/context memos
+    use-interrupt-arm.ts        double-interrupt-to-cancel arm
+    message-list.tsx, tool-call-card.tsx, ...
+  dialogs/           overlay dialogs (agent picker, permission modal, ...)
+  routes/            top-level views switched by app.tsx
+  render/            OpenTUI render helpers
+  services/          side-effecting client services
   commands/
     registry.ts      single source of truth for slash commands + /help
-  hooks/
-    use-throttled-render.ts  33ms flush throttle
-    use-prompt-history.ts    JSONL persistence
-  theme/
-    dark.ts          semantic tokens (truecolor; ink falls back)
-  utils/
-    markdown-walker.ts       block-safe stream boundary, nested-fence pre-pass
-    frecency.ts              opencode-style frequency * 1/(1+days)
-    format.ts                USD formatter, short-id
+    builtins/        individual slash-command implementations
+  hooks/             shared Solid hooks
+  theme/             semantic color tokens
+  utils/             frecency, formatters, misc pure helpers
 ```
 
 ## Testing
 
 ```bash
-npm test               # default: unit + Node-wire-double E2E (no Rust toolchain)
-npm run test:e2e:real           # gated: real openlet-server + Rust mock LLM
-npm run test:e2e:real:openrouter  # double-gated: real binary → real OpenRouter
+npm run typecheck      # tsc --noEmit
+npm test               # vitest run — unit + store/parser/hydration suites
 ```
 
-Two E2E tiers exercise the same `<App>`:
-
-- **Node wire-double** (`tests/e2e/tui-live-e2e.test.tsx`) — the default
-  `npm test` lane. The App runs against a faithful Node HTTP/SSE double, so
-  the suite stays self-contained (no cargo build coupling).
-- **Real binary** (`tests/e2e/tui-real-binary-e2e.test.tsx`) — gated behind
-  `OPENLET_TUI_REAL_E2E=1`. Spawns the actual compiled `openlet-server`
-  talking to the in-process Rust `mock-openai-service`: real axum HTTP, real
-  SSE socket, real provider stream. Requires the binaries prebuilt
-  (`cargo build -p openlet-server -p openlet-test-mock-provider`). The
-  real-OpenRouter sub-tier additionally needs `OPENLET_LIVE_E2E=1` +
-  `OPENAI_API_KEY` and asserts shape only, never exact model words.
+The suite is self-contained Vitest — no Rust toolchain, no server, no
+network. It exercises the pure store reducers (`store/apply-event.ts`),
+message hydration, tool/label/output formatting, mention parsing, the
+command registry, and the event pump.
 
 ## Architecture notes
 
-- Pin Ink 5.2 / React 18.3 — Ink 6 / React 19 had flicker reports during
-  the research pass. Upgrade post-MVP.
+- Runtime is [Bun](https://bun.sh) — `@opentui/core` uses native FFI Node
+  does not provide. The UI is SolidJS on `@opentui/solid`.
 - SSE wire format mirrors `openlet-server` `/v1/event` exactly:
   `id:` + `event:<dotted.kind>` + `data:<json>`. `Last-Event-ID` is
-  header-only (per amendments-after-red-team §C).
-- Streaming text deltas append to a per-part `buffer` in the store;
-  `useThrottledBuffer` flushes to component state at most once per 33ms
-  to keep frame budget under control on 50 tok/s streams.
-- Markdown is finalized block-by-block (`utils/markdown-walker.ts`); the
-  current pending-tail block renders as plain text until a safe
-  boundary (blank line outside fence, or a closing fence of equal-or-
-  greater length) is reached.
+  header-only.
+- Streaming text deltas append to a per-part `buffer` in the store; the
+  render layer coalesces buffer growth into frames so a fast stream does
+  not thrash the terminal.
+- `store/apply-event.ts` is the single mutation point for SSE frames — a
+  pure `(state, ev) => Partial<State>` grouped by domain (session, parts,
+  overlays/asks, plugins/plan/errors). Transient frames that should not
+  mutate durable state are ignored there.
 
 ## See also
 
