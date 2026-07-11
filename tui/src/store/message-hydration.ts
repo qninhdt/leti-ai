@@ -163,6 +163,13 @@ export function hydrateMessages(
     const store = storeById.get(m.id);
     if (store && (isStreaming(store) || store.role === "user")) return store;
     if (store?.badges) m.badges = store.badges;
+    // step_finish (usage / cost / context tokens) is derived from the
+    // step_finished SSE event and has no server-part equivalent — the server's
+    // step_finish part carries only `reason`. Without carrying it across, the
+    // footer + context bar lose their token/cost readout the moment the turn
+    // settles and hydration replaces the message (bar snaps back to the bare
+    // window size).
+    if (store?.step_finish) m.step_finish = store.step_finish;
     return m;
   });
 

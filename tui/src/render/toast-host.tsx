@@ -22,6 +22,8 @@ export function ToastHost() {
   const oc = theme.oc;
   const pluginErrors = useStoreSelector((s) => s.pluginErrors);
   const clientError = useStoreSelector((s) => s.clientError);
+  const notice = useStoreSelector((s) => s.notice);
+  const [noticeText, setNoticeText] = createSignal<string | null>(null);
 
   // Track which plugin errors have already been surfaced, by OBJECT IDENTITY
   // (the store creates each entry once and keeps the same reference in its ring
@@ -46,6 +48,23 @@ export function ToastHost() {
       }, TOAST_TTL_MS);
       timers.add(t);
     }
+  });
+
+  // Transient info notice (e.g. /compact acknowledgment). Keyed on `seq` so an
+  // identical message re-shown re-arms the auto-dismiss. Tracks the last seq it
+  // acted on so re-runs of the effect for unrelated store changes don't restart
+  // the timer.
+  let lastSeq = 0;
+  createEffect(() => {
+    const n = notice();
+    if (!n || n.seq === lastSeq) return;
+    lastSeq = n.seq;
+    setNoticeText(n.text);
+    const t = setTimeout(() => {
+      setNoticeText(null);
+      timers.delete(t);
+    }, TOAST_TTL_MS);
+    timers.add(t);
   });
 
   onCleanup(() => {
@@ -83,6 +102,19 @@ export function ToastHost() {
           </box>
         )}
       </For>
+      <Show when={noticeText()}>
+        {(text) => (
+          <box
+            border={["left"]}
+            borderColor={oc.info}
+            backgroundColor={oc.backgroundPanel}
+            paddingLeft={2}
+            paddingRight={2}
+          >
+            <text fg={oc.info}>{text()}</text>
+          </box>
+        )}
+      </Show>
     </box>
   );
 }

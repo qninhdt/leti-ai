@@ -2,9 +2,9 @@
 // context window is, anchored on the SAME number the backend's `should_compact`
 // uses (the provider-reported prompt tokens, `usage.input_tokens`) so the bar
 // and the actual auto-compaction trigger never disagree. Renders a small glyph
-// bar + `N% · <window>` label; color shifts muted → warning as usage nears the
-// compaction threshold → error at/over it. Before the first turn returns usage
-// (used == undefined) it degrades to the window size only, no bar, no NaN.
+// bar + `<used> / <window>` label; color shifts muted → warning as usage nears
+// the compaction threshold → error at/over it. Before the first turn returns
+// usage (used == undefined) it degrades to the window size only, no bar, no NaN.
 
 import { createMemo, Show } from "solid-js";
 
@@ -38,11 +38,6 @@ export function ContextBar(props: ContextBarProps) {
     return Math.max(0, Math.min(1, used / win));
   });
 
-  const pct = () => {
-    const f = frac();
-    return f === undefined ? undefined : Math.round(f * 100);
-  };
-
   // Color relative to the compaction threshold, not the hard limit: muted well
   // below, warning as it approaches, error at/over the point compaction fires.
   const color = () => {
@@ -61,10 +56,12 @@ export function ContextBar(props: ContextBarProps) {
   };
 
   const label = () => {
-    const p = pct();
     const win = formatTokens(props.contextWindow);
+    const used = props.used;
     // Before any usage, show the window size alone so the row isn't empty.
-    return p === undefined ? win : `${p}% · ${win}`;
+    // Once a turn reports usage, show used/window so the absolute token count
+    // is visible, not just the fraction.
+    return used === undefined || used <= 0 ? win : `${formatTokens(used)} / ${win}`;
   };
 
   return (

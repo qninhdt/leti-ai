@@ -18,6 +18,13 @@ function textPrompt(text: string): CreateMessageDto {
   return { parts: [{ id: randomId(), message_id: "", kind: "text", text }] };
 }
 
+// The server keeps the most recent PRESERVE_RECENT (4) messages verbatim and
+// only compacts when the stored count EXCEEDS that floor, so a conversation
+// needs more than 4 messages — i.e. at least 5 — before /compact folds
+// anything. Mirrored here purely to phrase a helpful "send N more" notice; the
+// server remains the authority (its ack decides what actually happens).
+const COMPACT_MIN_MESSAGES = 5;
+
 // Map the abstract view kind from slash commands onto an overlay entry.
 function viewKindToOverlay(view: { kind: string; askId?: string }): OverlayEntry | null {
   switch (view.kind) {
@@ -50,8 +57,34 @@ export function createCommandContext(runtime: AppRuntime): CommandContext {
       await createAndActivateSession(runtime.client);
     },
     compact: async () => {
-      const id = useStore.getState().activeSessionId;
-      if (id) await runtime.client.compact(id);
+      const store = useStore.getState();
+      const id = store.activeSessionId;
+      if (!id) {
+        store.setNotice("no active session to compact");
+        return;
+      }
+      // Compaction is a background turn: the ack reports only whether one was
+      // dispatched. `compacted:false` means the conversation is at/under the
+      // preserved-recent floor (nothing older than the kept-verbatim tail to
+      // fold), so the server no-ops. That is the common surprise — the notice
+      // must say WHY nothing happened and how many more messages are needed,
+      // not a dead-end "nothing to compact". On success the divider appears
+      // once the async summarization turn settles + re-hydrates.
+      const ack = await runtime.client.compact(id);
+      if (ack.compacted) {
+        store.setNotice("compacting conversation…");
+        return;
+      }
+      // Mirror the server's floor: it keeps the most recent PRESERVE_RECENT
+      // messages verbatim and only compacts when the count exceeds that, so a
+      // short conversation has nothing to fold yet.
+      const count = store.messages[id]?.length ?? 0;
+      const needed = COMPACT_MIN_MESSAGES - count;
+      store.setNotice(
+        needed > 0
+          ? `too short to compact — send ${needed} more message${needed === 1 ? "" : "s"} first`
+          : "nothing to compact yet",
+      );
     },
     setMode: async (mode) => {
       const id = useStore.getState().activeSessionId;

@@ -11,6 +11,7 @@ import { useStoreSelector } from "./store-bridge.js";
 import { useRuntime } from "./app-context.js";
 import { createHydrationController } from "./hydration-controller.js";
 import { createEventPump } from "./event-pump.js";
+import { warmTreeSitter } from "./warm-tree-sitter.js";
 
 import type { OpenletClient } from "../api/client.js";
 
@@ -30,6 +31,11 @@ async function loadInitial(client: OpenletClient): Promise<void> {
 export function useBootstrap(): void {
   const runtime = useRuntime();
   void loadInitial(runtime.client);
+
+  // Spawn the highlight worker + load parser WASM now, off the streaming path,
+  // so the first assistant tokens don't trigger a cold tree-sitter start (which
+  // makes the streaming block flash unstyled<->styled every token).
+  warmTreeSitter();
 
   const hydration = createHydrationController(runtime.client);
 

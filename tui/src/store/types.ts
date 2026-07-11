@@ -85,6 +85,12 @@ export interface State {
   /// as a banner so an async failure in the non-async input handler is
   /// visible to the user instead of becoming an unhandled rejection.
   clientError: string | null;
+  /// Transient informational notice (e.g. "/compact" acknowledgment). Unlike
+  /// clientError this is not a failure and auto-dismisses; it exists so a
+  /// command that only does async work has a way to confirm it ran. Carries a
+  /// monotonic `seq` so the toast host re-triggers even on an identical
+  /// message.
+  notice: { text: string; seq: number } | null;
   /// Per-session plan-mode flag. Latched by `plan_mode_entered`,
   /// cleared by `plan_mode_exited`.
   planMode: Record<string, boolean>;
@@ -102,6 +108,9 @@ export interface State {
   setSessions: (sessions: SessionDto[]) => void;
   setActiveSession: (id: string | null) => void;
   setClientError: (message: string | null) => void;
+  /// Show a transient info notice. Bumps `seq` each call so repeated identical
+  /// messages still re-trigger the auto-dismissing toast.
+  setNotice: (text: string) => void;
   /// Append an optimistic user message (role:"user") carrying the raw text and
   /// file-mention badges. The SSE stream never produces a user message, so the
   /// TUI must add it itself.

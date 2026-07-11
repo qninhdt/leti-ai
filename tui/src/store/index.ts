@@ -32,6 +32,7 @@ export const useStore = createStore<State>((set) => ({
   pendingPermissions: {},
   pendingQuestions: {},
   clientError: null,
+  notice: null,
   planMode: {},
   overlays: [],
 
@@ -57,6 +58,7 @@ export const useStore = createStore<State>((set) => ({
     })),
   setActiveSession: (id) => set({ activeSessionId: id }),
   setClientError: (message) => set({ clientError: message }),
+  setNotice: (text) => set((s) => ({ notice: { text, seq: (s.notice?.seq ?? 0) + 1 } })),
 
   addUserMessage: (sessionId, messageId, text, badges: FileBadge[]) =>
     set((s) => {

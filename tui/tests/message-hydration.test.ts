@@ -123,6 +123,35 @@ describe("hydrateMessages", () => {
     expect(out[0]!.badges).toEqual([{ path: "a.ts", kind: "text", unsupported: false, truncated: false }]);
   });
 
+  it("carries the step_finish usage/cost readout onto the settled assistant message", () => {
+    // step_finish is derived from the step_finished SSE event; the server's
+    // step_finish part carries only `reason`, so hydration must preserve the
+    // store's copy or the footer + context bar lose their token/cost readout
+    // the instant the turn settles.
+    const streamed: MessageView = {
+      id: "a1",
+      session_id: "s1",
+      role: "assistant",
+      created_at: "t",
+      parts: [{ id: "p", message_id: "", kind: "text", text: "hi", buffer: "", reasoning_buffer: "", status: "complete" }],
+      step_finish: { reason: "end_turn", usage_total: 15, cost: "0.0001", context_tokens: 12 },
+    };
+    const server: ServerMessageDto[] = [
+      {
+        id: "a1",
+        session_id: "s1",
+        role: "assistant",
+        created_at: "t",
+        parts: [
+          { kind: "text", id: "p", text: "hi" },
+          { kind: "step_finish", id: "sf", reason: "end_turn" },
+        ],
+      },
+    ];
+    const out = hydrateMessages([streamed], server);
+    expect(out[0]!.step_finish).toEqual({ reason: "end_turn", usage_total: 15, cost: "0.0001", context_tokens: 12 });
+  });
+
   it("keeps the clean optimistic user text over the @mention-expanded server copy", () => {
     // The store holds what the user TYPED; the server holds that text with
     // embedded @mention file bodies appended (meant for the model). Hydration

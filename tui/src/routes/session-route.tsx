@@ -5,7 +5,7 @@
 // (sidebar-as-overlay) is deferred to Phase 5; for now narrow terminals simply
 // omit the sidebar.
 
-import { Show, createMemo, createEffect } from "solid-js";
+import { Show, createMemo, createEffect, on } from "solid-js";
 
 import { theme } from "../theme/index.js";
 import { useStoreSelector } from "../render/store-bridge.js";
@@ -55,55 +55,25 @@ export function SessionRoute(props: SessionRouteProps) {
     return id ? !!planModes()[id] : false;
   });
 
-  // --- Auto-scroll (sticky-to-bottom that survives streaming) ---------------
-  // opentui's built-in stickyScroll latches an internal "manual scroll" flag
-  // when content grows faster than one line (each part_delta), and then stops
-  // following. We re-assert bottom-follow ourselves, but only while the user
-  // hasn't scrolled up to read history.
-  //
-  // Invariant that makes this timing-robust: content growth changes
-  // scrollHeight (→ maxScrollTop) but NEVER scrollTop. So if scrollTop still
-  // equals the value we last set, the change was content (keep following); if
-  // it differs, the USER moved it (follow only when they returned to bottom).
+  // --- Auto-scroll --------------------------------------------------------
+  // The <scrollbox> is configured stickyScroll + stickyStart="bottom", which
+  // follows the bottom edge on its own as content grows during streaming: its
+  // content-resize handler re-pins to the bottom on every size change unless
+  // the user has manually scrolled up. So we do NOT re-assert scroll per token
+  // — doing that forces a full viewport relayout each frame (the streaming
+  // flicker). We only jump to the bottom once when switching into a session,
+  // to land on the newest message.
   let scrollRef: ScrollBoxRenderable | undefined;
-  let lastSetTop = 0;
-  let autoFollow = true;
 
-  // Cheap signature that changes on every auto-scroll trigger: a new message,
-  // a new part, or the last part's streamed buffers/text growing.
-  const contentSignature = createMemo(() => {
-    const list = messages();
-    const last = list[list.length - 1];
-    const lastPart = last?.parts[last.parts.length - 1];
-    const grow = lastPart
-      ? lastPart.buffer.length + lastPart.reasoning_buffer.length + (lastPart.text?.length ?? 0)
-      : 0;
-    return `${list.length}:${last?.parts.length ?? 0}:${grow}`;
-  });
-
-  createEffect(() => {
-    contentSignature(); // track content growth
-    // Defer past opentui's layout pass so scrollHeight reflects the new content.
-    queueMicrotask(() => {
-      const box = scrollRef;
-      if (!box) return;
-      const maxTop = Math.max(0, box.scrollHeight - box.viewport.height);
-      if (Math.abs(box.scrollTop - lastSetTop) > 1) {
-        // scrollTop moved to a value WE didn't set → the user scrolled. Keep
-        // following only if they parked at the bottom; otherwise let them read.
-        autoFollow = box.scrollTop >= maxTop - 1;
-      }
-      if (autoFollow) {
-        // Scroll to a sentinel; the scrollbar clamps to the true bottom even if
-        // our maxTop is a frame stale, then read the clamped value back so the
-        // "did the user scroll" check above stays accurate next tick.
-        box.scrollTo({ x: box.scrollLeft, y: Number.MAX_SAFE_INTEGER });
-        lastSetTop = box.scrollTop;
-      } else {
-        lastSetTop = box.scrollTop;
-      }
-    });
-  });
+  createEffect(
+    on(activeSessionId, () => {
+      // Defer past opentui's layout pass so scrollHeight reflects the content.
+      queueMicrotask(() => {
+        const box = scrollRef;
+        if (box) box.scrollTo({ x: box.scrollLeft, y: Number.MAX_SAFE_INTEGER });
+      });
+    }),
+  );
 
   return (
     <box flexDirection="row" flexGrow={1} minHeight={0}>
