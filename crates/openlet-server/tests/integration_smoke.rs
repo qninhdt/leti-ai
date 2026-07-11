@@ -44,7 +44,13 @@ mod support;
 #[tokio::test]
 async fn canonical_plugin_set_drains_tools_and_agents() {
     let shell = stub_shell();
-    let plugins = all_plugins(shell, None, stub_memory(), stub_task_registry(), stub_spawner());
+    let plugins = all_plugins(
+        shell,
+        None,
+        stub_memory(),
+        stub_task_registry(),
+        stub_spawner(),
+    );
     let configs = HashMap::new();
     let core_api: Arc<dyn CoreApi> = Arc::new(NoopCoreApi);
 

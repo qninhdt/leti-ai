@@ -61,14 +61,18 @@ pub(crate) async fn dispatch_os_call(fs: &dyn Filesystem, call: &OsFunctionCall)
             let is_file = fs.exists(path).await && fs.list(path).await.is_err();
             Dispatched::ok(MontyObject::Bool(is_file))
         }
-        OsFunctionCall::IsDir(p) => Dispatched::ok(MontyObject::Bool(fs.list(as_path(p)).await.is_ok())),
+        OsFunctionCall::IsDir(p) => {
+            Dispatched::ok(MontyObject::Bool(fs.list(as_path(p)).await.is_ok()))
+        }
         // The `Filesystem` seam does not expose symlinks — everything it hands
         // back is already a resolved regular file or directory.
         OsFunctionCall::IsSymlink(_) => Dispatched::ok(MontyObject::Bool(false)),
 
         // ---- reads --------------------------------------------------------
         OsFunctionCall::ReadText(p) => match fs.read(as_path(p), None).await {
-            Ok(bytes) => Dispatched::ok(MontyObject::String(String::from_utf8_lossy(&bytes).into_owned())),
+            Ok(bytes) => Dispatched::ok(MontyObject::String(
+                String::from_utf8_lossy(&bytes).into_owned(),
+            )),
             Err(e) => Dispatched::Err(fs_error_to_exc(&e)),
         },
         OsFunctionCall::ReadBytes(p) => match fs.read(as_path(p), None).await {
@@ -112,19 +116,47 @@ pub(crate) async fn dispatch_os_call(fs: &dyn Filesystem, call: &OsFunctionCall)
         // ---- writes (resume with the char/byte COUNT, never None) --------
         OsFunctionCall::WriteText(a) => {
             let count = a.data.chars().count() as i64;
-            write_and_count(fs, a.path.as_str(), Bytes::from(a.data.clone().into_bytes()), false, count).await
+            write_and_count(
+                fs,
+                a.path.as_str(),
+                Bytes::from(a.data.clone().into_bytes()),
+                false,
+                count,
+            )
+            .await
         }
         OsFunctionCall::AppendText(a) => {
             let count = a.data.chars().count() as i64;
-            write_and_count(fs, a.path.as_str(), Bytes::from(a.data.clone().into_bytes()), true, count).await
+            write_and_count(
+                fs,
+                a.path.as_str(),
+                Bytes::from(a.data.clone().into_bytes()),
+                true,
+                count,
+            )
+            .await
         }
         OsFunctionCall::WriteBytes(a) => {
             let count = a.data.len() as i64;
-            write_and_count(fs, a.path.as_str(), Bytes::from(a.data.clone()), false, count).await
+            write_and_count(
+                fs,
+                a.path.as_str(),
+                Bytes::from(a.data.clone()),
+                false,
+                count,
+            )
+            .await
         }
         OsFunctionCall::AppendBytes(a) => {
             let count = a.data.len() as i64;
-            write_and_count(fs, a.path.as_str(), Bytes::from(a.data.clone()), true, count).await
+            write_and_count(
+                fs,
+                a.path.as_str(),
+                Bytes::from(a.data.clone()),
+                true,
+                count,
+            )
+            .await
         }
 
         // ---- open (perform the open-time effect, return a handle) --------
@@ -155,9 +187,14 @@ pub(crate) async fn dispatch_os_call(fs: &dyn Filesystem, call: &OsFunctionCall)
         OsFunctionCall::GetEnviron => {
             let pairs: Vec<(MontyObject, MontyObject)> = ENV_ALLOWLIST
                 .iter()
-                .filter_map(|k| std::env::var(k).ok().map(|v| {
-                    (MontyObject::String((*k).to_string()), MontyObject::String(v))
-                }))
+                .filter_map(|k| {
+                    std::env::var(k).ok().map(|v| {
+                        (
+                            MontyObject::String((*k).to_string()),
+                            MontyObject::String(v),
+                        )
+                    })
+                })
                 .collect();
             Dispatched::ok(MontyObject::Dict(pairs.into()))
         }

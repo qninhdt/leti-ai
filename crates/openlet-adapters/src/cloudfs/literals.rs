@@ -32,8 +32,8 @@
 //! never fabricate a literal from a quantifier interior or an escape body,
 //! because it never looks at raw pattern characters.
 
-use regex_syntax::hir::literal::{Extractor, Seq};
 use regex_syntax::ParserBuilder;
+use regex_syntax::hir::literal::{Extractor, Seq};
 
 /// Minimum literal length. Trigram (`pg_trgm`) indexes are keyed on 3-grams, so
 /// a literal shorter than 3 chars cannot be index-accelerated. More importantly

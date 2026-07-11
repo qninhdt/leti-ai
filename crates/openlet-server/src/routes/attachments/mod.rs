@@ -200,10 +200,10 @@ async fn ensure_user_message(state: &AppState, sid: SessionId) -> Result<Message
     // attachment. Avoids dangling attachments on a tool/assistant
     // turn boundary.
     let msgs = state.memory.list_messages(sid).await?;
-    if let Some(last) = msgs.last() {
-        if matches!(last.role, Role::User) {
-            return Ok(last.id);
-        }
+    if let Some(last) = msgs.last()
+        && matches!(last.role, Role::User)
+    {
+        return Ok(last.id);
     }
     let msg = Message {
         id: MessageId::new(),

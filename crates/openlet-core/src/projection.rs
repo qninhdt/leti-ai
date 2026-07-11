@@ -27,16 +27,16 @@ pub fn project_for_llm(
         // summary in its place — exactly once per summary, on the first
         // compacted message in chronological order.
         if let Some(owner) = compacted_ids.get(&msg.id) {
-            if emitted_summary_for.insert(*owner) {
-                if let Some(summary) = summaries.get(owner) {
-                    out.push(LlmMessage {
-                        role: LlmRole::System,
-                        content: format!("[Compacted conversation summary]\n{summary}"),
-                        reasoning: None,
-                        tool_calls: Vec::new(),
-                        tool_call_id: None,
-                    });
-                }
+            if emitted_summary_for.insert(*owner)
+                && let Some(summary) = summaries.get(owner)
+            {
+                out.push(LlmMessage {
+                    role: LlmRole::System,
+                    content: format!("[Compacted conversation summary]\n{summary}"),
+                    reasoning: None,
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                });
             }
             continue;
         }
@@ -175,11 +175,11 @@ fn collect_attachment_fallback_text(parts: &[Part], caps: ProjectionCaps) -> Str
                 // Inline the extracted text only when the provider can't
                 // ingest the document natively — otherwise the wire layer
                 // attaches the original bytes and the text would be noise.
-                if !caps.supports_document_input {
-                    if let Some(text) = extracted_text {
-                        buf.push('\n');
-                        buf.push_str(text);
-                    }
+                if !caps.supports_document_input
+                    && let Some(text) = extracted_text
+                {
+                    buf.push('\n');
+                    buf.push_str(text);
                 }
             }
             _ => {}

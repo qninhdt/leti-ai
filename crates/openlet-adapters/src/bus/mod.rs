@@ -99,47 +99,47 @@ impl EventSink for BroadcastBus {
     ///   - `Transient` → broadcast only
     /// Broadcast `Err` is suppressed: a turn may run with no subscribers.
     async fn publish(&self, ev: AgentEvent, persistence: Persistence) -> Result<(), EventError> {
-        if matches!(persistence, Persistence::Durable) {
-            if let Some(repo) = &self.repo {
-                // Hold the lock across id-allocate + append + send so the
-                // event_id order is identical for assignment, durability, and
-                // broadcast. See `next_event_id` docs for the ordering proof
-                // and the MAX(id) seed rationale.
-                let mut guard = self.next_event_id.lock().await;
-                // Lazily seed the counter from the persisted high-water mark
-                // on first durable publish (after a restart the table already
-                // holds rows; starting at 0 would collide on the explicit PK).
-                let seed = match *guard {
-                    Some(prev) => prev,
-                    None => repo.max_event_id().await?,
-                };
-                let event_id = seed + 1;
-                let session_id = ev.session_id();
-                // Self-heal on append failure: drop the cached counter so the
-                // NEXT durable publish re-seeds from `SELECT MAX(id)`. This
-                // covers both a transient IO error (row NOT inserted → MAX(id)
-                // still = `seed`, next publish re-issues `seed+1` cleanly) AND
-                // the pathological case where the row DID commit but we still
-                // observed an error (MAX(id) = `seed+1`, next publish issues
-                // `seed+2`, no permanent UNIQUE-collision wedge). NOTE:
-                // `publish()` must be awaited to completion — if its future is
-                // dropped mid-`append_with_id`, the counter cannot be reset
-                // here; the next successful re-seed still recovers, but callers
-                // should not race `publish()` under a `select!`/`timeout`.
-                if let Err(e) = repo.append_with_id(event_id, session_id, &ev).await {
-                    *guard = None;
-                    return Err(e);
-                }
-                // Only advance the counter AFTER the insert succeeds — a
-                // failed append must not burn an id (which would leave a gap
-                // the SSE replay treats as a permanently-missing event).
-                *guard = Some(event_id);
-                let _ = self.tx.send(DeliveredEvent {
-                    event_id: Some(event_id),
-                    event: ev,
-                });
-                return Ok(());
+        if matches!(persistence, Persistence::Durable)
+            && let Some(repo) = &self.repo
+        {
+            // Hold the lock across id-allocate + append + send so the
+            // event_id order is identical for assignment, durability, and
+            // broadcast. See `next_event_id` docs for the ordering proof
+            // and the MAX(id) seed rationale.
+            let mut guard = self.next_event_id.lock().await;
+            // Lazily seed the counter from the persisted high-water mark
+            // on first durable publish (after a restart the table already
+            // holds rows; starting at 0 would collide on the explicit PK).
+            let seed = match *guard {
+                Some(prev) => prev,
+                None => repo.max_event_id().await?,
+            };
+            let event_id = seed + 1;
+            let session_id = ev.session_id();
+            // Self-heal on append failure: drop the cached counter so the
+            // NEXT durable publish re-seeds from `SELECT MAX(id)`. This
+            // covers both a transient IO error (row NOT inserted → MAX(id)
+            // still = `seed`, next publish re-issues `seed+1` cleanly) AND
+            // the pathological case where the row DID commit but we still
+            // observed an error (MAX(id) = `seed+1`, next publish issues
+            // `seed+2`, no permanent UNIQUE-collision wedge). NOTE:
+            // `publish()` must be awaited to completion — if its future is
+            // dropped mid-`append_with_id`, the counter cannot be reset
+            // here; the next successful re-seed still recovers, but callers
+            // should not race `publish()` under a `select!`/`timeout`.
+            if let Err(e) = repo.append_with_id(event_id, session_id, &ev).await {
+                *guard = None;
+                return Err(e);
             }
+            // Only advance the counter AFTER the insert succeeds — a
+            // failed append must not burn an id (which would leave a gap
+            // the SSE replay treats as a permanently-missing event).
+            *guard = Some(event_id);
+            let _ = self.tx.send(DeliveredEvent {
+                event_id: Some(event_id),
+                event: ev,
+            });
+            return Ok(());
         }
         // Transient (or durable-without-repo): broadcast only.
         let _ = self.tx.send(DeliveredEvent {

@@ -74,9 +74,9 @@ impl ShellExecutor for EmulatedShellExecutor {
         );
         match result.aborted {
             Some(AbortReason::Timeout) => {
-                result
-                    .stderr
-                    .push_str(&format!("bash: terminated: wall-clock timeout ({timeout_ms}ms)\n"));
+                result.stderr.push_str(&format!(
+                    "bash: terminated: wall-clock timeout ({timeout_ms}ms)\n"
+                ));
             }
             Some(AbortReason::StepBudget) => {
                 result

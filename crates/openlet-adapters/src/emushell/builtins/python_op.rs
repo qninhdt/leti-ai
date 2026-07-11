@@ -24,7 +24,7 @@ use std::path::Path;
 
 use crate::pyexec::{default_max_memory, run_python};
 
-use super::{fs_err_msg, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg};
 
 /// Default wall-clock budget for a `python` builtin run. The bash interpreter
 /// enforces its own overall deadline in-band; this bounds the Monty guest's
@@ -41,7 +41,14 @@ pub(super) async fn python(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -
         Err(e) => return e,
     };
 
-    let out = run_python(ctx.fs, ctx.cancel, &code, DEFAULT_TIMEOUT_MS, default_max_memory()).await;
+    let out = run_python(
+        ctx.fs,
+        ctx.cancel,
+        &code,
+        DEFAULT_TIMEOUT_MS,
+        default_max_memory(),
+    )
+    .await;
     match out {
         Ok(py) => {
             // `run_python` already shapes guest exceptions into stderr + exit 1
@@ -104,9 +111,10 @@ async fn resolve_source(
         "-" => Ok(stdin.to_string()),
         // A leading `-x` we don't recognize: reject loudly rather than
         // treating it as a script path.
-        s if s.starts_with('-') => {
-            Err(BuiltinResult::err(format!("{name}: unsupported option: {s}"), 2))
-        }
+        s if s.starts_with('-') => Err(BuiltinResult::err(
+            format!("{name}: unsupported option: {s}"),
+            2,
+        )),
         // First non-flag operand is the script path; any trailing operands are
         // its argv (unused — see module docs on the `sys.argv` limitation).
         s => read_script(ctx, name, s).await,

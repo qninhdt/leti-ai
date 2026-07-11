@@ -103,11 +103,7 @@ async fn bash_cat_parity() {
 
 #[tokio::test]
 async fn bash_pipeline_sort_uniq_parity() {
-    let out = assert_bash_parity(
-        &[("f.txt", "z\na\nz\na\nb\n")],
-        "cat f.txt | sort | uniq",
-    )
-    .await;
+    let out = assert_bash_parity(&[("f.txt", "z\na\nz\na\nb\n")], "cat f.txt | sort | uniq").await;
     assert_eq!(out.stdout, "a\nb\nz\n");
 }
 

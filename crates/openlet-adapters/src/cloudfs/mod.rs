@@ -192,7 +192,10 @@ impl CloudFilesystem {
     /// Record a path in the session-dirty set (dedup on insert). Reserved for
     /// the `write`/`append` path (stubbed this phase); see `session_dirty` on
     /// why `rename` must NOT call it.
-    #[allow(dead_code, reason = "wired when write/append land; see session_dirty doc")]
+    #[allow(
+        dead_code,
+        reason = "wired when write/append land; see session_dirty doc"
+    )]
     fn mark_dirty(&self, path: &Path) {
         let mut d = self.session_dirty.lock().expect("session_dirty poisoned");
         let p = path.to_path_buf();
@@ -213,7 +216,10 @@ impl CloudFilesystem {
     /// walking the folder tree. `folder_id` is `None` for a workspace-root
     /// file. The final segment is treated as the file name; leading segments
     /// are folders matched by name.
-    async fn resolve_parent_folder(&self, path: &Path) -> Result<(Option<String>, String), FsError> {
+    async fn resolve_parent_folder(
+        &self,
+        path: &Path,
+    ) -> Result<(Option<String>, String), FsError> {
         let rel = normalize_rel(path)?;
         let segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
         let Some((file_name, dirs)) = segments.split_last() else {
@@ -289,7 +295,9 @@ impl Filesystem for CloudFilesystem {
         match range {
             None => Ok(full),
             Some(r) => {
-                let start = usize::try_from(r.start).unwrap_or(usize::MAX).min(full.len());
+                let start = usize::try_from(r.start)
+                    .unwrap_or(usize::MAX)
+                    .min(full.len());
                 let end = if r.len == 0 {
                     full.len()
                 } else {
@@ -321,7 +329,12 @@ impl Filesystem for CloudFilesystem {
         self.resolve_file_id(path).await.is_ok()
     }
 
-    async fn write(&self, _path: &Path, _body: Bytes, _opts: WriteOpts) -> Result<FileMeta, FsError> {
+    async fn write(
+        &self,
+        _path: &Path,
+        _body: Bytes,
+        _opts: WriteOpts,
+    ) -> Result<FileMeta, FsError> {
         // See module scope note: the presigned-PUT upload path is not wired in
         // this phase. Surfaces as ToolError::Unimplemented at the tool boundary.
         Err(FsError::Unsupported(
@@ -532,7 +545,13 @@ impl CloudFilesystem {
         let mut parent: Option<String> = None;
         for dir in segments {
             let folders = self.list_all_folders(parent.as_deref()).await?;
-            parent = Some(unique_named(&folders, dir, |f| &f.name, |f| f.folder_id.clone(), &rel)?);
+            parent = Some(unique_named(
+                &folders,
+                dir,
+                |f| &f.name,
+                |f| f.folder_id.clone(),
+                &rel,
+            )?);
         }
         Ok(parent)
     }

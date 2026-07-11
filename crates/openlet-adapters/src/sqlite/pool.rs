@@ -19,12 +19,12 @@ use openlet_core::error::MemoryError;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 
 pub async fn open_pool(db_path: &Path, max_connections: u32) -> Result<SqlitePool, MemoryError> {
-    if let Some(parent) = db_path.parent() {
-        if !parent.as_os_str().is_empty() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| MemoryError::Io(format!("create db dir: {e}")))?;
-        }
+    if let Some(parent) = db_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| MemoryError::Io(format!("create db dir: {e}")))?;
     }
 
     let url = format!("sqlite://{}", db_path.display());

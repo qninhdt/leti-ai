@@ -145,14 +145,14 @@ fn default_data_dir() -> PathBuf {
 /// resolves to the home directory instead of creating a literal `./~/` tree.
 /// Bare `~` and `~/...` expand; `~user` and absolute/relative paths pass through.
 fn expand_tilde(raw: &str) -> PathBuf {
-    if raw == "~" || raw.starts_with("~/") {
-        if let Ok(home) = env::var("HOME") {
-            let rest = raw.strip_prefix("~/").or_else(|| raw.strip_prefix('~'));
-            return match rest.filter(|s| !s.is_empty()) {
-                Some(tail) => PathBuf::from(home).join(tail),
-                None => PathBuf::from(home),
-            };
-        }
+    if (raw == "~" || raw.starts_with("~/"))
+        && let Ok(home) = env::var("HOME")
+    {
+        let rest = raw.strip_prefix("~/").or_else(|| raw.strip_prefix('~'));
+        return match rest.filter(|s| !s.is_empty()) {
+            Some(tail) => PathBuf::from(home).join(tail),
+            None => PathBuf::from(home),
+        };
     }
     PathBuf::from(raw)
 }

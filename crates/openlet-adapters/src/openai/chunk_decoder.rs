@@ -150,20 +150,20 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
             out.push(ChatDelta::Role);
         }
 
-        if let Some(text) = delta.content {
-            if !text.is_empty() {
-                out.push(ChatDelta::Content { text });
-            }
+        if let Some(text) = delta.content
+            && !text.is_empty()
+        {
+            out.push(ChatDelta::Content { text });
         }
 
         let reasoning = delta.reasoning_content.or(delta.reasoning);
-        if let Some(text) = reasoning {
-            if !text.is_empty() {
-                out.push(ChatDelta::Reasoning {
-                    text,
-                    signature: None,
-                });
-            }
+        if let Some(text) = reasoning
+            && !text.is_empty()
+        {
+            out.push(ChatDelta::Reasoning {
+                text,
+                signature: None,
+            });
         }
 
         for (pos, tc) in delta.tool_calls.into_iter().enumerate() {
@@ -185,13 +185,11 @@ pub fn decode_chunk(payload: &str) -> Result<Vec<ChatDelta>, ProviderError> {
     }
 
     // Trailing usage-only chunk.
-    if choices_empty {
-        if let Some(u) = env.usage {
-            out.push(ChatDelta::Finish {
-                reason: FinishReason::EndTurn,
-                usage: Some(u.into_usage()),
-            });
-        }
+    if choices_empty && let Some(u) = env.usage {
+        out.push(ChatDelta::Finish {
+            reason: FinishReason::EndTurn,
+            usage: Some(u.into_usage()),
+        });
     }
 
     Ok(out)
@@ -230,13 +228,13 @@ fn push_tool_delta(tc: ChunkToolCall, pos: usize, out: &mut Vec<ChatDelta>) {
         });
     }
 
-    if let Some(chunk) = arguments {
-        if !chunk.is_empty() {
-            out.push(ChatDelta::ToolCallArgsDelta {
-                index,
-                args_chunk: chunk,
-            });
-        }
+    if let Some(chunk) = arguments
+        && !chunk.is_empty()
+    {
+        out.push(ChatDelta::ToolCallArgsDelta {
+            index,
+            args_chunk: chunk,
+        });
     }
 }
 

@@ -531,16 +531,12 @@ impl LiveServer {
                 while let Some(idx) = buf.find("\n\n") {
                     let raw = buf[..idx].to_string();
                     buf.drain(..idx + 2);
-                    if let Some(data) = parse_sse_data(&raw) {
-                        if let Ok(json) = serde_json::from_str::<Value>(&data) {
-                            if json.get("kind").and_then(Value::as_str)
-                                == Some("question_requested")
-                            {
-                                if let Some(qid) = json.get("question_id").and_then(Value::as_str) {
-                                    return Some(qid.to_string());
-                                }
-                            }
-                        }
+                    if let Some(data) = parse_sse_data(&raw)
+                        && let Ok(json) = serde_json::from_str::<Value>(&data)
+                        && json.get("kind").and_then(Value::as_str) == Some("question_requested")
+                        && let Some(qid) = json.get("question_id").and_then(Value::as_str)
+                    {
+                        return Some(qid.to_string());
                     }
                 }
             }
@@ -716,13 +712,13 @@ impl LiveServer {
                 while let Some(idx) = buf.find("\n\n") {
                     let raw = buf[..idx].to_string();
                     buf.drain(..idx + 2);
-                    if let Some(data) = parse_sse_data(&raw) {
-                        if let Ok(json) = serde_json::from_str::<Value>(&data) {
-                            let terminal = is_terminal_status(&json);
-                            frames.push(json);
-                            if terminal {
-                                return;
-                            }
+                    if let Some(data) = parse_sse_data(&raw)
+                        && let Ok(json) = serde_json::from_str::<Value>(&data)
+                    {
+                        let terminal = is_terminal_status(&json);
+                        frames.push(json);
+                        if terminal {
+                            return;
                         }
                     }
                 }
@@ -1062,8 +1058,10 @@ impl openlet_core::adapters::artifact_store::ArtifactStore for DiscardArtifacts 
         session: openlet_core::types::session::SessionId,
         key: &str,
         _: bytes::Bytes,
-    ) -> Result<openlet_core::adapters::artifact_store::ArtifactRef, openlet_core::error::ArtifactError>
-    {
+    ) -> Result<
+        openlet_core::adapters::artifact_store::ArtifactRef,
+        openlet_core::error::ArtifactError,
+    > {
         Ok(openlet_core::adapters::artifact_store::ArtifactRef {
             session_id: session,
             key: key.to_string(),
@@ -1080,8 +1078,10 @@ impl openlet_core::adapters::artifact_store::ArtifactStore for DiscardArtifacts 
     async fn list(
         &self,
         _: openlet_core::types::session::SessionId,
-    ) -> Result<Vec<openlet_core::adapters::artifact_store::ArtifactRef>, openlet_core::error::ArtifactError>
-    {
+    ) -> Result<
+        Vec<openlet_core::adapters::artifact_store::ArtifactRef>,
+        openlet_core::error::ArtifactError,
+    > {
         Ok(vec![])
     }
 }

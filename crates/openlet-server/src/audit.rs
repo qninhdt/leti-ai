@@ -52,15 +52,15 @@ pub async fn run(args: AuditArgs, data_dir: &Path) -> Result<()> {
             .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
             .map(|d| d.with_timezone(&Utc));
         if let Some(t) = ts {
-            if let Some(lo) = from {
-                if t < lo {
-                    continue;
-                }
+            if let Some(lo) = from
+                && t < lo
+            {
+                continue;
             }
-            if let Some(hi) = to {
-                if t > hi {
-                    continue;
-                }
+            if let Some(hi) = to
+                && t > hi
+            {
+                continue;
             }
         }
 

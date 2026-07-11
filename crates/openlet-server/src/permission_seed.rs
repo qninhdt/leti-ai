@@ -52,19 +52,19 @@ const ALLOW: &[&str] = &[
 /// device redirection, fork bombs, remote-history rewrites, and piping a
 /// download straight into a shell.
 const DANGEROUS_BASH: &[&str] = &[
-    "bash:*rm -r*",   // recursive delete (rm -rf, rm -Rf, rm --recursive)
-    "bash:*rm -f*",   // forced delete
-    "bash:*rmdir *",  // directory removal
-    "bash:*sudo *",   // privilege escalation
-    "bash:*mkfs*",    // format a filesystem
-    "bash:* dd *",    // raw disk writes (mid-command)
-    "bash:dd *",      // raw disk writes (leading)
+    "bash:*rm -r*",    // recursive delete (rm -rf, rm -Rf, rm --recursive)
+    "bash:*rm -f*",    // forced delete
+    "bash:*rmdir *",   // directory removal
+    "bash:*sudo *",    // privilege escalation
+    "bash:*mkfs*",     // format a filesystem
+    "bash:* dd *",     // raw disk writes (mid-command)
+    "bash:dd *",       // raw disk writes (leading)
     "bash:*shutdown*", // halt the box
     "bash:*reboot*",
     "bash:*chmod -R*", // recursive permission change
     "bash:*chown -R*",
-    "bash:*:()[{]*",       // fork bomb — `[{]` escapes the literal brace
-    "bash:*> /dev/sd*",    // clobber a block device
+    "bash:*:()[{]*",    // fork bomb — `[{]` escapes the literal brace
+    "bash:*> /dev/sd*", // clobber a block device
     // Git history/remote rewrites — plain `git push`/`git pull` stay allowed
     // (routine); only the irreversible shapes prompt. The leading space in
     // `-f ` keeps it from matching `--follow-tags` etc.
@@ -73,7 +73,7 @@ const DANGEROUS_BASH: &[&str] = &[
     "bash:*git push*--delete*", // delete a remote branch
     "bash:*git push*--mirror*", // mirror push (can delete refs)
     "bash:*git reset --hard*",  // discard working tree + move HEAD
-    "bash:*| sh*",   // pipe a download into a shell
+    "bash:*| sh*",              // pipe a download into a shell
     "bash:*| bash*",
     "bash:*|sh*",
     "bash:*|bash*",
@@ -209,8 +209,8 @@ mod tests {
         // re-introducing the "asks too much" annoyance. These must NOT prompt.
         let m = seeded().await;
         for cmd in [
-            "bash:cd build && make",  // `dd` substring, but no ` dd ` / leading dd
-            "bash:cargo add serde",   // contains "add", unrelated to rm/dd
+            "bash:cd build && make",   // `dd` substring, but no ` dd ` / leading dd
+            "bash:cargo add serde",    // contains "add", unrelated to rm/dd
             "bash:grep -rf pattern .", // -rf flags on grep, not `rm -r`/`rm -f`
             "bash:echo reboot_notes",  // "reboot" as a word fragment... (see note)
         ] {
@@ -220,7 +220,10 @@ mod tests {
             if cmd.contains("reboot") {
                 assert!(matches!(d, Decision::Pending { .. }), "{cmd}");
             } else {
-                assert!(matches!(d, Decision::Allow), "expected {cmd} allowed, got {d:?}");
+                assert!(
+                    matches!(d, Decision::Allow),
+                    "expected {cmd} allowed, got {d:?}"
+                );
             }
         }
     }

@@ -11,8 +11,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
-use openlet_core::types::event::AgentEvent;
 use openlet_core::runtime::PRESERVE_RECENT;
+use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
 use openlet_core::types::session::{SessionId, SessionStatus};
@@ -227,7 +227,10 @@ pub async fn compact(
     // turn, so `/compact` on a fresh session is a cheap no-op.
     let message_count = state.memory.list_messages(sid).await?.len();
     if message_count <= PRESERVE_RECENT {
-        return Ok((StatusCode::ACCEPTED, Json(CompactAckDto { compacted: false })));
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(CompactAckDto { compacted: false }),
+        ));
     }
 
     // Claim the active-turn slot before dispatch — compaction drives a
@@ -291,7 +294,10 @@ pub async fn compact(
         }
     });
 
-    Ok((StatusCode::ACCEPTED, Json(CompactAckDto { compacted: true })))
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(CompactAckDto { compacted: true }),
+    ))
 }
 
 /// Assemble the loop context and run a single on-demand compaction step.

@@ -160,10 +160,10 @@ impl TaskRegistry {
     /// quota counter. Called from the spawned driver's Drop guard so the
     /// counter releases on success, error, OR panic.
     pub fn finalize(&self, id: TaskId) {
-        if let Some((_, handle)) = self.tasks.remove(&id) {
-            if let Some(c) = self.session_descendants.get(&handle.root_session_id) {
-                saturating_dec(&c);
-            }
+        if let Some((_, handle)) = self.tasks.remove(&id)
+            && let Some(c) = self.session_descendants.get(&handle.root_session_id)
+        {
+            saturating_dec(&c);
         }
     }
 

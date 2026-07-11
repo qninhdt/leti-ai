@@ -72,10 +72,10 @@ async fn read_until_or_timeout(body: Body, expected_frames: usize) -> Vec<u8> {
     let _ = tokio::time::timeout(Duration::from_millis(500), async {
         let mut s = stream;
         while let Some(chunk) = s.frame().await {
-            if let Ok(frame) = chunk {
-                if let Some(data) = frame.data_ref() {
-                    buf.extend_from_slice(data);
-                }
+            if let Ok(frame) = chunk
+                && let Some(data) = frame.data_ref()
+            {
+                buf.extend_from_slice(data);
             }
             let count = String::from_utf8_lossy(&buf)
                 .matches("event: part.created")

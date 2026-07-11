@@ -78,8 +78,13 @@ pub(crate) async fn drive_subagent(
         agent: agent_def,
     };
 
-    let input =
-        crate::turn_driver::build_turn_input(child_session_id, llm_messages, tools, child_model, system_prompt);
+    let input = crate::turn_driver::build_turn_input(
+        child_session_id,
+        llm_messages,
+        tools,
+        child_model,
+        system_prompt,
+    );
 
     let memory = crate::turn_driver::memory_arc(&state);
     let outcome = state
@@ -93,26 +98,24 @@ pub(crate) async fn drive_subagent(
     // 0). Skip `list_parts` entirely in that case — the subagent output is
     // correctly empty, NOT the nil-UUID's (empty) part list masquerading
     // as a real lookup.
-    if let Ok(o) = &outcome {
-        if let Some(final_msg_id) = o.final_assistant_message_id {
-            if let Ok(parts) = state
-                .memory
-                .list_parts(child_session_id, final_msg_id)
-                .await
-            {
-                let mut buf = String::new();
-                for p in parts {
-                    if let Part::Text { text, .. } = p {
-                        if !buf.is_empty() {
-                            buf.push('\n');
-                        }
-                        buf.push_str(&text);
-                    }
-                }
+    if let Ok(o) = &outcome
+        && let Some(final_msg_id) = o.final_assistant_message_id
+        && let Ok(parts) = state
+            .memory
+            .list_parts(child_session_id, final_msg_id)
+            .await
+    {
+        let mut buf = String::new();
+        for p in parts {
+            if let Part::Text { text, .. } = p {
                 if !buf.is_empty() {
-                    registry.append_output(task_id, &buf).await;
+                    buf.push('\n');
                 }
+                buf.push_str(&text);
             }
+        }
+        if !buf.is_empty() {
+            registry.append_output(task_id, &buf).await;
         }
     }
 

@@ -315,7 +315,11 @@ async fn basic_class_is_supported_by_pinned_monty() {
         "class Counter:\n    def __init__(self):\n        self.n = 0\n    def bump(self):\n        self.n += 1\n        return self.n\nc = Counter()\nc.bump()\nprint(c.bump())",
     )
     .await;
-    assert_eq!(out.exit_code, 0, "basic class should run; stderr: {}", out.stderr);
+    assert_eq!(
+        out.exit_code, 0,
+        "basic class should run; stderr: {}",
+        out.stderr
+    );
     assert_eq!(out.stdout.trim(), "2");
 }
 
@@ -334,11 +338,7 @@ async fn class_inheritance_fails_loud_not_silent() {
 
 #[tokio::test]
 async fn match_statement_fails_loud_not_silent() {
-    let out = run_in(
-        &[],
-        "x = 1\nmatch x:\n    case 1:\n        print('one')\n",
-    )
-    .await;
+    let out = run_in(&[], "x = 1\nmatch x:\n    case 1:\n        print('one')\n").await;
     assert_ne!(out.exit_code, 0, "match stmt must not silently succeed");
     assert!(
         !out.stderr.is_empty(),

@@ -11,8 +11,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use openlet_adapters::bus::BroadcastBus;
 use openlet_adapters::cloudfs::CloudFilesystem;
-use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
 use openlet_adapters::emushell::EmulatedShellExecutor;
+use openlet_adapters::localfs::{LocalFilesystem, LocalFsArtifactStore};
 use openlet_adapters::localshell::LocalShellExecutor;
 use openlet_adapters::pyexec::MontyExecutor;
 use openlet_adapters::sqlite::SqliteMemoryStore;
@@ -182,12 +182,13 @@ impl AdapterStack {
         // `var_os` so a non-UTF-8 value surfaces as a parse error rather than
         // silently defaulting (`var().ok()` would swallow `NotUnicode`).
         let shell_impl_raw = std::env::var_os("OPENLET_SHELL_IMPL");
-        let shell_impl_str = match shell_impl_raw.as_ref() {
-            Some(os) => Some(os.to_str().ok_or_else(|| {
-                anyhow::anyhow!("OPENLET_SHELL_IMPL contains non-UTF-8 bytes")
-            })?),
-            None => None,
-        };
+        let shell_impl_str =
+            match shell_impl_raw.as_ref() {
+                Some(os) => Some(os.to_str().ok_or_else(|| {
+                    anyhow::anyhow!("OPENLET_SHELL_IMPL contains non-UTF-8 bytes")
+                })?),
+                None => None,
+            };
         let shell_impl = resolve_shell_impl(shell_impl_str, config.cloud_fs.is_some())
             .map_err(|e| anyhow::anyhow!(e))?;
         let shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor> = match shell_impl {
@@ -229,10 +230,22 @@ mod tests {
 
     #[test]
     fn recognizes_both_impls_case_insensitively_and_trimmed() {
-        assert_eq!(parse_shell_impl(Some("emulated")).unwrap(), ShellImpl::Emulated);
-        assert_eq!(parse_shell_impl(Some("EMULATED")).unwrap(), ShellImpl::Emulated);
-        assert_eq!(parse_shell_impl(Some(" subprocess ")).unwrap(), ShellImpl::Subprocess);
-        assert_eq!(parse_shell_impl(Some("Subprocess")).unwrap(), ShellImpl::Subprocess);
+        assert_eq!(
+            parse_shell_impl(Some("emulated")).unwrap(),
+            ShellImpl::Emulated
+        );
+        assert_eq!(
+            parse_shell_impl(Some("EMULATED")).unwrap(),
+            ShellImpl::Emulated
+        );
+        assert_eq!(
+            parse_shell_impl(Some(" subprocess ")).unwrap(),
+            ShellImpl::Subprocess
+        );
+        assert_eq!(
+            parse_shell_impl(Some("Subprocess")).unwrap(),
+            ShellImpl::Subprocess
+        );
     }
 
     #[test]
@@ -240,7 +253,10 @@ mod tests {
         // A typo must fail loudly rather than quietly shipping the emulated
         // default — the whole point of the rollback lever is being explicit.
         let err = parse_shell_impl(Some("subproces")).unwrap_err();
-        assert!(err.contains("subproces"), "error should echo the bad value: {err}");
+        assert!(
+            err.contains("subproces"),
+            "error should echo the bad value: {err}"
+        );
         assert!(err.contains("emulated") && err.contains("subprocess"));
     }
 
@@ -252,7 +268,10 @@ mod tests {
     #[test]
     fn resolve_defaults_to_emulated_in_local_mode() {
         // Unset env + local FS → emulated (the production default).
-        assert_eq!(resolve_shell_impl(None, false).unwrap(), ShellImpl::Emulated);
+        assert_eq!(
+            resolve_shell_impl(None, false).unwrap(),
+            ShellImpl::Emulated
+        );
     }
 
     #[test]

@@ -66,19 +66,19 @@ pub(super) async fn check_model_reachable(state: &AppState) -> CheckResult {
     if let Some(ref key) = api_key {
         req = req.bearer_auth(key);
     }
-    if let Ok(Ok(resp)) = timeout(PER_CHECK_BUDGET, req.send()).await {
-        if resp.status().is_success() {
-            return finish(
-                "model_reachable",
-                start,
-                Status::Healthy,
-                Some(format!("GET /models -> {}", resp.status().as_u16())),
-            );
-        }
-        // 401 here means the host is reachable but the key is bad;
-        // fall through to the anonymous HEAD step which treats 401 as
-        // a positive reachability signal.
+    if let Ok(Ok(resp)) = timeout(PER_CHECK_BUDGET, req.send()).await
+        && resp.status().is_success()
+    {
+        return finish(
+            "model_reachable",
+            start,
+            Status::Healthy,
+            Some(format!("GET /models -> {}", resp.status().as_u16())),
+        );
     }
+    // 401 here means the host is reachable but the key is bad;
+    // fall through to the anonymous HEAD step which treats 401 as
+    // a positive reachability signal.
 
     // Step 2: anonymous HEAD on the base URL. 401 / 403 / 404 still
     // mean a server is on the other end of the wire — that's the only

@@ -71,15 +71,15 @@ impl OpenRouterProvider {
     /// request; both are non-secret app metadata.
     fn attribution_headers(&self) -> Vec<(HeaderName, HeaderValue)> {
         let mut out = Vec::new();
-        if let Some(referer) = self.config.referer.as_deref() {
-            if let Ok(v) = HeaderValue::from_str(referer) {
-                out.push((HTTP_REFERER, v));
-            }
+        if let Some(referer) = self.config.referer.as_deref()
+            && let Ok(v) = HeaderValue::from_str(referer)
+        {
+            out.push((HTTP_REFERER, v));
         }
-        if let Some(title) = self.config.title.as_deref() {
-            if let Ok(v) = HeaderValue::from_str(title) {
-                out.push((X_TITLE, v));
-            }
+        if let Some(title) = self.config.title.as_deref()
+            && let Ok(v) = HeaderValue::from_str(title)
+        {
+            out.push((X_TITLE, v));
         }
         out
     }
@@ -90,12 +90,11 @@ impl OpenRouterProvider {
         let Some(obj) = body.as_object_mut() else {
             return;
         };
-        if let Some(routing) = self.config.routing.as_ref() {
-            if !routing.is_empty() {
-                if let Ok(v) = serde_json::to_value(routing) {
-                    obj.insert("provider".to_string(), v);
-                }
-            }
+        if let Some(routing) = self.config.routing.as_ref()
+            && !routing.is_empty()
+            && let Ok(v) = serde_json::to_value(routing)
+        {
+            obj.insert("provider".to_string(), v);
         }
         if !self.config.models_fallback.is_empty() {
             obj.insert(

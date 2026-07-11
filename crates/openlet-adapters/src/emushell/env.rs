@@ -111,9 +111,10 @@ pub async fn expand_glob(fs: &dyn Filesystem, word: &str) -> Vec<String> {
         sort: openlet_core::adapters::filesystem::GlobSort::PathAsc,
     };
     match fs.glob(word, opts).await {
-        Ok(paths) if !paths.is_empty() => {
-            paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect()
-        }
+        Ok(paths) if !paths.is_empty() => paths
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
         // No match or glob error → literal (nullglob off, bash default).
         _ => vec![word.to_string()],
     }

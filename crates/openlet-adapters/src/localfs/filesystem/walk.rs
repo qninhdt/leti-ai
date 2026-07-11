@@ -124,10 +124,10 @@ pub(crate) async fn grep(root: &Path, args: GrepArgs) -> Result<Vec<GrepHit>, Fs
             files_visited += 1;
             let path = entry.path();
             let rel = path.strip_prefix(&root).unwrap_or(path);
-            if let Some(g) = &path_glob {
-                if !g.is_match(rel) {
-                    continue;
-                }
+            if let Some(g) = &path_glob
+                && !g.is_match(rel)
+            {
+                continue;
             }
             let content = match std::fs::metadata(path) {
                 Ok(m) if m.len() > GREP_MAX_FILE_BYTES => continue,

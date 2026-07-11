@@ -128,41 +128,41 @@ impl ConversationRuntime {
             }
             // Compaction check at top of each iteration. Skipped during a
             // compaction-induced turn to avoid recursion.
-            if let Some(agent) = loop_ctx.agent.as_ref() {
-                if !compacted_this_loop {
-                    // Estimate tokens for messages appended since the last
-                    // provider-reported prompt size (tool results from the
-                    // turn just completed). Added to `last_actual_tokens`
-                    // so a large tool result triggers compaction this cycle
-                    // rather than overflowing the window next turn.
-                    let unsent_tail_tokens = input
-                        .messages
-                        .get(sent_message_count..)
-                        .map(crate::runtime::token_estimate::estimate_conversation_tokens)
-                        .unwrap_or(0);
-                    if let CompactDecision::Run { keep } = should_compact(
-                        &input.messages,
-                        agent,
-                        last_actual_tokens,
-                        unsent_tail_tokens,
-                    ) {
-                        compacted_this_loop = true;
-                        match self
-                            .run_compaction(
-                                memory,
-                                &loop_ctx,
-                                agent,
-                                keep,
-                                &mut input,
-                                &mut last_actual_tokens,
-                                cancel.clone(),
-                            )
-                            .await?
-                        {
-                            CompactionFlow::Continue => continue,
-                            CompactionFlow::Halt => {
-                                return Ok(halted_outcome(model_steps, last_assistant_id));
-                            }
+            if let Some(agent) = loop_ctx.agent.as_ref()
+                && !compacted_this_loop
+            {
+                // Estimate tokens for messages appended since the last
+                // provider-reported prompt size (tool results from the
+                // turn just completed). Added to `last_actual_tokens`
+                // so a large tool result triggers compaction this cycle
+                // rather than overflowing the window next turn.
+                let unsent_tail_tokens = input
+                    .messages
+                    .get(sent_message_count..)
+                    .map(crate::runtime::token_estimate::estimate_conversation_tokens)
+                    .unwrap_or(0);
+                if let CompactDecision::Run { keep } = should_compact(
+                    &input.messages,
+                    agent,
+                    last_actual_tokens,
+                    unsent_tail_tokens,
+                ) {
+                    compacted_this_loop = true;
+                    match self
+                        .run_compaction(
+                            memory,
+                            &loop_ctx,
+                            agent,
+                            keep,
+                            &mut input,
+                            &mut last_actual_tokens,
+                            cancel.clone(),
+                        )
+                        .await?
+                    {
+                        CompactionFlow::Continue => continue,
+                        CompactionFlow::Halt => {
+                            return Ok(halted_outcome(model_steps, last_assistant_id));
                         }
                     }
                 }

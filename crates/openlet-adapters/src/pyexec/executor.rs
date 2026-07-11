@@ -26,7 +26,7 @@ use openlet_core::error::ToolError;
 use openlet_core::tools::builtins::python::{PythonExecutor, PythonOutput};
 use tokio_util::sync::CancellationToken;
 
-use super::mount_bridge::{dispatch_os_call, Dispatched};
+use super::mount_bridge::{Dispatched, dispatch_os_call};
 
 /// Default memory budget for one Python run. Generous enough for JSON/string
 /// computation over workspace files, tight enough that a `[0]*10**12` bomb
@@ -75,7 +75,14 @@ impl PythonExecutor for MontyExecutor {
         code: &str,
         timeout_ms: u64,
     ) -> Result<PythonOutput, ToolError> {
-        run_python(ctx.fs.as_ref(), &ctx.cancel, code, timeout_ms, self.max_memory).await
+        run_python(
+            ctx.fs.as_ref(),
+            &ctx.cancel,
+            code,
+            timeout_ms,
+            self.max_memory,
+        )
+        .await
     }
 }
 
@@ -115,56 +122,56 @@ pub async fn run_python(
 
     let (stdout, stdout_truncated) = cap(stdout);
     match outcome {
-            Outcome::Complete(value) => {
-                // Echo the module's last expression like a REPL, but skip a
-                // bare `None` (a trailing statement / assignment) so we don't
-                // print spurious "None" after every write-only script.
-                if !matches!(value, MontyObject::None) {
-                    let rendered = value.to_string();
-                    let mut merged = stdout;
-                    if !merged.is_empty() && !merged.ends_with('\n') {
-                        merged.push('\n');
-                    }
-                    merged.push_str(&rendered);
-                    if !merged.ends_with('\n') {
-                        merged.push('\n');
-                    }
-                    let (merged, trunc2) = cap(merged);
-                    Ok(PythonOutput {
-                        stdout: merged,
-                        stderr: String::new(),
-                        exit_code: 0,
-                        timed_out: false,
-                        stdout_truncated: stdout_truncated || trunc2,
-                        stderr_truncated: false,
-                    })
-                } else {
-                    Ok(PythonOutput {
-                        stdout,
-                        stderr: String::new(),
-                        exit_code: 0,
-                        timed_out: false,
-                        stdout_truncated,
-                        stderr_truncated: false,
-                    })
+        Outcome::Complete(value) => {
+            // Echo the module's last expression like a REPL, but skip a
+            // bare `None` (a trailing statement / assignment) so we don't
+            // print spurious "None" after every write-only script.
+            if !matches!(value, MontyObject::None) {
+                let rendered = value.to_string();
+                let mut merged = stdout;
+                if !merged.is_empty() && !merged.ends_with('\n') {
+                    merged.push('\n');
                 }
-            }
-            Outcome::Exception(exc) => {
-                // A resource limit (memory / time) surfaces as an uncatchable
-                // exception with a distinct `ExcType`; map the time case onto
-                // `timed_out` so the runtime treats it like the old subprocess
-                // timeout path.
-                let timed_out = matches!(exc.exc_type(), ExcType::TimeoutError);
-                let (stderr, stderr_truncated) = cap(exc.to_string());
+                merged.push_str(&rendered);
+                if !merged.ends_with('\n') {
+                    merged.push('\n');
+                }
+                let (merged, trunc2) = cap(merged);
+                Ok(PythonOutput {
+                    stdout: merged,
+                    stderr: String::new(),
+                    exit_code: 0,
+                    timed_out: false,
+                    stdout_truncated: stdout_truncated || trunc2,
+                    stderr_truncated: false,
+                })
+            } else {
                 Ok(PythonOutput {
                     stdout,
-                    stderr,
-                    exit_code: 1,
-                    timed_out,
+                    stderr: String::new(),
+                    exit_code: 0,
+                    timed_out: false,
                     stdout_truncated,
-                    stderr_truncated,
+                    stderr_truncated: false,
                 })
             }
+        }
+        Outcome::Exception(exc) => {
+            // A resource limit (memory / time) surfaces as an uncatchable
+            // exception with a distinct `ExcType`; map the time case onto
+            // `timed_out` so the runtime treats it like the old subprocess
+            // timeout path.
+            let timed_out = matches!(exc.exc_type(), ExcType::TimeoutError);
+            let (stderr, stderr_truncated) = cap(exc.to_string());
+            Ok(PythonOutput {
+                stdout,
+                stderr,
+                exit_code: 1,
+                timed_out,
+                stdout_truncated,
+                stderr_truncated,
+            })
+        }
     }
 }
 
@@ -225,7 +232,10 @@ async fn drive<T: ResourceTracker>(
             // An undefined name (e.g. a denied `import socket` surfacing the
             // module name) is a `NameError` by construction — deny it.
             RunProgress::NameLookup(lookup) => {
-                progress = match lookup.resume(NameLookupResult::Undefined, PrintWriter::CollectString(stdout)) {
+                progress = match lookup.resume(
+                    NameLookupResult::Undefined,
+                    PrintWriter::CollectString(stdout),
+                ) {
                     Ok(p) => p,
                     Err(e) => return Ok(Outcome::Exception(e)),
                 };

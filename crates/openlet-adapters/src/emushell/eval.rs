@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::ast::{AndOr, AndOrOp, Command, Frag, Node, Script, Word};
 use super::builtins::{self, BuiltinCtx};
-use super::env::{expand_glob, ShellEnv};
+use super::env::{ShellEnv, expand_glob};
 
 /// Output byte caps — reused from the previous subprocess executor so the
 /// emulated shell truncates at the same thresholds.
@@ -147,7 +147,10 @@ impl<'a> Interp<'a> {
         }
     }
 
-    fn run_script<'s>(&'s mut self, script: &'s Script) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
+    fn run_script<'s>(
+        &'s mut self,
+        script: &'s Script,
+    ) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
         Box::pin(async move {
             let mut status = 0;
             for item in &script.items {
@@ -160,7 +163,10 @@ impl<'a> Interp<'a> {
         })
     }
 
-    fn run_andor<'s>(&'s mut self, andor: &'s AndOr) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
+    fn run_andor<'s>(
+        &'s mut self,
+        andor: &'s AndOr,
+    ) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
         Box::pin(async move {
             let mut status = self.run_node(&andor.head).await;
             for (op, node) in &andor.tail {
@@ -180,7 +186,10 @@ impl<'a> Interp<'a> {
         })
     }
 
-    fn run_node<'s>(&'s mut self, node: &'s Node) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
+    fn run_node<'s>(
+        &'s mut self,
+        node: &'s Node,
+    ) -> Pin<Box<dyn Future<Output = i32> + Send + 's>> {
         Box::pin(async move {
             match node {
                 Node::Pipeline(cmds) => self.run_pipeline(cmds).await,
@@ -280,7 +289,10 @@ impl<'a> Interp<'a> {
                 }
             }
         } else {
-            CmdOut { stdout: out, status }
+            CmdOut {
+                stdout: out,
+                status,
+            }
         }
     }
 
@@ -331,7 +343,7 @@ impl<'a> Interp<'a> {
             // can service other tasks (and observe cancellation) while the
             // in-band deadline still bounds total wall-clock.
             iters += 1;
-            if iters % YIELD_EVERY == 0 {
+            if iters.is_multiple_of(YIELD_EVERY) {
                 tokio::task::yield_now().await;
             }
             let cond_status = self.run_script(cond).await;
@@ -343,7 +355,12 @@ impl<'a> Interp<'a> {
         status
     }
 
-    async fn run_if(&mut self, cond: &Script, then_body: &Script, else_body: Option<&Script>) -> i32 {
+    async fn run_if(
+        &mut self,
+        cond: &Script,
+        then_body: &Script,
+        else_body: Option<&Script>,
+    ) -> i32 {
         self.tick();
         let cond_status = self.run_script(cond).await;
         if cond_status == 0 {
@@ -368,7 +385,10 @@ impl<'a> Interp<'a> {
 
     /// Expand a single word into zero or more argv tokens. Command
     /// substitution re-enters the evaluator; glob hits `ctx.fs`.
-    fn expand_word<'s>(&'s mut self, word: &'s Word) -> Pin<Box<dyn Future<Output = Vec<String>> + Send + 's>> {
+    fn expand_word<'s>(
+        &'s mut self,
+        word: &'s Word,
+    ) -> Pin<Box<dyn Future<Output = Vec<String>> + Send + 's>> {
         Box::pin(async move {
             let (text, globbable) = self.assemble_word(word).await;
             if globbable && has_glob_meta(&text) {
@@ -421,7 +441,10 @@ impl<'a> Interp<'a> {
     /// Run a `$(...)` body and return its stdout. Shares var state by value
     /// (child sees parent vars; assignments inside do not leak back, which
     /// matches bash subshell semantics).
-    fn run_cmdsub<'s>(&'s mut self, script: &'s Script) -> Pin<Box<dyn Future<Output = String> + Send + 's>> {
+    fn run_cmdsub<'s>(
+        &'s mut self,
+        script: &'s Script,
+    ) -> Pin<Box<dyn Future<Output = String> + Send + 's>> {
         Box::pin(async move {
             self.tick();
             if self.aborted.is_some() {
@@ -459,10 +482,10 @@ impl<'a> Interp<'a> {
         // never `.await`s the filesystem, so a wrapping `tokio::time::timeout`
         // can never pre-empt it. Checking the deadline here — at every
         // evaluated node — bounds such a loop in real time regardless.
-        if let Some(deadline) = self.deadline {
-            if Instant::now() >= deadline {
-                self.aborted = Some(AbortReason::Timeout);
-            }
+        if let Some(deadline) = self.deadline
+            && Instant::now() >= deadline
+        {
+            self.aborted = Some(AbortReason::Timeout);
         }
         if self.cancel.is_cancelled() {
             self.aborted = Some(AbortReason::Cancelled);
@@ -522,4 +545,3 @@ fn fs_err_msg(e: &openlet_core::error::FsError) -> String {
         FsError::Unsupported(m) => format!("operation not supported: {m}"),
     }
 }
-

@@ -78,15 +78,15 @@ pub struct OpenAiToolDef<'a> {
 #[must_use]
 pub fn to_wire<'a>(req: &'a ChatRequest) -> OpenAiRequest<'a> {
     let mut messages = Vec::with_capacity(req.messages.len() + 1);
-    if let Some(sys) = req.system.as_deref() {
-        if !sys.is_empty() {
-            messages.push(OpenAiMessage {
-                role: "system",
-                content: Some(sys.to_string()),
-                tool_call_id: None,
-                tool_calls: Vec::new(),
-            });
-        }
+    if let Some(sys) = req.system.as_deref()
+        && !sys.is_empty()
+    {
+        messages.push(OpenAiMessage {
+            role: "system",
+            content: Some(sys.to_string()),
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+        });
     }
     for m in &req.messages {
         messages.push(project_msg(m));

@@ -79,7 +79,11 @@ async fn dirname_strips_last_component() {
 
 #[tokio::test]
 async fn diff_reports_changed_lines() {
-    let out = run_in(&[("a.txt", "one\ntwo\n"), ("b.txt", "one\nthree\n")], "diff a.txt b.txt").await;
+    let out = run_in(
+        &[("a.txt", "one\ntwo\n"), ("b.txt", "one\nthree\n")],
+        "diff a.txt b.txt",
+    )
+    .await;
     assert_eq!(out.exit_code, 1);
     assert!(out.stdout.contains("< two"));
     assert!(out.stdout.contains("> three"));
@@ -210,7 +214,11 @@ async fn grep_recursive_pushes_down_to_fs() {
 
 #[tokio::test]
 async fn grep_stdin_filters_lines() {
-    let out = run_in(&[("f.txt", "match\nskip\nmatch2\n")], "cat f.txt | grep match").await;
+    let out = run_in(
+        &[("f.txt", "match\nskip\nmatch2\n")],
+        "cat f.txt | grep match",
+    )
+    .await;
     assert_eq!(out.stdout, "match\nmatch2\n");
 }
 
@@ -253,8 +261,14 @@ async fn cp_duplicates_file() {
     let out = run_at(fx.root(), "cp src.txt dst.txt").await;
     assert_eq!(out.exit_code, 0);
     // Source untouched, dest is a copy.
-    assert_eq!(std::fs::read_to_string(fx.root().join("src.txt")).unwrap(), "payload\n");
-    assert_eq!(std::fs::read_to_string(fx.root().join("dst.txt")).unwrap(), "payload\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("src.txt")).unwrap(),
+        "payload\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("dst.txt")).unwrap(),
+        "payload\n"
+    );
 }
 
 #[tokio::test]
@@ -263,7 +277,10 @@ async fn mv_renames_file() {
     let out = run_at(fx.root(), "mv old.txt new.txt").await;
     assert_eq!(out.exit_code, 0);
     assert!(!fx.root().join("old.txt").exists());
-    assert_eq!(std::fs::read_to_string(fx.root().join("new.txt")).unwrap(), "data\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("new.txt")).unwrap(),
+        "data\n"
+    );
 }
 
 #[tokio::test]
@@ -311,11 +328,23 @@ async fn cp_cancelled_leaves_sources_intact_no_partial_dest() {
         "cancelled run halts as Err(Timeout), got {result:?}"
     );
     // Sources are never consumed by cp, so both remain intact.
-    assert_eq!(std::fs::read_to_string(fx.root().join("a.txt")).unwrap(), "AAA\n");
-    assert_eq!(std::fs::read_to_string(fx.root().join("b.txt")).unwrap(), "BBB\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("a.txt")).unwrap(),
+        "AAA\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("b.txt")).unwrap(),
+        "BBB\n"
+    );
     // No destination files written — no partial copy left behind.
-    assert!(!fx.root().join("out/a.txt").exists(), "no partial dest on cancel");
-    assert!(!fx.root().join("out/b.txt").exists(), "no partial dest on cancel");
+    assert!(
+        !fx.root().join("out/a.txt").exists(),
+        "no partial dest on cancel"
+    );
+    assert!(
+        !fx.root().join("out/b.txt").exists(),
+        "no partial dest on cancel"
+    );
 }
 
 #[tokio::test]
@@ -330,8 +359,14 @@ async fn mv_cancelled_leaves_sources_intact_no_limbo() {
         matches!(result, Err(ToolError::Timeout)),
         "cancelled run halts as Err(Timeout), got {result:?}"
     );
-    assert_eq!(std::fs::read_to_string(fx.root().join("a.txt")).unwrap(), "AAA\n");
-    assert_eq!(std::fs::read_to_string(fx.root().join("b.txt")).unwrap(), "BBB\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("a.txt")).unwrap(),
+        "AAA\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("b.txt")).unwrap(),
+        "BBB\n"
+    );
     assert!(!fx.root().join("out/a.txt").exists());
     assert!(!fx.root().join("out/b.txt").exists());
 }
@@ -343,7 +378,10 @@ async fn tee_writes_and_passes_through() {
     assert_eq!(out.exit_code, 0);
     // tee echoes stdin to stdout AND writes the file.
     assert_eq!(out.stdout, "hi\n");
-    assert_eq!(std::fs::read_to_string(fx.root().join("out.txt")).unwrap(), "hi\n");
+    assert_eq!(
+        std::fs::read_to_string(fx.root().join("out.txt")).unwrap(),
+        "hi\n"
+    );
 }
 
 #[tokio::test]

@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::{fs_err_msg, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg};
 
 /// `cat [-n] [file...]` — concatenate files (or stdin). `-n` numbers lines.
 pub(super) async fn cat(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> BuiltinResult {
@@ -236,7 +236,11 @@ pub(super) async fn cut(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> B
 fn parse_range(spec: &str) -> Option<(usize, Option<usize>)> {
     if let Some((a, b)) = spec.split_once('-') {
         let lo = if a.is_empty() { 1 } else { a.parse().ok()? };
-        let hi = if b.is_empty() { None } else { Some(b.parse().ok()?) };
+        let hi = if b.is_empty() {
+            None
+        } else {
+            Some(b.parse().ok()?)
+        };
         Some((lo, hi))
     } else {
         let n = spec.parse().ok()?;

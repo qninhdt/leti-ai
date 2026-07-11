@@ -161,7 +161,11 @@ async fn if_else_runs_on_failure() {
 async fn unknown_binary_is_command_not_found() {
     let out = run_in(&[], "cargo build").await;
     assert_eq!(out.exit_code, 127);
-    assert!(out.stderr.contains("command not found"), "stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("command not found"),
+        "stderr: {}",
+        out.stderr
+    );
     assert_eq!(out.stdout, "");
 }
 
@@ -182,7 +186,10 @@ async fn dev_tcp_redirect_has_no_network_by_construction() {
     // over any network. The security property is structural: there is simply
     // no socket syscall to reach.
     let out = run_in(&[], "echo pwned > /dev/tcp/127.0.0.1/9999").await;
-    assert_ne!(out.exit_code, 0, "writing to /dev/tcp must fail, not open a socket");
+    assert_ne!(
+        out.exit_code, 0,
+        "writing to /dev/tcp must fail, not open a socket"
+    );
     assert_eq!(out.stdout, "", "no data should surface on stdout");
 }
 
@@ -192,7 +199,10 @@ async fn escape_outside_workspace_is_denied() {
     // as a non-zero exit + stderr — NOT a host read and NOT a tool crash.
     let out = run_in(&[("inside.txt", "ok")], "cat ../../../etc/passwd").await;
     assert_ne!(out.exit_code, 0);
-    assert!(!out.stdout.contains("root:"), "must not read host /etc/passwd");
+    assert!(
+        !out.stdout.contains("root:"),
+        "must not read host /etc/passwd"
+    );
 }
 
 #[tokio::test]
@@ -204,7 +214,11 @@ async fn fs_error_folds_into_exit_code_not_toolerror() {
     let out = run_in(&[], "cat missing.txt && echo x").await;
     assert_ne!(out.exit_code, 0);
     assert_eq!(out.stdout, "");
-    assert!(out.stderr.contains("No such file"), "stderr: {}", out.stderr);
+    assert!(
+        out.stderr.contains("No such file"),
+        "stderr: {}",
+        out.stderr
+    );
 }
 
 #[tokio::test]

@@ -82,7 +82,8 @@ async fn python_output_pipes_into_next_stage() {
 async fn python_script_writes_through_fs() {
     // A script run via the bash builtin persists through ctx.fs, same seam as
     // the standalone python tool.
-    let fx = WorkspaceFixture::with_files([("w.py", "open('out.txt','w').write('via-bash-python')\n")]);
+    let fx =
+        WorkspaceFixture::with_files([("w.py", "open('out.txt','w').write('via-bash-python')\n")]);
     let out = run_at(fx.root(), "python3 w.py").await;
     assert_eq!(out.exit_code, 0, "stderr: {}", out.stderr);
     let disk = std::fs::read_to_string(fx.root().join("out.txt")).unwrap();
@@ -96,7 +97,10 @@ async fn python_in_bash_still_denies_subprocess() {
     // Routing through Monty means the sandbox holds: no os.system escape even
     // when reached via the bash tool.
     let out = run_in(&[], "python3 -c 'import os; os.system(\"id\")'").await;
-    assert_ne!(out.exit_code, 0, "os.system must not succeed via bash python");
+    assert_ne!(
+        out.exit_code, 0,
+        "os.system must not succeed via bash python"
+    );
 }
 
 // --- Monty limitations surfaced loudly (never silently wrong) ----------

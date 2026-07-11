@@ -133,11 +133,11 @@ impl CoreApi for CoreApiImpl {
         // removes its own on exit (closes stale-finalizer race).
         let mut emitted = false;
         if let Some(active) = self.active_turns.get() {
-            if let Some(handle) = active.get(&session_id).map(|h| h.clone()) {
-                if handle.request_cancel() {
-                    handle.cancel.cancel();
-                    emitted = true;
-                }
+            if let Some(handle) = active.get(&session_id).map(|h| h.clone())
+                && handle.request_cancel()
+            {
+                handle.cancel.cancel();
+                emitted = true;
             }
         } else {
             tracing::warn!(

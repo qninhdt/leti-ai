@@ -97,15 +97,15 @@ pub fn compute_line_diff(old: &str, new: &str, line_cap: usize) -> FileDiff {
                 // no new_index on that first change (and an Insert has no
                 // old_index), so anchor each side on the first change that
                 // carries an index for it rather than the first change overall.
-                if old_start == 0 {
-                    if let Some(i) = change.old_index() {
-                        old_start = i + 1;
-                    }
+                if old_start == 0
+                    && let Some(i) = change.old_index()
+                {
+                    old_start = i + 1;
                 }
-                if new_start == 0 {
-                    if let Some(i) = change.new_index() {
-                        new_start = i + 1;
-                    }
+                if new_start == 0
+                    && let Some(i) = change.new_index()
+                {
+                    new_start = i + 1;
                 }
                 let kind = match change.tag() {
                     ChangeTag::Insert => {

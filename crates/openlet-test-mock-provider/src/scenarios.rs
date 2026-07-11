@@ -111,11 +111,11 @@ pub fn detect_scenario(messages: &serde_json::Value) -> Option<Scenario> {
             }
         } else if let Some(parts) = content.as_array() {
             for part in parts {
-                if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                    if let Some(s) = scan_token(text) {
-                        found = Some(s);
-                        break;
-                    }
+                if let Some(text) = part.get("text").and_then(|v| v.as_str())
+                    && let Some(s) = scan_token(text)
+                {
+                    found = Some(s);
+                    break;
                 }
             }
             if found.is_some() {

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{fs_err_msg, short_flags, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg, short_flags};
 use std::path::Path;
 
 /// `echo [-n] args...` — join args with spaces. `-n` suppresses the
@@ -158,7 +158,11 @@ pub(super) fn basename(argv: &[String]) -> BuiltinResult {
     let Some(path) = argv.get(1) else {
         return BuiltinResult::err("basename: missing operand", 1);
     };
-    let base = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path);
+    let base = path
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path);
     let base = match argv.get(2) {
         Some(suffix) if base != suffix => base.strip_suffix(suffix.as_str()).unwrap_or(base),
         _ => base,

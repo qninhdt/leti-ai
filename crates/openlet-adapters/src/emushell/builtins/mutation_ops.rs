@@ -17,7 +17,7 @@ use std::pin::Pin;
 use openlet_core::adapters::filesystem::WriteOpts;
 use openlet_core::error::FsError;
 
-use super::{fs_err_msg, short_flags, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg, short_flags};
 
 /// `mkdir [-p] dir...` — create directories. `-p` makes parents as needed
 /// and is not an error if the target exists.
@@ -92,10 +92,10 @@ pub(super) async fn rm(ctx: &BuiltinCtx<'_>, argv: &[String]) -> BuiltinResult {
         if ctx.cancel.is_cancelled() {
             return BuiltinResult::err("rm: interrupted", 130);
         }
-        if let Err(e) = remove_path(ctx, p, recursive).await {
-            if !force {
-                return BuiltinResult::err(format!("rm: {}", fs_err_msg(&e)), 1);
-            }
+        if let Err(e) = remove_path(ctx, p, recursive).await
+            && !force
+        {
+            return BuiltinResult::err(format!("rm: {}", fs_err_msg(&e)), 1);
         }
     }
     BuiltinResult::out(String::new())
@@ -267,7 +267,11 @@ pub(super) async fn tee(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> B
     for f in &files {
         if let Err(e) = ctx
             .fs
-            .write(Path::new(f), bytes::Bytes::from(stdin.to_string().into_bytes()), opts)
+            .write(
+                Path::new(f),
+                bytes::Bytes::from(stdin.to_string().into_bytes()),
+                opts,
+            )
             .await
         {
             return BuiltinResult::err(format!("tee: {}", fs_err_msg(&e)), 1);
@@ -294,7 +298,7 @@ fn split_recursive(argv: &[String], name: &str) -> (bool, Result<Vec<String>, Bu
                                 format!("{name}: invalid option -- '{f}'"),
                                 1,
                             )),
-                        )
+                        );
                     }
                 }
             }
@@ -307,5 +311,8 @@ fn split_recursive(argv: &[String], name: &str) -> (bool, Result<Vec<String>, Bu
 
 /// Last path component (for `cp`/`mv` into a directory destination).
 fn base_name(path: &str) -> &str {
-    path.trim_end_matches('/').rsplit('/').next().unwrap_or(path)
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
 }

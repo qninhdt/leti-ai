@@ -32,10 +32,9 @@ fn assembled_text(frames: &[Value]) -> String {
     for f in frames {
         if f.get("kind").and_then(Value::as_str) == Some("part_delta")
             && f.get("delta_kind").and_then(Value::as_str) == Some("text")
+            && let Some(d) = f.get("delta").and_then(Value::as_str)
         {
-            if let Some(d) = f.get("delta").and_then(Value::as_str) {
-                out.push_str(d);
-            }
+            out.push_str(d);
         }
     }
     out

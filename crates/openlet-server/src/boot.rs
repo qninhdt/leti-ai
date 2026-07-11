@@ -57,7 +57,10 @@ pub fn build_tool_registry(tools: Vec<ToolHandle>) -> Arc<ToolRegistry> {
     let mut tool_builder = ToolRegistry::builder();
     for tool in tools {
         if disabled.iter().any(|d| d == tool.name()) {
-            tracing::info!(tool = tool.name(), "tool disabled via OPENLET_DISABLED_TOOLS");
+            tracing::info!(
+                tool = tool.name(),
+                "tool disabled via OPENLET_DISABLED_TOOLS"
+            );
             continue;
         }
         tool_builder = tool_builder.register_erased(tool);

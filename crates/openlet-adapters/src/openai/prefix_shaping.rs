@@ -71,10 +71,10 @@ pub fn apply_request_shaping(
         return Ok(());
     };
 
-    if caps.max_completion_tokens_param {
-        if let Some(v) = obj.remove("max_tokens") {
-            obj.insert("max_completion_tokens".to_string(), v);
-        }
+    if caps.max_completion_tokens_param
+        && let Some(v) = obj.remove("max_tokens")
+    {
+        obj.insert("max_completion_tokens".to_string(), v);
     }
 
     if caps.strip_sampling_params {
@@ -88,12 +88,12 @@ pub fn apply_request_shaping(
         }
     }
 
-    if caps.reject_is_error_field {
-        if let Some(messages) = obj.get_mut("messages").and_then(Value::as_array_mut) {
-            for msg in messages {
-                if let Some(m) = msg.as_object_mut() {
-                    m.remove("is_error");
-                }
+    if caps.reject_is_error_field
+        && let Some(messages) = obj.get_mut("messages").and_then(Value::as_array_mut)
+    {
+        for msg in messages {
+            if let Some(m) = msg.as_object_mut() {
+                m.remove("is_error");
             }
         }
     }

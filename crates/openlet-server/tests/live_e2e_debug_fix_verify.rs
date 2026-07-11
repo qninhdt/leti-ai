@@ -80,7 +80,8 @@ async fn wait_disk(pred: impl Fn() -> bool, deadline: Duration) -> bool {
 /// model's own run.
 async fn run_via_monty(workspace: &std::path::Path, code: &str) -> (i32, String, String) {
     let exec = MontyExecutor::new();
-    let ctx = live_support::minimal_tool_ctx(Arc::new(LocalFilesystem::new(workspace.to_path_buf())));
+    let ctx =
+        live_support::minimal_tool_ctx(Arc::new(LocalFilesystem::new(workspace.to_path_buf())));
     let out = exec
         .run(&ctx, code, 5_000)
         .await

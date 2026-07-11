@@ -226,22 +226,22 @@ impl ConversationRuntime {
         // resume turn, signal the pause via SessionStatus::Idle, and exit
         // the loop. SessionStatus::Idle is used as a proxy until a
         // dedicated Paused variant lands.
-        if let DispatchOutcome::Completed(ref ctx) = after_outcome {
-            if !ctx.autocontinue {
-                let _ = loop_ctx
-                    .handles
-                    .events
-                    .publish(
-                        AgentEvent::SessionStatus {
-                            session_id,
-                            status: crate::types::session::SessionStatus::Idle,
-                            at: Utc::now(),
-                        },
-                        Persistence::Durable,
-                    )
-                    .await;
-                return Ok(CompactionFlow::Halt);
-            }
+        if let DispatchOutcome::Completed(ref ctx) = after_outcome
+            && !ctx.autocontinue
+        {
+            let _ = loop_ctx
+                .handles
+                .events
+                .publish(
+                    AgentEvent::SessionStatus {
+                        session_id,
+                        status: crate::types::session::SessionStatus::Idle,
+                        at: Utc::now(),
+                    },
+                    Persistence::Durable,
+                )
+                .await;
+            return Ok(CompactionFlow::Halt);
         }
         // Post-compaction overflow check.
         //

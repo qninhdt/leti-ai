@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use openlet_core::adapters::filesystem::{GlobOpts, GlobSort, GrepArgs};
 
-use super::{fs_err_msg, short_flags, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg, short_flags};
 
 /// `ls [-l] [-a] [-1] [path...]` — list directory children via `ctx.fs.list`.
 /// The long form (`-l`) prints a `type size name` row; otherwise names only.

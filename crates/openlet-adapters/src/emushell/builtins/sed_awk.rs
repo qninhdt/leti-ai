@@ -16,7 +16,7 @@ use std::path::Path;
 
 use regex::RegexBuilder;
 
-use super::{fs_err_msg, BuiltinCtx, BuiltinResult};
+use super::{BuiltinCtx, BuiltinResult, fs_err_msg};
 
 /// `sed [-n] [-i] 's/re/repl/flags' [file...]`.
 pub(super) async fn sed(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> BuiltinResult {
@@ -58,7 +58,11 @@ pub(super) async fn sed(ctx: &BuiltinCtx<'_>, argv: &[String], stdin: &str) -> B
             let opts = openlet_core::adapters::filesystem::WriteOpts::default();
             if let Err(e) = ctx
                 .fs
-                .write(Path::new(f), bytes::Bytes::from(transformed.into_bytes()), opts)
+                .write(
+                    Path::new(f),
+                    bytes::Bytes::from(transformed.into_bytes()),
+                    opts,
+                )
                 .await
             {
                 return BuiltinResult::err(format!("sed: {}", fs_err_msg(&e)), 2);
@@ -125,7 +129,9 @@ fn parse_sed_script(script: &str) -> Result<SedProgram, String> {
     let _ = tail;
 
     if !subst.starts_with('s') {
-        return Err(format!("sed: unsupported command (only s/// supported): {script}"));
+        return Err(format!(
+            "sed: unsupported command (only s/// supported): {script}"
+        ));
     }
     // Delimiter is the char right after `s` (usually `/`).
     let bytes = subst.as_bytes();
@@ -136,7 +142,9 @@ fn parse_sed_script(script: &str) -> Result<SedProgram, String> {
     let rest = &subst[2..];
     let parts: Vec<&str> = split_unescaped(rest, delim);
     if parts.len() < 2 {
-        return Err(format!("sed: malformed s{delim}re{delim}repl{delim} command"));
+        return Err(format!(
+            "sed: malformed s{delim}re{delim}repl{delim} command"
+        ));
     }
     let pattern = parts[0];
     let repl = unescape_repl(parts[1]);
@@ -327,7 +335,11 @@ fn parse_awk_program(program: &str) -> Result<AwkProgram, String> {
     }
     let rest = rest.trim();
     if !rest.is_empty() {
-        let body = rest.trim().trim_start_matches('{').trim_end_matches('}').trim();
+        let body = rest
+            .trim()
+            .trim_start_matches('{')
+            .trim_end_matches('}')
+            .trim();
         main = Some(parse_print(body)?);
     }
     if begin.is_none() && main.is_none() && end.is_none() {

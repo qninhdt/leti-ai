@@ -103,7 +103,10 @@ async fn finite_workload_is_not_cut() {
         .await
         .expect("finite loop must return Ok(BashOutput)");
 
-    assert!(!out.timed_out, "finite workload must NOT be flagged timed_out");
+    assert!(
+        !out.timed_out,
+        "finite workload must NOT be flagged timed_out"
+    );
     assert_eq!(out.exit_code, 0, "finite workload should exit 0");
     assert_eq!(out.stdout, "1\n2\n3\n4\n5\n");
     assert!(

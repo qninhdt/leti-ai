@@ -136,29 +136,29 @@ impl Tool for SubagentTaskTool {
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
         // Resume path — caller provided an existing task_id. Skip spawn,
         // jump straight to await/poll.
-        if let Some(existing) = input.task_id.as_deref() {
-            if let Ok(uuid) = uuid::Uuid::parse_str(existing) {
-                let id = TaskId(uuid);
-                if input.background {
-                    return Ok(SubagentTaskOutput {
-                        task_id: existing.to_string(),
-                        status: "running".into(),
-                        output: None,
-                        cost_usd: None,
-                    });
-                }
-                let (output, cost, status) = self
-                    .spawner
-                    .await_completion(id)
-                    .await
-                    .map_err(map_spawn_err)?;
+        if let Some(existing) = input.task_id.as_deref()
+            && let Ok(uuid) = uuid::Uuid::parse_str(existing)
+        {
+            let id = TaskId(uuid);
+            if input.background {
                 return Ok(SubagentTaskOutput {
                     task_id: existing.to_string(),
-                    status: status.label().to_string(),
-                    output: Some(output),
-                    cost_usd: cost,
+                    status: "running".into(),
+                    output: None,
+                    cost_usd: None,
                 });
             }
+            let (output, cost, status) = self
+                .spawner
+                .await_completion(id)
+                .await
+                .map_err(map_spawn_err)?;
+            return Ok(SubagentTaskOutput {
+                task_id: existing.to_string(),
+                status: status.label().to_string(),
+                output: Some(output),
+                cost_usd: cost,
+            });
         }
 
         let task_id = self
