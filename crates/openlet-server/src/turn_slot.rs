@@ -107,13 +107,20 @@ pub(crate) fn spawn_driven_turn<F>(
             Err(_) if cancel.is_cancelled() => SessionStatus::Cancelled,
             Err(_) => SessionStatus::Errored,
         };
-        // Remove ONLY our own handle. If a fresh prompt raced past a
-        // still-cancelling driver, this `remove_if` is a no-op so the
-        // dying loop's tail finalizer can't stomp the new turn's slot
-        // (closes stale-finalizer race).
-        state.active_turns.remove_if(&sid, |_, h| {
-            Arc::ptr_eq(&h.cancel_emitted, &handle.cancel_emitted)
-        });
+        // Atomically release OUR slot and, if a non-`User` turn is
+        // queued, re-claim the slot for it — all inside the same
+        // `active_turns` critical section so a racing fresh user prompt
+        // (`try_claim_turn_slot`) and a queued injected turn can't both
+        // claim. `drained` carries the pending turn to start AFTER the
+        // status write below.
+        //
+        // Stale-finalizer safety: we only act if the slot still holds OUR
+        // handle (`Arc::ptr_eq` on `cancel_emitted`). If a fresh prompt
+        // already raced past a still-cancelling driver, the slot is not
+        // ours — we leave it and drain nothing (the live turn will drain
+        // on its own exit).
+        let drained = drain_next_turn(&state, sid, &handle);
+
         let _ = state
             .memory
             .update_status(sid, final_status, status_reason(&outcome, &cancel))
@@ -122,7 +129,65 @@ pub(crate) fn spawn_driven_turn<F>(
         if let Err(err) = outcome {
             tracing::warn!(session = %sid, error = %err, "{label} ended with error");
         }
+
+        // Start the drained injected turn (if any) now that our terminal
+        // status is committed. The slot was re-claimed inside
+        // `drain_next_turn` so this only commits the new handle to its task.
+        if let Some((next_handle, pending)) = drained {
+            crate::injected_turn::start_injected_turn(
+                state,
+                sid,
+                next_handle,
+                pending.body,
+                pending.origin,
+            );
+        }
     });
+}
+
+/// Exit-path drain: release the finishing turn's slot and, atomically,
+/// re-claim it for the next queued non-`User` turn if one exists.
+///
+/// Returns `Some((new_handle, pending))` when a queued turn was dequeued
+/// and the slot re-claimed for it (caller must start it), or `None` when
+/// the queue was empty (slot released) or the slot was not ours (stale
+/// finalizer — left untouched).
+///
+/// The whole check runs under the `active_turns` `entry` shard lock so it
+/// serialises against `try_claim_turn_slot` and `enqueue_or_start_turn`.
+fn drain_next_turn(
+    state: &AppState,
+    sid: SessionId,
+    handle: &TurnHandle,
+) -> Option<(TurnHandle, crate::app_state::PendingTurn)> {
+    match state.active_turns.entry(sid) {
+        dashmap::mapref::entry::Entry::Occupied(occ) => {
+            // Only OUR handle may release/drain — a fresh user prompt that
+            // raced past a still-cancelling driver owns the slot now.
+            if !Arc::ptr_eq(&occ.get().cancel_emitted, &handle.cancel_emitted) {
+                return None;
+            }
+            // Pop the next queued turn, if any.
+            let next = state
+                .pending_turns
+                .get_mut(&sid)
+                .and_then(|mut q| q.pop_front());
+            match next {
+                Some(pending) => {
+                    // Re-claim the slot in place for the queued turn.
+                    let next_handle = TurnHandle::new(sid);
+                    occ.replace_entry(next_handle.clone());
+                    Some((next_handle, pending))
+                }
+                None => {
+                    // Nothing queued — release the slot.
+                    occ.remove();
+                    None
+                }
+            }
+        }
+        dashmap::mapref::entry::Entry::Vacant(_) => None,
+    }
 }
 
 /// Map a driver outcome + cancel state to the stable status-reason string

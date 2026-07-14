@@ -32,13 +32,16 @@ import { PartReasoning } from "./part-reasoning.js";
 import { ToolInline } from "./tool-inline.js";
 import { ToolBlock } from "./tool-block.js";
 import { ToolDiff } from "./tool-diff.js";
+import { ToolSubagentBlock } from "./tool-subagent-block.js";
+import { parseSubagentCall } from "./tool-subagent-parse.js";
+import { useStoreSelector } from "../render/store-bridge.js";
 import { parseFileDiff } from "./tool-diff-parse.js";
 import { ToolTodo } from "./tool-todo.js";
 import { ToolAskUser } from "./tool-ask-user.js";
 import { CompactionDivider } from "./compaction-divider.js";
 
 import type { Accessor } from "solid-js";
-import type { MessageView, PartView } from "../store/index.js";
+import type { MessageView, PartView, SubagentView } from "../store/index.js";
 
 export interface MessageAssistantProps {
   message: MessageView;
@@ -66,6 +69,13 @@ function resultText(value: unknown): string {
 
 export function MessageAssistant(props: MessageAssistantProps) {
   const oc = theme.oc;
+  // Live subagent rows keyed by task_id (fed by subagent.* SSE frames). The
+  // task block reads its row via the call's task_id (from the tool result).
+  const subagents = useStoreSelector((s) => s.subagents);
+  const subagentFor = (p: PartView): SubagentView | undefined => {
+    const call = parseSubagentCall(p.tool_args, p.tool_result);
+    return call?.taskId ? subagents()[call.taskId] : undefined;
+  };
 
   // Tool-call ids that render as BLOCK cards — those fold their own result, so
   // the standalone result row is suppressed for them. Collect both `id` and
@@ -156,6 +166,14 @@ export function MessageAssistant(props: MessageAssistantProps) {
             instead of raw JSON. The live selection UI is a separate overlay. */}
         <Match when={name() === "ask_user"}>
           <ToolAskUser part={p()} result={out()} />
+        </Match>
+        {/* subagent_task renders an inline task block: agent slug, live
+            status/output tail, cost. Live state comes from the `subagents`
+            store slice keyed by the call's task_id (fed by subagent.* frames);
+            a promoted task shows a "result below" affordance instead of the
+            output (delivered as an injected parent turn). */}
+        <Match when={name() === "subagent_task"}>
+          <ToolSubagentBlock part={p()} live={subagentFor(p())} />
         </Match>
         <Match when={toolVisual(p().tool_name).template === "block"}>
           {/* edit/write emit a structured FileDiff in their result body; render

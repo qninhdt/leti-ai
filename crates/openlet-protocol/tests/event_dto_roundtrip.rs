@@ -271,8 +271,8 @@ fn attachment_accepted_converts() {
 }
 
 #[test]
-fn subagent_started_converts() {
-    let ev = AgentEvent::SubagentStarted {
+fn subagent_spawned_converts() {
+    let ev = AgentEvent::SubagentSpawned {
         task_id: Uuid::nil(),
         parent_session_id: sid(),
         subagent_type: "researcher".into(),
@@ -281,8 +281,8 @@ fn subagent_started_converts() {
 }
 
 #[test]
-fn subagent_output_converts() {
-    let ev = AgentEvent::SubagentOutput {
+fn subagent_progress_converts() {
+    let ev = AgentEvent::SubagentProgress {
         task_id: Uuid::nil(),
         parent_session_id: sid(),
         delta: "partial result".into(),
@@ -291,12 +291,45 @@ fn subagent_output_converts() {
 }
 
 #[test]
-fn subagent_finished_converts() {
-    let ev = AgentEvent::SubagentFinished {
+fn subagent_settled_converts() {
+    let ev = AgentEvent::SubagentSettled {
         task_id: Uuid::nil(),
         parent_session_id: sid(),
         output: "final answer".into(),
         cost_usd: Some("0.05".into()),
+    };
+    let _dto: EventDto = ev.into();
+}
+
+#[test]
+fn subagent_promoted_converts() {
+    let ev = AgentEvent::SubagentPromoted {
+        task_id: Uuid::nil(),
+        parent_session_id: sid(),
+    };
+    let _dto: EventDto = ev.into();
+}
+
+#[test]
+fn subagent_message_converts() {
+    let ev = AgentEvent::SubagentMessage {
+        task_id: Uuid::nil(),
+        parent_session_id: sid(),
+        from: "reviewer".into(),
+        to: "worker#2".into(),
+    };
+    let _dto: EventDto = ev.into();
+}
+
+#[test]
+fn subagent_roster_converts() {
+    let ev = AgentEvent::SubagentRoster {
+        root_session_id: sid(),
+        entries: vec![openlet_core::types::event::RosterFrameEntry {
+            name: "reviewer".into(),
+            task_id: Uuid::nil(),
+            generation: 7,
+        }],
     };
     let _dto: EventDto = ev.into();
 }

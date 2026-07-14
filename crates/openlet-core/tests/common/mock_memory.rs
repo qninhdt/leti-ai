@@ -37,6 +37,13 @@ impl MockMemoryStore {
             .get(&session)
             .map_or(0, Vec::len)
     }
+
+    /// Insert a `SessionMeta` directly so tests that exercise
+    /// parent/child resolution (e.g. `send_message` hierarchy scoping) can
+    /// pre-seed a session tree without driving `create_session`.
+    pub fn put_session(&self, meta: SessionMeta) {
+        self.sessions.lock().unwrap().insert(meta.id, meta);
+    }
 }
 
 #[async_trait]

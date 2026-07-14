@@ -107,22 +107,36 @@ pub enum EventDto {
         mime: String,
         summary: String,
     },
-    SubagentStarted {
+    SubagentSpawned {
         task_id: Uuid,
         parent_session_id: Uuid,
         subagent_type: String,
     },
-    SubagentOutput {
+    SubagentProgress {
         task_id: Uuid,
         parent_session_id: Uuid,
         delta: String,
     },
-    SubagentFinished {
+    SubagentPromoted {
+        task_id: Uuid,
+        parent_session_id: Uuid,
+    },
+    SubagentSettled {
         task_id: Uuid,
         parent_session_id: Uuid,
         output: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd: Option<String>,
+    },
+    SubagentMessage {
+        task_id: Uuid,
+        parent_session_id: Uuid,
+        from: String,
+        to: String,
+    },
+    SubagentRoster {
+        root_session_id: Uuid,
+        entries: Vec<RosterEntryDto>,
     },
     NotificationEmitted {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +147,15 @@ pub enum EventDto {
         plugin_id: String,
     },
     Heartbeat,
+}
+
+/// Wire shape for a `subagent.roster` entry. Mirrors
+/// `openlet_core::types::event::RosterFrameEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RosterEntryDto {
+    pub name: String,
+    pub task_id: Uuid,
+    pub generation: u64,
 }
 
 /// Wire shape for `AttachmentKind`. Mirrors the domain enum 1:1.
@@ -445,34 +468,66 @@ impl From<AgentEvent> for EventDto {
                 mime,
                 summary,
             },
-            AgentEvent::SubagentStarted {
+            AgentEvent::SubagentSpawned {
                 task_id,
                 parent_session_id,
                 subagent_type,
-            } => Self::SubagentStarted {
+            } => Self::SubagentSpawned {
                 task_id,
                 parent_session_id: parent_session_id.as_uuid(),
                 subagent_type,
             },
-            AgentEvent::SubagentOutput {
+            AgentEvent::SubagentProgress {
                 task_id,
                 parent_session_id,
                 delta,
-            } => Self::SubagentOutput {
+            } => Self::SubagentProgress {
                 task_id,
                 parent_session_id: parent_session_id.as_uuid(),
                 delta,
             },
-            AgentEvent::SubagentFinished {
+            AgentEvent::SubagentPromoted {
+                task_id,
+                parent_session_id,
+            } => Self::SubagentPromoted {
+                task_id,
+                parent_session_id: parent_session_id.as_uuid(),
+            },
+            AgentEvent::SubagentSettled {
                 task_id,
                 parent_session_id,
                 output,
                 cost_usd,
-            } => Self::SubagentFinished {
+            } => Self::SubagentSettled {
                 task_id,
                 parent_session_id: parent_session_id.as_uuid(),
                 output,
                 cost_usd,
+            },
+            AgentEvent::SubagentMessage {
+                task_id,
+                parent_session_id,
+                from,
+                to,
+            } => Self::SubagentMessage {
+                task_id,
+                parent_session_id: parent_session_id.as_uuid(),
+                from,
+                to,
+            },
+            AgentEvent::SubagentRoster {
+                root_session_id,
+                entries,
+            } => Self::SubagentRoster {
+                root_session_id: root_session_id.as_uuid(),
+                entries: entries
+                    .into_iter()
+                    .map(|e| RosterEntryDto {
+                        name: e.name,
+                        task_id: e.task_id,
+                        generation: e.generation,
+                    })
+                    .collect(),
             },
             AgentEvent::NotificationEmitted {
                 session_id,

@@ -27,6 +27,7 @@ use openlet_core::types::session::SessionId;
 use tokio::sync::OnceCell;
 
 use crate::app_state::AppState;
+use crate::subagent_driver::publish_roster;
 
 /// Late-bound spawner. `Arc` so the same instance can be cloned into
 /// `CoreToolsPlugin` and into `AppState` for cancel-cascade hooks.
@@ -131,7 +132,7 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         )?;
 
         // Persist the child session synchronously so SSE consumers see
-        // the row before SubagentStarted fires. We MUST persist
+        // the row before SubagentSpawned fires. We MUST persist
         // `plan.child` verbatim (via create_session_with_meta) rather than
         // calling create_session: the planner pre-allocated `plan.child.id`
         // — the id every seeded message/part and the driver loop are keyed
@@ -177,7 +178,7 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         let _ = state
             .events
             .publish(
-                AgentEvent::SubagentStarted {
+                AgentEvent::SubagentSpawned {
                     task_id: plan.task_id.0,
                     parent_session_id: parent_meta.id,
                     subagent_type: subagent_type.to_string(),
@@ -201,6 +202,12 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
                 SpawnError::Internal("parent agent_resources missing".into())
             })?;
         let child_session_id = plan.child.id;
+        let handle_name = plan.handle_name.clone();
+        let driver_root = root;
+
+        // Emit a roster-change frame so the TUI @mention typeahead sees the
+        // newly-registered sibling (Phase 4 Finding 11). Best-effort.
+        publish_roster(state, driver_root).await;
 
         tokio::spawn(async move {
             let _ = crate::subagent_driver::drive_subagent(
@@ -212,6 +219,8 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
                 child_perm,
                 child_cancel,
                 agent_resources,
+                driver_root,
+                handle_name,
             )
             .await;
         });

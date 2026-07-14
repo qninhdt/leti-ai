@@ -9,7 +9,7 @@ import { applyEvent } from "./apply-event.js";
 
 import type { FileBadge } from "../services/attachment-embedder.js";
 import type { State, MessageView } from "./types.js";
-export type { State, MessageView, PartView, OverlayEntry, OverlayKind, ConnSlice, PluginErrorView, PendingQuestion } from "./types.js";
+export type { State, MessageView, PartView, OverlayEntry, OverlayKind, ConnSlice, PluginErrorView, PendingQuestion, SubagentView } from "./types.js";
 
 export const useStore = createStore<State>((set) => ({
   conn: { status: "idle", attempt: 0, lastEventId: null },
@@ -25,6 +25,9 @@ export const useStore = createStore<State>((set) => ({
   notice: null,
   planMode: {},
   overlays: [],
+  subagents: {},
+  roster: {},
+  idleNotices: [],
 
   setConn: (status, detail) =>
     set((s) => ({

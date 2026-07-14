@@ -29,6 +29,46 @@ use openlet_plugin_registry::PluginHandles;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
+/// Origin of a turn — determines role framing + permission policy when
+/// the turn is projected and driven. A `User` turn is the normal
+/// interactive prompt (trusted, human attached, `Ask` prompts the user).
+/// Non-`User` origins are AUTONOMOUS injected turns (Phase 3 promotion
+/// results, Phase 4 sibling messages): their body is rendered as
+/// UNTRUSTED data (never authoritative instructions) and any `Ask`
+/// permission decision fail-closes to `Deny` because no human is attached.
+#[derive(Clone, Debug)]
+pub enum TurnOrigin {
+    /// Interactive user prompt. Trusted; `Ask` prompts the human.
+    User,
+    /// A promoted subagent's result re-injected into the parent session
+    /// (Phase 3). Carries the originating task id for provenance framing.
+    InjectedResult {
+        task_id: openlet_core::runtime::subagent::TaskId,
+    },
+    /// A message from a sibling subagent (Phase 4). Carries the sender's
+    /// unique handle name for provenance framing.
+    SiblingMessage { from: String },
+}
+
+impl TurnOrigin {
+    /// `true` for the interactive user origin — the only origin that may
+    /// prompt a human on an `Ask` decision and whose content is trusted.
+    #[must_use]
+    pub fn is_user(&self) -> bool {
+        matches!(self, Self::User)
+    }
+}
+
+/// A turn body waiting behind an in-flight turn. Drained FIFO on turn
+/// exit by [`crate::turn_slot::spawn_driven_turn`]. Only NON-`User`
+/// origins are ever enqueued — a `User` double-submit still returns
+/// `409 turn_in_flight` (Validation Session 1).
+#[derive(Clone, Debug)]
+pub struct PendingTurn {
+    pub body: String,
+    pub origin: TurnOrigin,
+}
+
 /// Per-session in-flight turn handle. Cancellation invariants:
 /// - `request_cancel` uses CompareAndSwap so concurrent cancellers (HTTP
 ///   abort + DELETE + plugin `cancel_session`) emit exactly one
@@ -116,6 +156,13 @@ pub struct AppState {
     pub hook_chains: Arc<HookChains>,
     pub runtime: Arc<ConversationRuntime>,
     pub active_turns: Arc<DashMap<SessionId, TurnHandle>>,
+    /// Per-session FIFO queue of turns waiting behind an in-flight turn.
+    /// Drained on turn exit by `turn_slot::spawn_driven_turn` inside the
+    /// same critical section that releases the `active_turns` slot, so a
+    /// queued turn and a racing fresh user prompt can't both claim.
+    /// Populated ONLY by non-`User` origins (injected results, sibling
+    /// messages); a `User` double-submit still returns `409`.
+    pub pending_turns: Arc<DashMap<SessionId, std::collections::VecDeque<PendingTurn>>>,
     pub agents: Arc<HashMap<AgentId, AgentResources>>,
     pub default_agent_id: AgentId,
     /// Absolute path of the agent workspace root. The `Filesystem` trait

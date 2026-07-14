@@ -13,6 +13,7 @@ pub mod conversation;
 pub mod cost;
 pub mod doom_guard;
 pub mod handles;
+pub mod injected_permission;
 pub(crate) mod persist;
 pub mod processor;
 pub mod prompt;

@@ -23,8 +23,9 @@ pub use mention_parser::parse_subagent_mention;
 pub use scoped_permissions::ScopedPermissionManager;
 pub use task_registry::TaskRegistry;
 pub use task_types::{
-    DEFAULT_MAX_DEPTH, DEFAULT_MAX_PER_SESSION, MAX_OUTPUT_BYTES, SpawnError, TaskHandle, TaskId,
-    TaskSnapshot, TaskStatus,
+    DEFAULT_MAX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_PER_SESSION, HandleName,
+    InboxMessage, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle, TaskId, TaskSnapshot,
+    TaskStatus,
 };
 
 use std::sync::Arc;
@@ -48,6 +49,13 @@ pub struct SpawnPlan {
     pub child_perm: Arc<dyn PermissionManager>,
     pub child_cancel: CancellationToken,
     pub handle: TaskHandle,
+    /// Unique roster handle name assigned to this child (Phase 4). The
+    /// driver removes the roster entry under this name when the task is no
+    /// longer background-alive.
+    pub handle_name: HandleName,
+    /// Roster generation at registration — bumped on any later rebind so a
+    /// stale `send_message` snapshot is refused (name-safety gen-check).
+    pub roster_gen: u64,
 }
 
 /// Resolve `subagent_slug` and admit the spawn. Returns a [`SpawnPlan`]
@@ -125,8 +133,25 @@ pub fn plan_subagent_spawn(
         cancel: child_cancel.clone(),
         finished: Arc::new(Notify::new()),
         root_session_id,
+        settled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        was_promoted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        inbox: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        inbox_notify: Arc::new(Notify::new()),
     };
     registry.insert(task_id, handle.clone());
+
+    // Register the child in the sibling roster under its ROOT session with
+    // a unique handle name (auto-suffixed on same-slug collision). The
+    // assigned name + generation ride the SpawnPlan so the driver can
+    // remove the entry when the task is no longer background-alive, and so
+    // a `send_message` snapshot can gen-check against a later rebind.
+    let (handle_name, roster_gen) = registry.register_name(
+        root_session_id,
+        subagent_slug,
+        task_id,
+        parent.id,
+        child_def.tool_allowlist.clone().into(),
+    );
 
     Ok(SpawnPlan {
         task_id,
@@ -136,5 +161,7 @@ pub fn plan_subagent_spawn(
         child_perm,
         child_cancel,
         handle,
+        handle_name,
+        roster_gen,
     })
 }

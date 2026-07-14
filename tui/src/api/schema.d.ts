@@ -580,7 +580,7 @@ export interface components {
             summary: string;
         } | {
             /** @enum {string} */
-            kind: "subagent_started";
+            kind: "subagent_spawned";
             /** Format: uuid */
             parent_session_id: string;
             subagent_type: string;
@@ -589,7 +589,14 @@ export interface components {
         } | {
             delta: string;
             /** @enum {string} */
-            kind: "subagent_output";
+            kind: "subagent_progress";
+            /** Format: uuid */
+            parent_session_id: string;
+            /** Format: uuid */
+            task_id: string;
+        } | {
+            /** @enum {string} */
+            kind: "subagent_promoted";
             /** Format: uuid */
             parent_session_id: string;
             /** Format: uuid */
@@ -597,7 +604,7 @@ export interface components {
         } | {
             cost_usd?: string | null;
             /** @enum {string} */
-            kind: "subagent_finished";
+            kind: "subagent_settled";
             output: string;
             /** Format: uuid */
             parent_session_id: string;
@@ -681,6 +688,14 @@ export interface components {
          * @enum {string}
          */
         NotificationLevelDto: "info" | "warn" | "error";
+        /** @description One live sibling in a `subagent.roster` frame — the @mention typeahead data source. */
+        RosterEntryDto: {
+            name: string;
+            /** Format: uuid */
+            task_id: string;
+            /** Format: int64 */
+            generation: number;
+        };
         /**
          * @description Wire shape for `Part`. Mirrors the domain enum 1:1 but skips the
          *     `Image.bytes` field (images surface via the artifact store URL,

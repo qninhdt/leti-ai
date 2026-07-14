@@ -238,6 +238,10 @@ impl AppStateBuilder {
             active_turns: self
                 .active_turns
                 .unwrap_or_else(|| Arc::new(DashMap::new())),
+            // Turn work-queue (Phase 2): always auto-wired, never injected —
+            // injected/message-origin turns enqueue here behind an in-flight
+            // turn and drain on turn exit.
+            pending_turns: Arc::new(DashMap::new()),
             agents: Arc::new(agents),
             default_agent_id,
             workspace_root,

@@ -68,11 +68,62 @@ export interface PendingQuestion {
   multi_select: boolean;
 }
 
+/// Live view of one subagent task, keyed by `task_id` in the `subagents`
+/// slice. Populated by the `subagent.*` SSE frames (Phase 5). `promoted`
+/// marks a task whose result is auto-injected into the parent (Phase 3) —
+/// for such a task the `settled` frame carries NO output (it re-enters as a
+/// normal parent turn), so the block shows a "result delivered" affordance
+/// rather than duplicating the output.
+export interface SubagentView {
+  task_id: string;
+  parent_session_id: string;
+  /// Agent slug (from the `spawned` frame).
+  agent: string;
+  /// running | finished | cancelled | failed. Derived from spawned/settled.
+  status: "running" | "finished" | "cancelled" | "failed";
+  /// Live output tail accumulated from `progress` frames + the terminal
+  /// `settled` output (empty for a promoted task — see `promoted`).
+  output: string;
+  /// 4-decimal USD cost from the `settled` frame.
+  cost?: string;
+  /// Set by a `subagent.promoted` frame.
+  promoted: boolean;
+}
+
+// One live named sibling in the roster slice (Phase 6). Fed by the
+// `subagent_roster` frame; the data source for the `@mention` typeahead's
+// "live sibling" candidates. Keyed under a root session id in the store.
+export interface RosterView {
+  name: string;
+  task_id: string;
+  generation: number;
+}
+
+// A passive idle-parent notice (Phase 6, red-team Finding 7). When a promoted
+// task settles into an IDLE parent, the TUI surfaces this notice — it never
+// auto-starts a turn. The user opens it on their next interaction.
+export interface IdleNotice {
+  task_id: string;
+  parent_session_id: string;
+  /// Monotonic sequence so the toast host re-triggers on repeats.
+  seq: number;
+}
+
 export interface State {
   conn: ConnSlice;
   sessions: Record<string, SessionDto>;
   activeSessionId: string | null;
   messages: Record<string, MessageView[]>;
+  /// Subagent task views keyed by `task_id`. Fed by the `subagent.*` frames;
+  /// consumed by the inline task block + (Phase 6) the background task panel.
+  subagents: Record<string, SubagentView>;
+  /// Live sibling roster keyed by root session id, inner keyed by handle name
+  /// (Phase 6). Fed by `subagent_roster`; the @mention typeahead's live source.
+  roster: Record<string, Record<string, RosterView>>;
+  /// Passive idle-parent settle notices (Phase 6, Finding 7). Appended when a
+  /// promoted task settles into an idle parent; rendered as a toast, never a
+  /// turn-start.
+  idleNotices: IdleNotice[];
   agents: AgentDto[];
   plugins: PluginInfoDto[];
   pluginErrors: PluginErrorView[];

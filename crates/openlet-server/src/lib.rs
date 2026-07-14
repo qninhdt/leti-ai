@@ -14,6 +14,7 @@ pub mod diagnostics;
 pub mod error;
 pub mod events;
 pub mod evidence_scrubber;
+pub mod injected_turn;
 pub(crate) mod mention;
 pub mod metrics;
 pub mod middleware;
@@ -29,12 +30,13 @@ pub mod turn_driver;
 pub mod turn_slot;
 pub mod workspace_resolver;
 
-pub use app_state::{AgentResources, AppState, TurnHandle};
+pub use app_state::{AgentResources, AppState, PendingTurn, TurnHandle, TurnOrigin};
 pub use app_state_builder::{AppStateBuilder, AppStateBuilderError};
 pub use auth::{
     AuthError, AuthLayer, AuthPrincipal, Authenticator, LocalDevAuthenticator, PrincipalType,
 };
 pub use error::AppError;
+pub use injected_turn::{enqueue_or_start_turn, wrap_untrusted};
 pub use middleware::{WORKSPACE_HEADER, WorkspaceRoutingLayer};
 pub use router::RouterBuilder;
 pub use subagent_spawner::RuntimeSubagentSpawner;

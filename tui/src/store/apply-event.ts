@@ -9,7 +9,7 @@
 import { upsertPartInMessage, updateMessageById, updatePartById } from "./reducers.js";
 
 import type { EventDto } from "../api/types.js";
-import type { MessageView, PendingQuestion, State } from "./types.js";
+import type { IdleNotice, MessageView, PendingQuestion, RosterView, State, SubagentView } from "./types.js";
 
 // Sum two 4-decimal USD cost strings. A NaN parse falls back to the prior
 // total so a malformed delta never zeroes the displayed cost.
@@ -203,8 +203,107 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
       return { clientError: `Agent error: ${detail}` };
     }
 
-    case "heartbeat":
-    default:
+    // --- subagents (Phase 5) ----------------------------------------------
+    case "subagent_spawned": {
+      const existing = s.subagents[ev.task_id];
+      const row: SubagentView = existing ?? {
+        task_id: ev.task_id,
+        parent_session_id: ev.parent_session_id,
+        agent: ev.subagent_type,
+        status: "running",
+        output: "",
+        promoted: false,
+      };
+      return { subagents: { ...s.subagents, [ev.task_id]: { ...row, agent: ev.subagent_type } } };
+    }
+
+    case "subagent_progress": {
+      const row = s.subagents[ev.task_id];
+      if (!row) return {};
+      return {
+        subagents: { ...s.subagents, [ev.task_id]: { ...row, output: row.output + ev.delta } },
+      };
+    }
+
+    case "subagent_promoted": {
+      const row = s.subagents[ev.task_id];
+      if (!row) return {};
+      return { subagents: { ...s.subagents, [ev.task_id]: { ...row, promoted: true } } };
+    }
+
+    case "subagent_settled": {
+      const row = s.subagents[ev.task_id];
+      if (!row) return {};
+      // A promoted task's output re-enters as a normal parent turn, so its
+      // `settled` frame carries NO output payload (empty) — keep the block's
+      // existing progress tail and let the injected turn render the result.
+      // A non-promoted task carries its output here.
+      const output = ev.output.length > 0 ? ev.output : row.output;
+      const subagents = {
+        ...s.subagents,
+        [ev.task_id]: {
+          ...row,
+          status: statusFromSettled(row.status),
+          output,
+          cost: ev.cost_usd ?? row.cost,
+        },
+      };
+      // Idle-parent passive notice (Phase 6, Finding 7): when a PROMOTED task
+      // settles and its parent session is not actively running a turn, record
+      // a passive notice descriptor. This NEVER starts a turn — the injected
+      // result waits in the parent transcript and the user is merely nudged.
+      // (The server's fail-closed idle policy already prevents autonomous
+      // tool execution; this is the UI half.)
+      const parent = s.sessions[ev.parent_session_id];
+      const parentIdle = !parent || parent.status !== "running";
+      if (row.promoted && parentIdle) {
+        const seq = (s.idleNotices[s.idleNotices.length - 1]?.seq ?? 0) + 1;
+        const note: IdleNotice = {
+          task_id: ev.task_id,
+          parent_session_id: ev.parent_session_id,
+          seq,
+        };
+        return { subagents, idleNotices: s.idleNotices.concat(note).slice(-20) };
+      }
+      return { subagents };
+    }
+
+    // --- subagents (Phase 6: social) --------------------------------------
+    case "subagent_roster": {
+      // Replace the whole per-root roster snapshot — the frame is emitted on
+      // every roster change and carries the full live set (sorted by name),
+      // so a wholesale replace correctly drops departed siblings + updates a
+      // rebound entry's generation. An empty `entries` clears the root.
+      const inner: Record<string, RosterView> = {};
+      for (const e of ev.entries) {
+        inner[e.name] = { name: e.name, task_id: e.task_id, generation: e.generation };
+      }
+      return { roster: { ...s.roster, [ev.root_session_id]: inner } };
+    }
+
+    case "subagent_message":
+      // Activity metadata only (the body rides the receiver's turn, not this
+      // frame). Phase 6 could badge panel rows off it; for now it's a no-op
+      // that keeps the exhaustive switch honest.
       return {};
+
+    case "heartbeat":
+      return {};
+
+    default: {
+      // Exhaustiveness guard (Phase 5 Finding 9). Every `EventDto` variant
+      // must be handled above; a NEW frame the reducer forgot lands here and
+      // `never` assignment fails typecheck — catching phantom/renamed frame
+      // drift that string-literal keys would silently ignore.
+      const _exhaustive: never = ev;
+      void _exhaustive;
+      return {};
+    }
   }
+}
+
+/// A settled frame flips a running task to finished; a task already marked
+/// cancelled/failed by a status frame keeps that terminal state.
+function statusFromSettled(prev: SubagentView["status"]): SubagentView["status"] {
+  return prev === "cancelled" || prev === "failed" ? prev : "finished";
 }

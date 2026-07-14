@@ -6,7 +6,9 @@
 //! per-session quota, depth cap). The registry impl itself stays in
 //! `task_registry.rs`.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use rust_decimal::Decimal;
 use thiserror::Error;
@@ -30,6 +32,24 @@ pub const DEFAULT_MAX_PER_SESSION: usize = 32;
 /// `subagent_task` calls increment by 1. Overridable via
 /// `OPENLET_SUBAGENT_MAX_DEPTH`.
 pub const DEFAULT_MAX_DEPTH: u8 = 3;
+
+/// Default per-task inter-agent inbox depth cap (Phase 4). A sender that
+/// floods a sibling past this many undrained messages is refused, bounding
+/// memory against a chatty/adversarial peer.
+pub const DEFAULT_MAX_INBOX_DEPTH: usize = 64;
+
+/// Default per-message body cap (bytes) for inter-agent messages (Phase 4).
+/// Distinct from inbox DEPTH — bounds a single oversized message, not just
+/// the count (security Finding 2).
+pub const DEFAULT_MAX_MESSAGE_BYTES: usize = 64 * 1024;
+
+/// Default per-root CUMULATIVE lifetime spawn budget — the total number of
+/// subagents a single root session may ever spawn over its whole life
+/// (distinct from the concurrency cap, which decrements on finalize). Set
+/// generously so legitimate fan-out is never blocked; its job is only to
+/// fail-close a runaway injection-driven spawn loop (Phase 3 Finding 15).
+/// Overridable via `OPENLET_SUBAGENT_MAX_LIFETIME_SPAWNS`.
+pub const DEFAULT_MAX_LIFETIME_SPAWNS: usize = 512;
 
 /// Task identifier — UUIDv4 newtype. Stable across resume/poll calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -93,6 +113,111 @@ pub struct TaskHandle {
     /// (children, grandchildren) carry the same `root_session_id` so
     /// quota counters live in one bucket per root.
     pub root_session_id: SessionId,
+    /// One-shot guard for the TERMINAL SIDE-EFFECT (the `SubagentSettled`
+    /// publish and any future result injection) — NOT the quota
+    /// decrement. A background task that is promoted (Phase 3) settles
+    /// via a second path; without this guard it could surface its result
+    /// twice (once via the normal terminal publish, once via injection).
+    /// `claim_settle` flips it exactly once so the terminal side-effect
+    /// fires a single time. The quota `finalize`/`saturating_dec` path is
+    /// deliberately left ungated — see `task_registry::saturating_dec`.
+    pub settled: Arc<AtomicBool>,
+    /// Wake signal for the re-armable driver loop (Phase 2). A subagent
+    /// that stays alive in the background (promoted — Phase 3 — or with a
+    /// live inbox — Phase 4) parks on this between `run_loop` objectives;
+    /// an external event (message arrival, resume) notifies it to re-enter
+    /// `run_loop`. A plain sync child never parks (its loop breaks on first
+    /// exit), so this is inert for the Phase 1 single-shot path.
+    /// Enabled-before-check at the wait site to avoid the lost-wakeup bug
+    /// the registry already documents for `finished`.
+    pub inbox_notify: Arc<Notify>,
+    /// Promotion flag (Phase 3). Set by `promote_task` on an
+    /// already-background task: on terminal completion the driver injects
+    /// the result into the PARENT session (via `ParentInjector`) instead
+    /// of only publishing `SubagentSettled`, and — per the OpenCode
+    /// synthetic-message pattern — the `SubagentSettled` frame for a
+    /// promoted task carries status + cost ONLY (no output payload), so
+    /// the result surfaces exactly once via the injected turn. A
+    /// non-promoted background/sync task leaves this `false` and keeps its
+    /// output in `SubagentSettled` as before.
+    pub was_promoted: Arc<AtomicBool>,
+    /// Inter-agent message inbox (Phase 4). A sibling's `send_message`
+    /// pushes an [`InboxMessage`] here; the re-armable driver loop drains
+    /// it at the top of the next iteration and projects each message as an
+    /// untrusted `SiblingMessage`-origin turn. Bounded in BOTH depth
+    /// (count) and per-message length by the registry's `push_message`, so
+    /// a chatty or adversarial sender can't exhaust memory. Dropped with
+    /// the handle on teardown — no separate lifecycle to leak.
+    pub inbox: Arc<Mutex<VecDeque<InboxMessage>>>,
+}
+
+/// A single queued inter-agent message (Phase 4). `from` is a stable
+/// sender-provenance label (currently `session:<uuid>`) surfaced in the
+/// receiver's untrusted-data framing as `from=...`. It is set by the
+/// runtime, never by the message body, so a malicious body cannot spoof a
+/// trusted sender identity.
+#[derive(Debug, Clone)]
+pub struct InboxMessage {
+    pub from: String,
+    pub body: String,
+}
+
+/// Unique roster handle for an addressable live sibling. A bare agent slug
+/// collides when two same-type siblings run at once (two `reviewer`s), so
+/// the roster disambiguates with a suffix (`reviewer`, `reviewer#2`). This
+/// newtype keeps the "unique name" contract legible at call sites.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HandleName(pub String);
+
+impl std::fmt::Display for HandleName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// A live sibling's roster record (Phase 4). Keyed by [`HandleName`] under
+/// a root session. `gen` is bumped whenever a name is (re)bound so a
+/// `send_message` holding a stale snapshot is refused rather than
+/// misrouted to whatever task now holds the name (Claude Code v2.199
+/// name-safety generation check). `parent` scopes reachability to
+/// same-parent siblings by default (hierarchy containment). `allowlist`
+/// is the receiver's tool allowlist, consulted by the privilege check so a
+/// low-privilege sender can't escalate by messaging a high-privilege peer.
+#[derive(Debug, Clone)]
+pub struct RosterEntry {
+    pub task_id: TaskId,
+    pub generation: u64,
+    pub parent: SessionId,
+    pub allowlist: Arc<[String]>,
+}
+
+impl TaskHandle {
+    /// Mark this task promoted (Phase 3). Idempotent.
+    pub fn mark_promoted(&self) {
+        self.was_promoted.store(true, Ordering::Release);
+    }
+
+    /// Whether `promote_task` has flagged this task for parent-injection
+    /// on settle.
+    #[must_use]
+    pub fn is_promoted(&self) -> bool {
+        self.was_promoted.load(Ordering::Acquire)
+    }
+
+    /// Attempt to claim the one-shot terminal side-effect slot. Returns
+    /// `true` for the FIRST caller (which then owns publishing the
+    /// terminal `SubagentSettled` / injecting the result); every
+    /// subsequent caller gets `false` and must skip the side-effect. This
+    /// guards ONLY the terminal side-effect — the quota decrement in
+    /// `finalize` stays idempotent via `saturating_dec` and is never
+    /// gated by this flag (guarding the decrement would invert the safe
+    /// no-op into a permanent slot leak; see Phase 1 Finding 13).
+    #[must_use]
+    pub fn claim_settle(&self) -> bool {
+        self.settled
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -101,8 +226,15 @@ pub enum SpawnError {
     SubagentDepthExceeded { requested: u8, max: u8 },
     #[error("subagent quota exceeded: {in_flight} already in-flight, max {max}")]
     SubagentQuotaExceeded { in_flight: usize, max: usize },
+    #[error("subagent lifetime spawn budget exceeded: {spawned} spawned, max {max}")]
+    SubagentLifetimeBudgetExceeded { spawned: usize, max: usize },
     #[error("subagent type not found: {0}")]
     SubagentTypeNotFound(String),
+    /// An inter-agent `send_message` was refused (Phase 4): unknown /
+    /// finalized target, over-length body, full inbox, stale name
+    /// generation, privilege escalation, or out-of-scope reachability.
+    #[error("message rejected: {0}")]
+    MessageRejected(String),
     #[error("subagent spawn failed: {0}")]
     Internal(String),
 }
@@ -115,7 +247,9 @@ impl SpawnError {
         match self {
             Self::SubagentDepthExceeded { .. } => "subagent_depth_exceeded",
             Self::SubagentQuotaExceeded { .. } => "subagent_quota_exceeded",
+            Self::SubagentLifetimeBudgetExceeded { .. } => "subagent_lifetime_budget_exceeded",
             Self::SubagentTypeNotFound(_) => "subagent_type_not_found",
+            Self::MessageRejected(_) => "message_rejected",
             Self::Internal(_) => "subagent_internal_error",
         }
     }

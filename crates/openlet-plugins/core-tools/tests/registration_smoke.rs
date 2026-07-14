@@ -3,7 +3,7 @@
 //! The plugin's whole job is to register the built-in tool set through the
 //! public `register_tool` extension point. This test installs it against
 //! stub dependencies and asserts the contract every boot relies on:
-//!   - exactly 13 tools are registered,
+//!   - exactly 15 tools are registered,
 //!   - no two share a wire name (a collision would mis-route dispatch),
 //!   - install succeeds with no capability error.
 //!
@@ -213,7 +213,7 @@ fn build_plugin() -> CoreToolsPlugin {
 }
 
 #[tokio::test]
-async fn installs_all_thirteen_tools_without_collision() {
+async fn installs_all_fifteen_tools_without_collision() {
     let plugin = build_plugin();
     let mut ctx = PluginContext::new(
         plugin.manifest().clone(),
@@ -234,8 +234,8 @@ async fn installs_all_thirteen_tools_without_collision() {
 
     assert_eq!(
         names.len(),
-        13,
-        "core-tools must register exactly 13 tools, got {names:?}"
+        15,
+        "core-tools must register exactly 15 tools, got {names:?}"
     );
 
     // No id collisions — dedup the names and compare counts.
@@ -251,7 +251,18 @@ async fn installs_all_thirteen_tools_without_collision() {
     // Spot-check the headline tools are present so a silent rename of the
     // set is caught (not just the count).
     for expected in [
-        "read", "list", "glob", "grep", "write", "edit", "bash", "todo",
+        "read",
+        "list",
+        "glob",
+        "grep",
+        "write",
+        "edit",
+        "bash",
+        "todo",
+        "subagent_task",
+        "task_status",
+        "promote_task",
+        "send_message",
     ] {
         assert!(
             names.contains(&expected),
@@ -271,7 +282,7 @@ async fn installs_all_thirteen_tools_without_collision() {
 }
 
 /// Wiring a `PythonExecutor` via `.with_python()` adds exactly one tool —
-/// `python` — on top of the default 13, and nothing else shifts. Locks the
+/// `python` — on top of the default 15, and nothing else shifts. Locks the
 /// opt-in registration branch that the four-arg `new` leaves dormant.
 #[tokio::test]
 async fn with_python_registers_the_python_tool() {
@@ -292,8 +303,8 @@ async fn with_python_registers_the_python_tool() {
 
     assert_eq!(
         names.len(),
-        14,
-        "wiring python must register exactly 14 tools, got {names:?}"
+        16,
+        "wiring python must register exactly 16 tools, got {names:?}"
     );
     assert!(
         names.contains(&"python"),

@@ -131,34 +131,69 @@ pub enum AgentEvent {
         mime: String,
         summary: String,
     },
-    /// `subagent.started` — durable. Emitted when the in-process
+    /// `subagent.spawned` — durable. Emitted when the in-process
     /// `subagent_task` tool admits a new descendant task. Carries the
     /// PARENT session id so SSE consumers tracking the parent see the
     /// fan-out without subscribing globally.
-    SubagentStarted {
+    SubagentSpawned {
         task_id: Uuid,
         parent_session_id: SessionId,
         subagent_type: String,
     },
-    /// `subagent.output` — TRANSIENT. Streaming text fragment from a
+    /// `subagent.progress` — TRANSIENT. Streaming text fragment from a
     /// running subagent's assistant turn. Bounded by the per-task 10MB
     /// output cap (see `runtime::subagent::task_registry::MAX_OUTPUT_BYTES`).
     /// `parent_session_id` lets per-session SSE subscribers see child
     /// progress without a global subscription.
-    SubagentOutput {
+    SubagentProgress {
         task_id: Uuid,
         parent_session_id: SessionId,
         delta: String,
     },
-    /// `subagent.finished` — durable. Carries final output snapshot +
+    /// `subagent.promoted` — durable. Emitted when the model calls
+    /// `promote_task` on a background task: its terminal result will be
+    /// auto-injected into the parent conversation (instead of requiring a
+    /// `task_status` poll). `parent_session_id` routes it to the parent's
+    /// per-session SSE stream so the TUI can badge the task block.
+    SubagentPromoted {
+        task_id: Uuid,
+        parent_session_id: SessionId,
+    },
+    /// `subagent.settled` — durable. Carries final output snapshot +
     /// cost so a parent's `task_status` poll observes a consistent
-    /// terminal state. `parent_session_id` mirrors `SubagentStarted` so
+    /// terminal state. `parent_session_id` mirrors `SubagentSpawned` so
     /// per-session SSE filtering routes the event to the parent.
-    SubagentFinished {
+    ///
+    /// NOTE (Phase 3): for a *promoted* task the `output` field is empty
+    /// — the result re-enters the parent conversation via an injected
+    /// turn instead (OpenCode synthetic-message pattern). Non-promoted
+    /// background/sync tasks still carry their output here.
+    SubagentSettled {
         task_id: Uuid,
         parent_session_id: SessionId,
         output: String,
         cost_usd: Option<String>,
+    },
+    /// `subagent.message` — durable. Emitted when a sibling subagent sends
+    /// an inter-agent message via `send_message` (Phase 4). Carries the
+    /// sender + receiver unique handle names and the receiver's `task_id`.
+    /// `parent_session_id` routes it to the shared parent's SSE stream so
+    /// the TUI task panel can show cross-sibling activity. The message
+    /// BODY is intentionally NOT on the wire — it is delivered in-band as
+    /// an untrusted injected turn; the frame is activity metadata only.
+    SubagentMessage {
+        task_id: Uuid,
+        parent_session_id: SessionId,
+        from: String,
+        to: String,
+    },
+    /// `subagent.roster` — durable. Emitted on any roster change (a
+    /// sibling registered / removed). Carries the live named siblings for
+    /// a root so the TUI `@mention` typeahead has a data source (Phase 4
+    /// Finding 11). `entries` is `(name, task_id, gen)` sorted by name.
+    SubagentRoster {
+        root_session_id: SessionId,
+        entries: Vec<RosterFrameEntry>,
     },
     /// `notification.emitted` — durable. Plugin-emitted user-facing
     /// notification. `body` has been redacted by the secret redactor
@@ -196,9 +231,12 @@ impl AgentEvent {
             Self::PlanModeEntered { .. } => "plan_mode.entered",
             Self::PlanModeExited { .. } => "plan_mode.exited",
             Self::AttachmentAccepted { .. } => "attachment.accepted",
-            Self::SubagentStarted { .. } => "subagent.started",
-            Self::SubagentOutput { .. } => "subagent.output",
-            Self::SubagentFinished { .. } => "subagent.finished",
+            Self::SubagentSpawned { .. } => "subagent.spawned",
+            Self::SubagentProgress { .. } => "subagent.progress",
+            Self::SubagentPromoted { .. } => "subagent.promoted",
+            Self::SubagentSettled { .. } => "subagent.settled",
+            Self::SubagentMessage { .. } => "subagent.message",
+            Self::SubagentRoster { .. } => "subagent.roster",
             Self::NotificationEmitted { .. } => "notification.emitted",
             Self::Heartbeat => "heartbeat",
         }
@@ -226,18 +264,38 @@ impl AgentEvent {
             Self::Error { session_id, .. }
             | Self::PluginError { session_id, .. }
             | Self::NotificationEmitted { session_id, .. } => *session_id,
-            Self::SubagentStarted {
+            Self::SubagentSpawned {
                 parent_session_id, ..
             }
-            | Self::SubagentOutput {
+            | Self::SubagentProgress {
                 parent_session_id, ..
             }
-            | Self::SubagentFinished {
+            | Self::SubagentPromoted {
+                parent_session_id, ..
+            }
+            | Self::SubagentSettled {
+                parent_session_id, ..
+            }
+            | Self::SubagentMessage {
                 parent_session_id, ..
             } => Some(*parent_session_id),
+            Self::SubagentRoster {
+                root_session_id, ..
+            } => Some(*root_session_id),
             Self::Heartbeat => None,
         }
     }
+}
+
+/// One live sibling in a `subagent.roster` frame. Carries only what the
+/// TUI @mention typeahead needs: the unique handle name, the task id it
+/// resolves to, and the generation (so a UI keyed on `{name, gen}`
+/// replaces a stale entry when a name is rebound).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterFrameEntry {
+    pub name: String,
+    pub task_id: Uuid,
+    pub generation: u64,
 }
 
 /// Discriminator for `AttachmentAccepted`. Mirrors the upload route's
@@ -368,12 +426,12 @@ mod tests {
     #[test]
     fn session_id_routing() {
         let parent = SessionId::new();
-        let started = AgentEvent::SubagentStarted {
+        let spawned = AgentEvent::SubagentSpawned {
             task_id: uuid::Uuid::nil(),
             parent_session_id: parent,
             subagent_type: "t".into(),
         };
-        assert_eq!(started.session_id(), Some(parent));
+        assert_eq!(spawned.session_id(), Some(parent));
         assert_eq!(AgentEvent::Heartbeat.session_id(), None);
     }
 }

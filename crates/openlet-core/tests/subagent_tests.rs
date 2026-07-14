@@ -144,6 +144,82 @@ async fn subagent_depth_exceeded_at_3() {
 }
 
 #[tokio::test]
+async fn subagent_depth_boundary_admits_at_max_minus_one_rejects_at_max() {
+    // Phase 1: pin the depth boundary. A parent at `depth == max-1`
+    // (next_depth == max) admits; a parent at `depth == max` (next_depth
+    // == max+1) rejects. Also assert a slug-not-found on the admitting
+    // side keeps the quota counter balanced (release_quota fired).
+    let mut registry = AgentRegistry::new();
+    registry.insert(make_agent("worker", vec![])).unwrap();
+    let task_registry = TaskRegistry::new(4);
+    let parent_perm: Arc<dyn PermissionManager> = Arc::new(AllowAll);
+    let cancel = CancellationToken::new();
+    const MAX_DEPTH: u8 = 3;
+
+    // depth == max-1 → next_depth == max → admit.
+    let parent_edge = make_session(MAX_DEPTH - 1);
+    let ok = plan_subagent_spawn(
+        &parent_edge,
+        "worker",
+        &registry,
+        parent_perm.clone(),
+        &cancel,
+        &task_registry,
+        parent_edge.id,
+        MAX_DEPTH,
+    );
+    assert!(ok.is_ok(), "depth == max-1 must admit (next_depth == max)");
+    task_registry.finalize(ok.unwrap().task_id);
+
+    // depth == max → next_depth == max+1 → reject.
+    let parent_over = make_session(MAX_DEPTH);
+    let rejected = plan_subagent_spawn(
+        &parent_over,
+        "worker",
+        &registry,
+        parent_perm.clone(),
+        &cancel,
+        &task_registry,
+        parent_over.id,
+        MAX_DEPTH,
+    );
+    assert!(
+        matches!(rejected, Err(SpawnError::SubagentDepthExceeded { .. })),
+        "depth == max must reject"
+    );
+
+    // slug-not-found on the admitting side releases the quota it claimed —
+    // the counter stays balanced (we can still admit up to the full cap).
+    let parent0 = make_session(0);
+    let missing = plan_subagent_spawn(
+        &parent0,
+        "does-not-exist",
+        &registry,
+        parent_perm.clone(),
+        &cancel,
+        &task_registry,
+        parent0.id,
+        MAX_DEPTH,
+    );
+    assert!(matches!(missing, Err(SpawnError::SubagentTypeNotFound(_))));
+    // Counter balanced: admit the full cap on the same root.
+    for _ in 0..4 {
+        let p = plan_subagent_spawn(
+            &parent0,
+            "worker",
+            &registry,
+            parent_perm.clone(),
+            &cancel,
+            &task_registry,
+            parent0.id,
+            MAX_DEPTH,
+        )
+        .expect("counter balanced after slug-not-found release");
+        task_registry.finalize(p.task_id);
+    }
+}
+
+#[tokio::test]
 async fn subagent_quota_exceeded_at_32() {
     // 32 in-flight descendants under one root → 33rd returns quota error.
     let parent = make_session(0);

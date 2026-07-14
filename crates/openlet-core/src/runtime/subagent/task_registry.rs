@@ -7,15 +7,16 @@
 //! spreading work across grandchildren.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
 use rust_decimal::Decimal;
 
 use super::task_types::{
-    DEFAULT_MAX_PER_SESSION, MAX_OUTPUT_BYTES, SpawnError, TaskHandle, TaskId, TaskSnapshot,
-    TaskStatus,
+    DEFAULT_MAX_INBOX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_MESSAGE_BYTES,
+    DEFAULT_MAX_PER_SESSION, HandleName, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle,
+    TaskId, TaskSnapshot, TaskStatus,
 };
 use crate::types::session::SessionId;
 
@@ -37,7 +38,12 @@ fn saturating_dec(counter: &AtomicUsize) {
 
 /// Registry of running subagent tasks. Cloneable; interior mutability
 /// only (DashMap + Arc).
-#[derive(Default, Clone)]
+///
+/// NOT `Default`: a zero-valued registry would set `max_per_session` and
+/// `max_lifetime_spawns` to 0, fail-closing EVERY `admit`. Construct via
+/// [`Self::new`], [`Self::with_limits`], or [`Self::from_env`], which set
+/// real caps.
+#[derive(Clone)]
 pub struct TaskRegistry {
     tasks: Arc<DashMap<TaskId, TaskHandle>>,
     /// Quota counter per ROOT session. Every started task increments
@@ -49,6 +55,36 @@ pub struct TaskRegistry {
     /// Bounded ring — see [`TerminalCache`].
     terminal: Arc<Mutex<TerminalCache>>,
     max_per_session: usize,
+    /// CUMULATIVE spawn counter per ROOT session — distinct from the
+    /// concurrency counter (`session_descendants`, which decrements on
+    /// finalize). This one only ever increments, capping the TOTAL number
+    /// of subagents a root may ever spawn over its lifetime. It fail-closes
+    /// the Phase 3 injection-driven runaway ("the injected result says
+    /// spawn 32 more, whose results inject and spawn 32 more…") that the
+    /// concurrency cap alone cannot stop, since each generation finalizes
+    /// before the next admits. Overridable via
+    /// `OPENLET_SUBAGENT_LIFETIME_BUDGET`.
+    lifetime_spawns: Arc<DashMap<SessionId, AtomicUsize>>,
+    max_lifetime_spawns: usize,
+    /// Sibling roster (Phase 4). Keyed by ROOT session; inner map keyed by
+    /// the UNIQUE handle name so two same-slug siblings (`reviewer`,
+    /// `reviewer#2`) never collide. Entries survive `finalize` only while
+    /// the task is background-alive; `remove_from_roster` drops one when it
+    /// is no longer addressable, so a `send_message` to a finished sibling
+    /// gets a typed "not addressable" error rather than a silent misroute.
+    roster: Arc<DashMap<SessionId, HashMap<HandleName, RosterEntry>>>,
+    /// Monotonic generation counter for roster (re)binds. Every
+    /// `register_name` stamps the entry with the next value; a
+    /// `send_message` carrying a stale `gen` snapshot is refused
+    /// (name-safety generation check — a recycled name can't misroute).
+    roster_gen: Arc<AtomicU64>,
+    /// Max messages buffered per task inbox before `push_message` rejects
+    /// (depth bound — a chatty sender can't grow memory without limit).
+    max_inbox_depth: usize,
+    /// Max bytes per message body accepted by `push_message` (length bound
+    /// — an adversarial sender can't smuggle a huge payload past the
+    /// per-task output cap via the inbox).
+    max_message_bytes: usize,
 }
 
 /// Bounded LRU-ish cache of terminal task snapshots. A subagent that
@@ -91,23 +127,61 @@ impl TaskRegistry {
     /// via [`Self::from_env`].
     #[must_use]
     pub fn new(max_per_session: usize) -> Self {
+        Self::with_limits(max_per_session, DEFAULT_MAX_LIFETIME_SPAWNS)
+    }
+
+    /// Construct with both the concurrency cap AND the per-root cumulative
+    /// lifetime spawn budget. The lifetime budget is DISTINCT from
+    /// concurrency: it counts EVERY admit under a root over the root's
+    /// whole life (never decremented on finalize), fail-closing a runaway
+    /// injection-driven spawn loop (Phase 3 Finding 15) that would
+    /// otherwise churn within the concurrency cap forever.
+    #[must_use]
+    pub fn with_limits(max_per_session: usize, max_lifetime_spawns: usize) -> Self {
         Self {
             tasks: Arc::new(DashMap::new()),
             session_descendants: Arc::new(DashMap::new()),
+            lifetime_spawns: Arc::new(DashMap::new()),
             terminal: Arc::new(Mutex::new(TerminalCache::default())),
             max_per_session,
+            max_lifetime_spawns,
+            roster: Arc::new(DashMap::new()),
+            roster_gen: Arc::new(AtomicU64::new(0)),
+            max_inbox_depth: DEFAULT_MAX_INBOX_DEPTH,
+            max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
         }
     }
 
+    /// Construct with explicit inbox bounds — for tests that exercise the
+    /// depth / per-message-length caps without setting env vars. The
+    /// concurrency and lifetime caps use the supplied `max_per_session` and
+    /// the default lifetime budget.
+    #[must_use]
+    pub fn with_message_limits(
+        max_per_session: usize,
+        max_inbox_depth: usize,
+        max_message_bytes: usize,
+    ) -> Self {
+        let mut reg = Self::with_limits(max_per_session, DEFAULT_MAX_LIFETIME_SPAWNS);
+        reg.max_inbox_depth = max_inbox_depth;
+        reg.max_message_bytes = max_message_bytes;
+        reg
+    }
+
     /// Build a registry honoring the `OPENLET_SUBAGENT_MAX_PER_SESSION`
-    /// env override (default [`DEFAULT_MAX_PER_SESSION`]).
+    /// and `OPENLET_SUBAGENT_MAX_LIFETIME_SPAWNS` env overrides (defaults
+    /// [`DEFAULT_MAX_PER_SESSION`] / [`DEFAULT_MAX_LIFETIME_SPAWNS`]).
     #[must_use]
     pub fn from_env() -> Self {
         let max = std::env::var("OPENLET_SUBAGENT_MAX_PER_SESSION")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(DEFAULT_MAX_PER_SESSION);
-        Self::new(max)
+        let lifetime = std::env::var("OPENLET_SUBAGENT_MAX_LIFETIME_SPAWNS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(DEFAULT_MAX_LIFETIME_SPAWNS);
+        Self::with_limits(max, lifetime)
     }
 
     #[must_use]
@@ -119,6 +193,28 @@ impl TaskRegistry {
     /// caller MUST install the resulting `TaskHandle` via [`Self::insert`]
     /// or release via [`Self::release_quota`] on error.
     pub fn admit(&self, root: SessionId) -> Result<TaskId, SpawnError> {
+        // Lifetime budget check FIRST (cheap, monotonic). This counter is
+        // never decremented, so once a root has spawned `max_lifetime_spawns`
+        // descendants over its whole life, further admits fail closed —
+        // caps a runaway injection-driven spawn loop that would otherwise
+        // churn forever inside the concurrency cap (Phase 3 Finding 15).
+        {
+            let life = self
+                .lifetime_spawns
+                .entry(root)
+                .or_insert_with(|| AtomicUsize::new(0));
+            let spent = life.fetch_add(1, Ordering::AcqRel);
+            if spent >= self.max_lifetime_spawns {
+                // Undo our increment so the count reflects genuine admits
+                // (it stays saturated at the cap, not creeping past it).
+                saturating_dec(&life);
+                return Err(SpawnError::SubagentLifetimeBudgetExceeded {
+                    spawned: spent,
+                    max: self.max_lifetime_spawns,
+                });
+            }
+        }
+
         let entry = self
             .session_descendants
             .entry(root)
@@ -129,6 +225,12 @@ impl TaskRegistry {
         let mut cur = entry.load(Ordering::Acquire);
         loop {
             if cur >= self.max_per_session {
+                // Concurrency-rejected: refund the lifetime increment (this
+                // admit did not produce a live task, so it shouldn't count
+                // against the lifetime budget).
+                if let Some(life) = self.lifetime_spawns.get(&root) {
+                    saturating_dec(&life);
+                }
                 return Err(SpawnError::SubagentQuotaExceeded {
                     in_flight: cur,
                     max: self.max_per_session,
@@ -157,8 +259,12 @@ impl TaskRegistry {
     }
 
     /// Drop a finished task from the live map and decrement its root's
-    /// quota counter. Called from the spawned driver's Drop guard so the
-    /// counter releases on success, error, OR panic.
+    /// quota counter. Called explicitly by the subagent driver at the tail
+    /// of its lifecycle (after the re-arm loop settles). NOTE: this is an
+    /// explicit call, NOT a Drop guard — an early return or panic in the
+    /// driver BEFORE this point leaks the slot. `saturating_dec` keeps a
+    /// double-call harmless; the leak risk is a missing call, tracked by
+    /// the `panic_between_admit_and_finalize_leaks_quota_slot` regression.
     pub fn finalize(&self, id: TaskId) {
         if let Some((_, handle)) = self.tasks.remove(&id)
             && let Some(c) = self.session_descendants.get(&handle.root_session_id)
@@ -292,6 +398,202 @@ impl TaskRegistry {
             self.terminal.lock().unwrap().insert(id, snap);
         }
         handle.finished.notify_waiters();
+    }
+
+    /// Claim the one-shot terminal side-effect slot for task `id`.
+    /// Returns `true` for the FIRST caller (which then owns publishing the
+    /// terminal `SubagentSettled` / injecting the result) and `false`
+    /// thereafter. A task whose handle was already finalized (removed)
+    /// returns `false` — its terminal side-effect already fired. Guards
+    /// ONLY the side-effect; the quota decrement in [`Self::finalize`]
+    /// stays idempotent via `saturating_dec` (see Finding 13).
+    #[must_use]
+    pub fn claim_settle(&self, id: TaskId) -> bool {
+        self.tasks
+            .get(&id)
+            .map(|h| h.claim_settle())
+            .unwrap_or(false)
+    }
+
+    /// Mark task `id` as promoted (Phase 3): its terminal result will be
+    /// re-injected into the parent session via `ParentInjector` instead of
+    /// surfaced only through a `task_status` poll. Returns `true` if the
+    /// task exists and was marked (idempotent — a second call still returns
+    /// `true`), `false` if the task id is unknown / already finalized.
+    pub fn mark_promoted(&self, id: TaskId) -> bool {
+        self.tasks
+            .get(&id)
+            .map(|h| {
+                h.mark_promoted();
+                true
+            })
+            .unwrap_or(false)
+    }
+
+    /// `true` if task `id` is live and has been promoted. A finalized /
+    /// unknown task returns `false`.
+    #[must_use]
+    pub fn is_promoted(&self, id: TaskId) -> bool {
+        self.tasks
+            .get(&id)
+            .map(|h| h.is_promoted())
+            .unwrap_or(false)
+    }
+
+    /// Wake the re-armable driver for task `id` (Phase 2 `inbox_notify`).
+    /// Used by Phase 4 message delivery + Phase 3 resume to nudge a parked
+    /// driver back into `run_loop`. No-op for an unknown/finalized task.
+    pub fn wake(&self, id: TaskId) {
+        if let Some(h) = self.tasks.get(&id) {
+            h.inbox_notify.notify_waiters();
+        }
+    }
+
+    /// Clone the `inbox_notify` wake handle for task `id` so the driver can
+    /// park on it without holding the `DashMap` guard across an `.await`.
+    /// `None` when the task is unknown / finalized.
+    #[must_use]
+    pub fn inbox_notify(&self, id: TaskId) -> Option<Arc<tokio::sync::Notify>> {
+        self.tasks.get(&id).map(|h| h.inbox_notify.clone())
+    }
+
+    // ---- Roster (Phase 4) --------------------------------------------
+
+    /// Register a live sibling under `root` with a UNIQUE handle name,
+    /// auto-suffixing on collision (`reviewer`, `reviewer#2`, …) so two
+    /// same-slug siblings are individually addressable (Finding 10).
+    /// Returns the assigned [`HandleName`] and the entry's generation.
+    /// `parent` scopes reachability; `allowlist` is the receiver's tool
+    /// set (consulted by the sender's privilege check).
+    pub fn register_name(
+        &self,
+        root: SessionId,
+        slug: &str,
+        task_id: TaskId,
+        parent: SessionId,
+        allowlist: Arc<[String]>,
+    ) -> (HandleName, u64) {
+        let generation = self.roster_gen.fetch_add(1, Ordering::AcqRel);
+        let mut map = self.roster.entry(root).or_default();
+        // Unique-name enforcement: first `slug` wins the bare name; later
+        // same-slug siblings get `slug#N` for the smallest free N.
+        let name = if map.contains_key(&HandleName(slug.to_string())) {
+            let mut n = 2;
+            loop {
+                let candidate = HandleName(format!("{slug}#{n}"));
+                if !map.contains_key(&candidate) {
+                    break candidate;
+                }
+                n += 1;
+            }
+        } else {
+            HandleName(slug.to_string())
+        };
+        map.insert(
+            name.clone(),
+            RosterEntry {
+                task_id,
+                generation,
+                parent,
+                allowlist,
+            },
+        );
+        (name, generation)
+    }
+
+    /// Remove a sibling from `root`'s roster (called when the task is no
+    /// longer background-alive). Idempotent.
+    pub fn remove_from_roster(&self, root: SessionId, name: &HandleName) {
+        if let Some(mut map) = self.roster.get_mut(&root) {
+            map.remove(name);
+        }
+    }
+
+    /// Resolve a handle name to its current roster entry under `root`.
+    /// Returns `None` when the name is unknown / no longer addressable
+    /// (the sibling finalized) — the caller surfaces a typed "not
+    /// addressable" error rather than misrouting (Finding 2).
+    #[must_use]
+    pub fn resolve_name(&self, root: SessionId, name: &HandleName) -> Option<RosterEntry> {
+        self.roster.get(&root).and_then(|m| m.get(name).cloned())
+    }
+
+    /// Snapshot the roster for `root` as `(name, task_id, gen)` triples —
+    /// the data source for the `subagent.roster` SSE frame + the TUI
+    /// @mention typeahead (Finding 11). Sorted by name for a stable frame.
+    #[must_use]
+    pub fn roster_snapshot(&self, root: SessionId) -> Vec<(HandleName, TaskId, u64)> {
+        let mut out: Vec<_> = self
+            .roster
+            .get(&root)
+            .map(|m| {
+                m.iter()
+                    .map(|(n, e)| (n.clone(), e.task_id, e.generation))
+                    .collect()
+            })
+            .unwrap_or_default();
+        out.sort_by(|a, b| a.0.0.cmp(&b.0.0));
+        out
+    }
+
+    // ---- Mailbox (Phase 4) -------------------------------------------
+
+    /// Push a message onto task `id`'s inbox, enforcing BOTH the depth cap
+    /// and the per-message length cap (Finding 2 — bound length, not just
+    /// depth). Returns `Ok(())` on success, or a typed [`SpawnError`] when
+    /// the target is unknown / over-length / the inbox is full. On success
+    /// the task's re-arm `inbox_notify` is woken so a parked driver drains
+    /// it (Phase 2).
+    pub fn push_message(&self, id: TaskId, from: &str, body: &str) -> Result<(), SpawnError> {
+        if body.len() > self.max_message_bytes {
+            return Err(SpawnError::MessageRejected(format!(
+                "message body {} bytes exceeds cap {}",
+                body.len(),
+                self.max_message_bytes
+            )));
+        }
+        let Some(handle) = self.tasks.get(&id) else {
+            return Err(SpawnError::MessageRejected(
+                "target task not addressable (finalized or unknown)".into(),
+            ));
+        };
+        {
+            let mut inbox = handle.inbox.lock().unwrap();
+            if inbox.len() >= self.max_inbox_depth {
+                return Err(SpawnError::MessageRejected(format!(
+                    "recipient inbox full ({} messages)",
+                    self.max_inbox_depth
+                )));
+            }
+            inbox.push_back(super::task_types::InboxMessage {
+                from: from.to_string(),
+                body: body.to_string(),
+            });
+        }
+        handle.inbox_notify.notify_waiters();
+        Ok(())
+    }
+
+    /// Drain ALL queued inbox messages for task `id` (called by the
+    /// re-armable driver at the top of a loop iteration). Empty vec when
+    /// the task is unknown or the inbox is empty.
+    #[must_use]
+    pub fn drain_inbox(&self, id: TaskId) -> Vec<super::task_types::InboxMessage> {
+        let Some(handle) = self.tasks.get(&id) else {
+            return Vec::new();
+        };
+        let mut inbox = handle.inbox.lock().unwrap();
+        inbox.drain(..).collect()
+    }
+
+    /// `true` if task `id` has undrained inbox messages — the re-arm
+    /// predicate for a messaging-alive subagent (Phase 4).
+    #[must_use]
+    pub fn inbox_nonempty(&self, id: TaskId) -> bool {
+        self.tasks
+            .get(&id)
+            .map(|h| !h.inbox.lock().unwrap().is_empty())
+            .unwrap_or(false)
     }
 
     /// Add `delta` to the task's accumulated cost. Used by the spawn

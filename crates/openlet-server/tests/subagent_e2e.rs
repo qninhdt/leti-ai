@@ -263,7 +263,11 @@ impl Harness {
 
 #[tokio::test]
 async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
-    let h = Harness::build(vec![text_turn_with_usage("subagent says hi")]).await;
+    let h = Harness::build(vec![
+        text_turn_with_usage("subagent says hi"),
+        text_turn_with_usage("second child done"),
+    ])
+    .await;
     let ctx = h.parent_ctx(CancellationToken::new()).await;
 
     let task_id = h
@@ -297,6 +301,91 @@ async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
         .map(|_| ())
         .is_some();
     assert!(parent_cost, "await_completion replays from terminal cache");
+
+    // Phase 1: prove the real driver releases the child's quota slot on
+    // settle (no leak through the live spawn→run→finalize path). Reusing
+    // the SAME parent ctx keeps both children under one ROOT quota bucket;
+    // a second spawn+settle on that root proves the first slot was freed
+    // (the balanced-counter contract through the live driver, not just the
+    // unit-level `finalize`).
+    let task_id2 = h
+        .spawner
+        .spawn(&ctx, "general", "second thing")
+        .await
+        .expect("second spawn admits — first child's slot was released");
+    assert_ne!(task_id, task_id2, "distinct tasks");
+    let (_o2, _c2, status2) = tokio::time::timeout(
+        Duration::from_secs(10),
+        h.spawner.await_completion(task_id2),
+    )
+    .await
+    .expect("await did not hang")
+    .expect("await ok");
+    assert_eq!(status2, TaskStatus::Finished);
+}
+
+#[tokio::test]
+async fn promoted_task_injects_result_into_parent_and_settles_without_output() {
+    // Phase 3: a PROMOTED background task delivers its output via an
+    // injected `InjectedResult` turn in the PARENT session (untrusted-
+    // wrapped), and its `SubagentSettled` frame carries NO output payload
+    // (OpenCode synthetic-message pattern). The parent's injected turn
+    // itself drives a (scripted) model turn, so we supply two turns: the
+    // child's, then the parent's injected turn.
+    let h = Harness::build(vec![
+        text_turn_with_usage("child computed 42"),
+        text_turn_with_usage("parent acknowledges"),
+    ])
+    .await;
+    let ctx = h.parent_ctx(CancellationToken::new()).await;
+    let parent_sid = ctx.session_id;
+
+    // Spawn background + mark promoted BEFORE it settles.
+    let task_id = h
+        .spawner
+        .spawn(&ctx, "general", "compute the answer")
+        .await
+        .expect("spawn admits");
+    assert!(
+        h.task_registry.mark_promoted(task_id),
+        "live background task can be promoted"
+    );
+
+    // Await the child's terminal settle via the registry.
+    let snap = tokio::time::timeout(
+        Duration::from_secs(10),
+        h.task_registry.await_completion(task_id),
+    )
+    .await
+    .expect("await did not hang")
+    .expect("terminal snapshot");
+    assert_eq!(snap.status, TaskStatus::Finished);
+
+    // The parent session must receive an injected turn carrying the child's
+    // output wrapped as untrusted data. Poll the parent message log.
+    let mut injected_seen = false;
+    for _ in 0..300 {
+        let msgs = h.memory.list_messages(parent_sid).await.expect("messages");
+        for m in &msgs {
+            let parts = h.memory.list_parts(parent_sid, m.id).await.expect("parts");
+            for p in parts {
+                if let openlet_core::types::part::Part::Text { text, .. } = p
+                    && text.contains("child computed 42")
+                    && text.contains("<untrusted-subagent-output")
+                {
+                    injected_seen = true;
+                }
+            }
+        }
+        if injected_seen {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        injected_seen,
+        "promoted task's output must re-enter the parent as an untrusted-wrapped injected turn"
+    );
 }
 
 #[tokio::test]

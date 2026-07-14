@@ -228,7 +228,37 @@ export type EventDto =
   | { kind: "heartbeat" }
   | { kind: "plugin_error"; plugin_id: string; code: string; message: string }
   | { kind: "plan_mode_entered"; session_id: string; at: string }
-  | { kind: "plan_mode_exited"; session_id: string; plan: string; at: string };
+  | { kind: "plan_mode_exited"; session_id: string; plan: string; at: string }
+  // Subagent frames (Phases 2-4). Names match the Phase-2 rename
+  // (spawned/progress/settled), plus promoted (Phase 3) and message/roster
+  // (Phase 4). `parent_session_id` routes each to the parent's per-session
+  // stream; `subagent.roster` carries `root_session_id` instead.
+  | { kind: "subagent_spawned"; task_id: string; parent_session_id: string; subagent_type: string }
+  | { kind: "subagent_progress"; task_id: string; parent_session_id: string; delta: string }
+  | { kind: "subagent_promoted"; task_id: string; parent_session_id: string }
+  | {
+      kind: "subagent_settled";
+      task_id: string;
+      parent_session_id: string;
+      output: string;
+      cost_usd?: string | null;
+    }
+  | {
+      kind: "subagent_message";
+      task_id: string;
+      parent_session_id: string;
+      from: string;
+      to: string;
+    }
+  | { kind: "subagent_roster"; root_session_id: string; entries: RosterEntryDto[] };
+
+// One live sibling in a `subagent_roster` frame (Phase 4). Mirrors
+// openlet_protocol::dto::RosterEntryDto.
+export interface RosterEntryDto {
+  name: string;
+  task_id: string;
+  generation: number;
+}
 
 export type EventName =
   | "session.status"
