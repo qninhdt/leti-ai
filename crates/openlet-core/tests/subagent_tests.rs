@@ -201,7 +201,21 @@ async fn subagent_depth_boundary_admits_at_max_minus_one_rejects_at_max() {
         parent0.id,
         MAX_DEPTH,
     );
-    assert!(matches!(missing, Err(SpawnError::SubagentTypeNotFound(_))));
+    match missing {
+        Err(SpawnError::SubagentTypeNotFound(message)) => {
+            assert!(message.contains("does-not-exist"), "got: {message}");
+            assert!(
+                message.contains("Available agent types: worker"),
+                "got: {message}"
+            );
+            assert!(
+                message.contains("omit subagent_type to use general"),
+                "got: {message}"
+            );
+        }
+        Ok(_) => panic!("expected recoverable unknown-agent error, got a spawn plan"),
+        Err(error) => panic!("expected subagent_type_not_found, got {error}"),
+    }
     // Counter balanced: admit the full cap on the same root.
     for _ in 0..4 {
         let p = plan_subagent_spawn(

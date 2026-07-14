@@ -1,11 +1,21 @@
-// Footer region below the message scrollbox. Renders the prompt editor for
-// normal input. The permission/question footer prompt (shown when a turn is
-// awaiting a reply) is filled in Phase 5; for now this always renders the
-// editor. Kept as a thin switch point so Phase 5 can swap content without
-// touching the routes that mount it.
+// Permission requests replace the composer in-place. The request remains in
+// the footer until its authoritative permission_resolved event arrives.
 
+import { Show, createMemo } from "solid-js";
+
+import { useStoreSelector } from "../render/store-bridge.js";
+import { PermissionFooter } from "./permission-footer.js";
+import { findSessionPermission } from "./permission-footer-selection.js";
 import { PromptEditor } from "./prompt-editor.js";
 
 export function FooterArea() {
-  return <PromptEditor />;
+  const pending = useStoreSelector((s) => s.pendingPermissions);
+  const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  const active = createMemo(() => findSessionPermission(pending(), activeSessionId()));
+
+  return (
+    <Show when={active()} keyed fallback={<PromptEditor />}>
+      {(request) => <PermissionFooter request={request} />}
+    </Show>
+  );
 }

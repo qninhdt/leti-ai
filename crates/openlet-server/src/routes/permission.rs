@@ -75,7 +75,7 @@ pub async fn reply(
             }
         }
     };
-    state
+    if let Err(error) = state
         .events
         .publish(
             AgentEvent::PermissionResolved {
@@ -85,7 +85,13 @@ pub async fn reply(
             },
             Persistence::Durable,
         )
-        .await?;
+        .await
+    {
+        // The ask is already consumed and the waiting tool has resumed. Do not
+        // turn an accepted reply into a retryable HTTP error; the client uses
+        // this 2xx response as a fallback reconciliation if SSE is unavailable.
+        tracing::warn!(%ask_id, %session_id, %error, "permission resolved event publish failed");
+    }
     Ok(StatusCode::OK)
 }
 

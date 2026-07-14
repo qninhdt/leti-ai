@@ -15,6 +15,7 @@ describe("parseSubagentCall", () => {
       { subagent_type: "worker", objective: "do it", background: true },
       { task_id: "t-1", status: "running", cost_usd: "0.0100" },
     );
+    expect(parsed?.agent).toBe("worker");
     expect(parsed?.background).toBe(true);
     expect(parsed?.taskId).toBe("t-1");
     expect(parsed?.status).toBe("running");
@@ -28,8 +29,10 @@ describe("parseSubagentCall", () => {
     expect(parsed?.agent).toBe("researcher");
   });
 
-  it("returns null when required fields are absent", () => {
-    expect(parseSubagentCall({ nope: true })).toBeNull();
+  it("uses general when subagent_type is omitted", () => {
+    const parsed = parseSubagentCall({ objective: "survey the project" });
+    expect(parsed?.agent).toBe("general");
+    expect(parsed?.objective).toBe("survey the project");
   });
 
   it("returns null on a non-object args body", () => {

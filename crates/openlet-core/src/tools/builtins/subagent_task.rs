@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::runtime::subagent::{SpawnError, TaskId, TaskStatus};
-use crate::tools::Tool;
+use crate::tools::{PromptPolicy, Tool};
 use crate::types::permission::PermissionRequest;
 
 /// Driver hook the server crate installs at boot. Given a resolved
@@ -56,9 +56,10 @@ pub trait SubagentSpawner: Send + Sync + 'static {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SubagentTaskInput {
-    /// Slug of the subagent definition to spawn (must be registered in
-    /// the agent registry).
-    pub subagent_type: String,
+    /// Slug of the subagent definition to spawn. Omit to use `general`.
+    /// When supplied, this must exactly match a registered agent slug.
+    #[serde(default)]
+    pub subagent_type: Option<String>,
     /// Plain-text instruction for the subagent's first user turn.
     pub objective: String,
     /// Optional working scope hint (e.g. file path or directory).
@@ -115,8 +116,8 @@ impl Tool for SubagentTaskTool {
         "subagent_task"
     }
     fn description(&self) -> &'static str {
-        "Spawn a nested subagent session by slug. Sync by default; pass background=true to run \
-         async and poll via task_status. Bounded by per-session depth + quota."
+        "Spawn a nested subagent session. Omit subagent_type to use general. Sync by default; pass \
+         background=true to run async and poll via task_status. Bounded by per-session depth + quota."
     }
     fn parallel_safe(&self) -> bool {
         // Background mode could in theory parallelize, but sync mode
@@ -124,9 +125,15 @@ impl Tool for SubagentTaskTool {
         // bookkeeping deterministic.
         false
     }
+    fn prompt_policy(&self) -> PromptPolicy {
+        PromptPolicy::ContinueOnAsk
+    }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {
-        PermissionRequest::simple(format!("subagent_task:{}", input.subagent_type))
+        PermissionRequest::simple(format!(
+            "subagent_task:{}",
+            input.subagent_type.as_deref().unwrap_or("general")
+        ))
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
@@ -157,9 +164,13 @@ impl Tool for SubagentTaskTool {
             });
         }
 
+        // Omission has one documented meaning: use the registered `general`
+        // agent. An explicit type is passed through unchanged and validated by
+        // the spawner; unknown names never silently become another agent.
+        let subagent_type = input.subagent_type.as_deref().unwrap_or("general");
         let task_id = self
             .spawner
-            .spawn(&ctx, &input.subagent_type, &input.objective)
+            .spawn(&ctx, subagent_type, &input.objective)
             .await
             .map_err(map_spawn_err)?;
 

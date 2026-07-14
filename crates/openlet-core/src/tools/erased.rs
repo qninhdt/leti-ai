@@ -15,7 +15,7 @@ use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::types::permission::PermissionRequest;
 
-use super::Tool;
+use super::{PromptPolicy, Tool};
 
 /// Object-safe shadow of `Tool`. Stored as `Arc<dyn ErasedTool>` in the
 /// registry. Errors from JSON (de)serialization map to
@@ -26,6 +26,9 @@ pub trait ErasedTool: Send + Sync + 'static {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn parallel_safe(&self) -> bool;
+    fn prompt_policy(&self) -> PromptPolicy {
+        PromptPolicy::Interactive
+    }
 
     /// JSON Schema for the tool's input (`schemars`-generated). Returned
     /// as a `serde_json::Value` so callers can splice it directly into a
@@ -53,6 +56,9 @@ where
     }
     fn parallel_safe(&self) -> bool {
         Tool::parallel_safe(self)
+    }
+    fn prompt_policy(&self) -> PromptPolicy {
+        Tool::prompt_policy(self)
     }
 
     fn input_schema(&self) -> Value {

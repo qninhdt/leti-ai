@@ -128,28 +128,20 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
       return {};
     }
 
-    // --- overlays: permissions + questions ---------------------------------
+    // --- blocking footer permissions + overlay questions -------------------
     case "permission_asked": {
-      const already = s.overlays.some(
-        (e) => e.kind === "permission" && e.askId === ev.request.ask_id,
-      );
       return {
-        pendingPermissions: { ...s.pendingPermissions, [ev.request.ask_id]: ev.request },
-        overlays: already
-          ? s.overlays
-          : s.overlays.concat({ kind: "permission", askId: ev.request.ask_id }),
+        pendingPermissions: {
+          ...s.pendingPermissions,
+          [ev.request.ask_id]: { ...ev.request, session_id: ev.request.session_id ?? ev.session_id },
+        },
       };
     }
 
     case "permission_resolved": {
       const next = { ...s.pendingPermissions };
       delete next[ev.ask_id];
-      return {
-        pendingPermissions: next,
-        overlays: s.overlays.filter(
-          (e) => !(e.kind === "permission" && e.askId === ev.ask_id),
-        ),
-      };
+      return { pendingPermissions: next };
     }
 
     case "question_requested": {

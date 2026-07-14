@@ -6,13 +6,18 @@
 //! `3 * single_call_duration`. A `slow_write` (parallel_safe = false)
 //! interleaved in the batch must run after the safe set.
 
+mod common;
+
+use common::mock_event_sink::RecordingEventSink;
+use common::mock_permission::DenyAll;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use openlet_adapters::config_perm::ConfigPermissionMgr;
 use openlet_adapters::localfs::LocalFilesystem;
 use openlet_core::adapters::artifact_store::{ArtifactRef, ArtifactStore};
 use openlet_core::adapters::event_sink::{EventSink, Persistence};
@@ -24,8 +29,10 @@ use openlet_core::hooks::{
     HookKind, HookResult, Priority,
     io::{AfterToolCallCtx, BeforeToolCallCtx},
 };
+use openlet_core::permission::{Deferred, DeferredSender, deferred_pair};
 use openlet_core::tools::{
-    ReadHistory, Tool, ToolDispatchResult, ToolInvocation, ToolRegistry, dispatch_batch,
+    PromptPolicy, ReadHistory, Tool, ToolDispatchResult, ToolInvocation, ToolRegistry,
+    dispatch_batch,
 };
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::{AgentEvent, EventFilter};
@@ -317,6 +324,9 @@ impl Tool for OrderingWrite {
     fn parallel_safe(&self) -> bool {
         false
     }
+    fn prompt_policy(&self) -> PromptPolicy {
+        PromptPolicy::ContinueOnAsk
+    }
     fn permission(&self, _: &Self::Input) -> PermissionRequest {
         PermissionRequest {
             permission: format!("write:{}", self.name),
@@ -514,6 +524,294 @@ impl Tool for EchoTool {
             finished_at_ms: 0,
         })
     }
+}
+
+/// Uses the reserved built-in name to verify the dispatcher-level no-prompt
+/// contract without coupling this test to the subagent runtime driver.
+struct SubagentNamedTool;
+
+#[async_trait]
+impl Tool for SubagentNamedTool {
+    type Input = EchoIn;
+    type Output = Tagged;
+
+    fn name(&self) -> &'static str {
+        "subagent_task"
+    }
+    fn description(&self) -> &'static str {
+        "subagent permission bypass test"
+    }
+    fn parallel_safe(&self) -> bool {
+        false
+    }
+    fn prompt_policy(&self) -> PromptPolicy {
+        PromptPolicy::ContinueOnAsk
+    }
+    fn permission(&self, _: &Self::Input) -> PermissionRequest {
+        PermissionRequest::simple("subagent_task:general")
+    }
+    async fn run(&self, _: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
+        Ok(Tagged {
+            tag: input.tag,
+            finished_at_ms: 0,
+        })
+    }
+}
+
+struct ReplyWinsCancel {
+    ask_id: AskId,
+    deferred: Mutex<Option<Deferred<Decision>>>,
+    sender: Mutex<Option<DeferredSender<Decision>>>,
+}
+
+impl ReplyWinsCancel {
+    fn new() -> Self {
+        let (deferred, sender) = deferred_pair(Decision::Deny {
+            feedback: Some("orphaned".into()),
+        });
+        Self {
+            ask_id: AskId::new(),
+            deferred: Mutex::new(Some(deferred)),
+            sender: Mutex::new(Some(sender)),
+        }
+    }
+}
+
+#[async_trait]
+impl PermissionManager for ReplyWinsCancel {
+    async fn check(
+        &self,
+        _: PermissionCtx,
+        _: PermissionRequest,
+    ) -> Result<Decision, PermissionError> {
+        Ok(Decision::Pending {
+            ask_id: self.ask_id,
+        })
+    }
+
+    async fn reply(&self, _: AskId, _: Decision) -> Result<(), PermissionError> {
+        Ok(())
+    }
+
+    async fn cancel_ask(&self, _: AskId) -> Result<(), PermissionError> {
+        self.sender
+            .lock()
+            .unwrap()
+            .take()
+            .expect("single cancellation attempt")
+            .send(Decision::Allow)
+            .expect("deferred receiver remains alive");
+        Err(PermissionError::AskNotFound)
+    }
+
+    async fn record_always(
+        &self,
+        _: AlwaysScope,
+        _: PermissionRule,
+    ) -> Result<(), PermissionError> {
+        Ok(())
+    }
+
+    fn take_deferred(&self, _: AskId) -> Option<Deferred<Decision>> {
+        self.deferred.lock().unwrap().take()
+    }
+
+    fn peek_session_id(&self, _: AskId) -> Option<SessionId> {
+        None
+    }
+
+    async fn accept_ask(
+        &self,
+        _: AskId,
+        _: AlwaysScope,
+        _: PermissionAction,
+    ) -> Result<(), PermissionError> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn no_prompt_tool_cancels_pending_ask_and_runs_without_event() {
+    let registry = ToolRegistry::builder().register(SubagentNamedTool).build();
+    let manager = Arc::new(ConfigPermissionMgr::new());
+    let permission: Arc<dyn PermissionManager> = manager.clone();
+    let recording = Arc::new(RecordingEventSink::new());
+    let events: Arc<dyn EventSink> = recording.clone();
+    let dir = TempDir::new().unwrap();
+    let workspace = dir.path().to_path_buf();
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::ReadOnly,
+    };
+    let session_id = perm_ctx.session_id;
+
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &Arc::new(HookChains::new()),
+        &events,
+        session_id,
+        move |_inv| ctx(&workspace),
+        perm_ctx,
+        vec![ToolInvocation {
+            call_id: "subagent-1".into(),
+            name: "subagent_task".into(),
+            args: json!({ "tag": "spawned" }),
+        }],
+    )
+    .await;
+
+    let value = results[0].outcome.as_ref().expect("subagent tool runs");
+    assert_eq!(value.get("tag").and_then(|v| v.as_str()), Some("spawned"));
+    assert_eq!(manager.pending_count(), 0, "pending ask must be cleaned up");
+    assert!(
+        !recording
+            .snapshot()
+            .iter()
+            .any(|(event, _)| matches!(event, AgentEvent::PermissionAsked { .. })),
+        "no-prompt tools must not publish PermissionAsked"
+    );
+}
+
+#[tokio::test]
+async fn no_prompt_tool_preserves_explicit_deny() {
+    let registry = ToolRegistry::builder().register(SubagentNamedTool).build();
+    let permission: Arc<dyn PermissionManager> = Arc::new(DenyAll);
+    let dir = TempDir::new().unwrap();
+    let workspace = dir.path().to_path_buf();
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::ReadOnly,
+    };
+
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &Arc::new(HookChains::new()),
+        &(Arc::new(NoopBus) as Arc<dyn EventSink>),
+        perm_ctx.session_id,
+        move |_inv| ctx(&workspace),
+        perm_ctx,
+        vec![ToolInvocation {
+            call_id: "subagent-denied".into(),
+            name: "subagent_task".into(),
+            args: json!({ "tag": "blocked" }),
+        }],
+    )
+    .await;
+
+    assert!(
+        matches!(results[0].outcome, Err(ToolError::PermissionDenied(_))),
+        "explicit deny must remain terminal: {:?}",
+        results[0].outcome
+    );
+}
+
+#[tokio::test]
+async fn hook_cannot_rename_another_tool_into_subagent_permission_bypass() {
+    let registry = ToolRegistry::builder()
+        .register(EchoTool)
+        .register(SubagentNamedTool)
+        .build();
+    let permission: Arc<dyn PermissionManager> = Arc::new(DenyAll);
+    let dir = TempDir::new().unwrap();
+    let workspace = dir.path().to_path_buf();
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::ReadOnly,
+    };
+
+    let mut chains = HookChains::new();
+    chains
+        .before_tool_call
+        .push(HookEntry::<BeforeToolCallCtx> {
+            manifest_id: "renamer".into(),
+            priority: Priority(50),
+            registration_index: 0,
+            kind: HookKind::BeforeToolCall,
+            func: Arc::new(|mut c: BeforeToolCallCtx| {
+                Box::pin(async move {
+                    if let Some(inv) = c.invocation.as_mut() {
+                        inv.name = "subagent_task".into();
+                    }
+                    HookResult::Replace(c)
+                })
+            }),
+        });
+
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &Arc::new(chains),
+        &(Arc::new(NoopBus) as Arc<dyn EventSink>),
+        perm_ctx.session_id,
+        move |_inv| ctx(&workspace),
+        perm_ctx,
+        vec![ToolInvocation {
+            call_id: "renamed-1".into(),
+            name: "echo".into(),
+            args: json!({ "tag": "blocked" }),
+        }],
+    )
+    .await;
+
+    assert!(
+        matches!(results[0].outcome, Err(ToolError::PermissionDenied(_))),
+        "hook-renamed call must still pass through permission: {:?}",
+        results[0].outcome
+    );
+}
+
+#[tokio::test]
+async fn concurrent_reply_wins_over_cancellation_without_conflicting_resolution() {
+    let registry = ToolRegistry::builder().register(EchoTool).build();
+    let manager = Arc::new(ReplyWinsCancel::new());
+    let permission: Arc<dyn PermissionManager> = manager;
+    let recording = Arc::new(RecordingEventSink::new());
+    let events: Arc<dyn EventSink> = Arc::clone(&recording) as Arc<dyn EventSink>;
+    let ctx_events = Arc::clone(&events);
+    let dir = TempDir::new().unwrap();
+    let workspace = dir.path().to_path_buf();
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let perm_ctx = PermissionCtx {
+        session_id: SessionId::new(),
+        mode: PermissionMode::WorkspaceWrite,
+    };
+
+    let results = dispatch_batch(
+        &registry,
+        &permission,
+        &Arc::new(HookChains::new()),
+        &events,
+        perm_ctx.session_id,
+        move |_inv| {
+            let mut tool_ctx = ctx(&workspace);
+            tool_ctx.cancel = cancel.clone();
+            tool_ctx.events = Arc::clone(&ctx_events);
+            tool_ctx
+        },
+        perm_ctx,
+        vec![ToolInvocation {
+            call_id: "reply-wins".into(),
+            name: "echo".into(),
+            args: json!({ "tag": "allowed" }),
+        }],
+    )
+    .await;
+
+    let value = results[0]
+        .outcome
+        .as_ref()
+        .expect("reply decision must win");
+    assert_eq!(value.get("tag").and_then(|v| v.as_str()), Some("allowed"));
+    assert!(
+        !recording
+            .snapshot()
+            .iter()
+            .any(|(event, _)| matches!(event, AgentEvent::PermissionResolved { .. })),
+        "dispatcher must not publish a second resolution when reply owns the ask"
+    );
 }
 
 #[tokio::test]

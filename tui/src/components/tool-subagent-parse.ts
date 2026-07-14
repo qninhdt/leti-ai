@@ -3,7 +3,7 @@
 // Solid JSX runtime (mirrors tool-diff-parse.ts / tool-todo-parse.ts).
 //
 // The `subagent_task` tool's args carry `{ subagent_type, objective, background }`;
-// its result (when sync) serializes `{ task_id, status, output, cost_usd }`.
+// its result serializes `{ task_id, subagent_type, status, output, cost_usd }`.
 // Live status/cost for a background task come from the `subagents` store slice
 // (keyed by task_id), NOT from this parse — this only extracts what the tool
 // call itself records so the block can render before any SSE frame lands.
@@ -47,8 +47,7 @@ function str(o: Record<string, unknown>, key: string): string | undefined {
 export function parseSubagentCall(args: unknown, result?: unknown): SubagentCall | null {
   const a = tryParse(args);
   if (!a) return null;
-  const agent = str(a, "subagent_type");
-  if (!agent) return null;
+  let agent = str(a, "subagent_type") ?? "general";
   const objective = str(a, "objective") ?? "";
   const background = a.background === true;
 

@@ -14,12 +14,9 @@ import type {
   SessionDto,
 } from "../api/types.js";
 
-// Overlay stack entries. Each carries the payload its dialog needs to resolve
-// itself — notably the permission entry MUST carry `askId` so a reply targets
-// the exact request, even with multiple permissions pending (pendingPermissions
-// is keyed by askId). A bare kind would make >=2 concurrent asks ambiguous.
+// Overlay stack entries. Permissions are blockers rendered in FooterArea and
+// therefore do not participate in the modal overlay stack.
 export type OverlayEntry =
-  | { kind: "permission"; askId: string }
   | { kind: "question"; questionId: string }
   | { kind: "agent_picker" }
   | { kind: "session_picker" }

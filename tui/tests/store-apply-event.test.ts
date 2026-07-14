@@ -83,7 +83,7 @@ describe("store applyEvent", () => {
     expect(part?.status).toBe("complete");
   });
 
-  it("permission_asked sets pending + pushes a permission overlay carrying askId", () => {
+  it("permission_asked queues the request for the footer without opening an overlay", () => {
     const s = useStore.getState();
     s.applyEvent({
       kind: "permission_asked",
@@ -97,18 +97,17 @@ describe("store applyEvent", () => {
     });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeDefined();
-    const top = state.overlays[state.overlays.length - 1];
-    expect(top).toEqual({ kind: "permission", askId: "ask-1" });
+    expect(state.pendingPermissions["ask-1"]?.session_id).toBe("sid-4");
+    expect(state.overlays).toEqual([]);
   });
 
-  it("permission_resolved clears pending + removes the matching overlay by askId", () => {
+  it("permission_resolved clears the matching footer request by askId", () => {
     useStore.getState().applyEvent({ kind: "permission_resolved", ask_id: "ask-1", decision: "allow" });
     const state = useStore.getState();
     expect(state.pendingPermissions["ask-1"]).toBeUndefined();
-    expect(state.overlays.some((e) => e.kind === "permission" && e.askId === "ask-1")).toBe(false);
   });
 
-  it("resolves the correct permission when two are pending (no wrong-overlay dismissal)", () => {
+  it("resolves the correct permission when two footer requests are pending", () => {
     const s = useStore.getState();
     const ask = (id: string): EventDto => ({
       kind: "permission_asked",
@@ -117,12 +116,28 @@ describe("store applyEvent", () => {
     });
     s.applyEvent(ask("ask-a"));
     s.applyEvent(ask("ask-b"));
-    // Resolve the FIRST (lower in the stack) — a blind top-of-stack pop would
-    // wrongly drop ask-b's overlay instead.
+    // Resolving one request must not dismiss another queued footer request.
     s.applyEvent({ kind: "permission_resolved", ask_id: "ask-a", decision: "allow" });
-    const overlays = useStore.getState().overlays;
-    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-a")).toBe(false);
-    expect(overlays.some((e) => e.kind === "permission" && e.askId === "ask-b")).toBe(true);
+    const pending = useStore.getState().pendingPermissions;
+    expect(pending["ask-a"]).toBeUndefined();
+    expect(pending["ask-b"]?.ask_id).toBe("ask-b");
+    expect(useStore.getState().overlays).toEqual([]);
+  });
+
+  it("permission_resolved is idempotent so the footer's local reply fallback is safe", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "permission_asked",
+      session_id: "sid-6",
+      request: { ask_id: "ask-c", session_id: "sid-6", permission: "edit:foo", tool_name: "edit" },
+    });
+    // The footer applies a local resolution on POST success when SSE cannot
+    // deliver the authoritative frame; the later real frame must be a no-op,
+    // never resurrecting or corrupting state.
+    s.applyEvent({ kind: "permission_resolved", ask_id: "ask-c", decision: "allow" });
+    expect(useStore.getState().pendingPermissions["ask-c"]).toBeUndefined();
+    s.applyEvent({ kind: "permission_resolved", ask_id: "ask-c", decision: "allow" });
+    expect(useStore.getState().pendingPermissions["ask-c"]).toBeUndefined();
   });
 
   it("surfaces a server error event into clientError (not silently dropped)", () => {

@@ -88,15 +88,33 @@ pub fn plan_subagent_spawn(
 
     let task_id = registry.admit(root_session_id)?;
 
+    let available = || {
+        let mut slugs = agents
+            .iter_visible()
+            .map(|(slug, _)| slug.as_str().to_string())
+            .collect::<Vec<_>>();
+        slugs.sort();
+        if slugs.is_empty() {
+            "none".to_string()
+        } else {
+            slugs.join(", ")
+        }
+    };
+    let not_found = || {
+        SpawnError::SubagentTypeNotFound(format!(
+            "{subagent_slug}. Available agent types: {}. Use an exact listed slug or omit subagent_type to use general",
+            available()
+        ))
+    };
     let slug = AgentSlug::new(subagent_slug.to_string()).map_err(|_| {
         registry.release_quota(root_session_id);
-        SpawnError::SubagentTypeNotFound(subagent_slug.to_string())
+        not_found()
     })?;
     let child_def = match agents.get(&slug) {
         Some(d) => d.clone(),
         None => {
             registry.release_quota(root_session_id);
-            return Err(SpawnError::SubagentTypeNotFound(subagent_slug.to_string()));
+            return Err(not_found());
         }
     };
 

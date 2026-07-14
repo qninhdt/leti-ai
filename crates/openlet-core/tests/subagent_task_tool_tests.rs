@@ -6,6 +6,7 @@
 //! surface before Phase 3 changes the execution model.
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
@@ -23,6 +24,7 @@ use common::tool_ctx::minimal_tool_ctx;
 /// `await_completion` returns a fixed `(output, cost, status)` triple.
 struct StubSpawner {
     spawn_calls: AtomicUsize,
+    spawned_types: Mutex<Vec<String>>,
     await_calls: AtomicUsize,
     completion: (String, Option<String>, TaskStatus),
     /// When set, `spawn` returns this error instead of a fresh task id.
@@ -34,6 +36,7 @@ impl StubSpawner {
     fn ok(output: &str) -> Self {
         Self {
             spawn_calls: AtomicUsize::new(0),
+            spawned_types: Mutex::new(Vec::new()),
             await_calls: AtomicUsize::new(0),
             completion: (
                 output.to_string(),
@@ -51,10 +54,14 @@ impl SubagentSpawner for StubSpawner {
     async fn spawn(
         &self,
         _ctx: &ToolCtx,
-        _subagent_type: &str,
+        subagent_type: &str,
         _objective: &str,
     ) -> Result<TaskId, SpawnError> {
         self.spawn_calls.fetch_add(1, Ordering::SeqCst);
+        self.spawned_types
+            .lock()
+            .unwrap()
+            .push(subagent_type.to_string());
         match &self.spawn_err {
             Some(SpawnError::SubagentQuotaExceeded { in_flight, max }) => {
                 Err(SpawnError::SubagentQuotaExceeded {
@@ -94,7 +101,7 @@ impl SubagentSpawner for StubSpawner {
 
 fn input(background: bool, task_id: Option<String>) -> SubagentTaskInput {
     SubagentTaskInput {
-        subagent_type: "worker".into(),
+        subagent_type: Some("worker".into()),
         objective: "do the thing".into(),
         scope: None,
         background,
@@ -115,6 +122,39 @@ async fn sync_spawns_then_awaits_and_returns_output_cost() {
     assert_eq!(out.cost_usd.as_deref(), Some("0.0100"));
     assert_eq!(spawner.spawn_calls.load(Ordering::SeqCst), 1);
     assert_eq!(spawner.await_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn omitted_subagent_type_uses_general() {
+    let spawner = Arc::new(StubSpawner::ok("general result"));
+    let tool = SubagentTaskTool::new(spawner.clone());
+    let mut request = input(false, None);
+    request.subagent_type = None;
+
+    let out = tool
+        .run(minimal_tool_ctx(), request)
+        .await
+        .expect("general spawn");
+
+    assert_eq!(out.status, "finished");
+    assert_eq!(
+        spawner.spawned_types.lock().unwrap().as_slice(),
+        ["general"]
+    );
+}
+
+#[tokio::test]
+async fn explicit_subagent_type_is_never_rewritten() {
+    let spawner = Arc::new(StubSpawner::ok("explicit result"));
+    let tool = SubagentTaskTool::new(spawner.clone());
+    let mut request = input(false, None);
+    request.subagent_type = Some("scout".into());
+
+    tool.run(minimal_tool_ctx(), request)
+        .await
+        .expect("stub accepts the explicit type");
+
+    assert_eq!(spawner.spawned_types.lock().unwrap().as_slice(), ["scout"]);
 }
 
 #[tokio::test]

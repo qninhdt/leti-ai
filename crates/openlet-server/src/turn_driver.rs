@@ -173,12 +173,65 @@ pub(crate) fn tool_specs(state: &AppState) -> Vec<ToolSpec> {
     state
         .tool_registry
         .iter()
-        .map(|(name, handle)| ToolSpec {
-            name: name.to_string(),
-            description: handle.description().to_string(),
-            parameters: handle.input_schema(),
+        .map(|(name, handle)| {
+            let mut spec = ToolSpec {
+                name: name.to_string(),
+                description: handle.description().to_string(),
+                parameters: handle.input_schema(),
+            };
+            if name == "subagent_task" {
+                add_agent_catalog(&mut spec, &state.agent_registry);
+            }
+            spec
         })
         .collect()
+}
+
+fn add_agent_catalog(spec: &mut ToolSpec, agents: &openlet_core::agent::AgentRegistry) {
+    let mut catalog = agents
+        .iter_visible()
+        .map(|(slug, definition)| {
+            (
+                slug.as_str().to_string(),
+                definition.description.trim().to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    catalog.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let slugs = catalog
+        .iter()
+        .map(|(slug, _)| serde_json::Value::String(slug.clone()))
+        .collect::<Vec<_>>();
+    if let Some(property) = spec
+        .parameters
+        .pointer_mut("/properties/subagent_type")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        property.insert("enum".into(), serde_json::Value::Array(slugs));
+        property.insert(
+            "description".into(),
+            serde_json::Value::String(
+                "Exact registered agent slug. Omit to use general; never invent a slug.".into(),
+            ),
+        );
+    }
+
+    let lines = catalog
+        .iter()
+        .map(|(slug, description)| {
+            if description.is_empty() {
+                format!("- {slug}")
+            } else {
+                format!("- {slug}: {description}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    spec.description.push_str(
+        "\n\nSelect subagent_type only from the exact registered slugs below, based on each description. Words in the user's request such as 'scout', 'researcher', or 'reviewer' describe the job; they are not agent slugs unless listed below. Do not copy an unlisted role word into subagent_type. If no specialized agent matches, omit subagent_type so the general agent handles the task. Do not refuse delegation merely because the user's role label is not registered.\nAvailable agent types:\n",
+    );
+    spec.description.push_str(&lines);
 }
 
 /// Bind the `Arc<dyn MemoryStore>` view the runtime expects without
@@ -248,7 +301,14 @@ pub(crate) fn compose_agent_system_prompt(
 #[cfg(test)]
 mod compose_prompt_tests {
     use super::*;
-    use openlet_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
+    use async_trait::async_trait;
+    use openlet_core::adapters::model_provider::ToolSpec;
+    use openlet_core::adapters::tool_executor::ToolCtx;
+    use openlet_core::agent::{AgentDefinition, AgentRegistry, AgentSlug, PromptSegments};
+    use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus};
+    use openlet_core::tools::ErasedTool;
+    use openlet_core::tools::builtins::subagent_task::{SubagentSpawner, SubagentTaskTool};
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn agent_with_segments(segments: Option<PromptSegments>) -> Arc<AgentDefinition> {
@@ -297,5 +357,73 @@ mod compose_prompt_tests {
         }));
         let out = compose_agent_system_prompt(Some(&agent), &PathBuf::from("/ws")).unwrap();
         assert_eq!(out, "Only cacheable.");
+    }
+
+    #[test]
+    fn subagent_tool_catalog_lists_visible_agents_and_constrains_schema() {
+        struct NeverSpawner;
+
+        #[async_trait]
+        impl SubagentSpawner for NeverSpawner {
+            async fn spawn(&self, _: &ToolCtx, _: &str, _: &str) -> Result<TaskId, SpawnError> {
+                unreachable!("schema test does not execute the tool")
+            }
+
+            async fn await_completion(
+                &self,
+                _: TaskId,
+            ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
+                unreachable!("schema test does not execute the tool")
+            }
+        }
+
+        let mut agents = AgentRegistry::new();
+        let mut general = (*agent_with_segments(None)).clone();
+        general.description = "General-purpose delegation".into();
+        agents.insert(general).unwrap();
+
+        let mut indexer = (*agent_with_segments(None)).clone();
+        indexer.slug = AgentSlug::new("indexer").unwrap();
+        indexer.title = "Indexer".into();
+        indexer.description = "Inspect repository structure".into();
+        agents.insert(indexer).unwrap();
+
+        let mut hidden = (*agent_with_segments(None)).clone();
+        hidden.slug = AgentSlug::new("internal").unwrap();
+        hidden.hidden = true;
+        agents.insert(hidden).unwrap();
+
+        let mut spec = ToolSpec {
+            name: "subagent_task".into(),
+            description: SubagentTaskTool::new(Arc::new(NeverSpawner))
+                .description()
+                .to_string(),
+            parameters: ErasedTool::input_schema(&SubagentTaskTool::new(Arc::new(NeverSpawner))),
+        };
+        add_agent_catalog(&mut spec, &agents);
+
+        assert!(
+            spec.description
+                .contains("- general: General-purpose delegation")
+        );
+        assert!(
+            spec.description
+                .contains("- indexer: Inspect repository structure")
+        );
+        assert!(spec.description.contains(
+            "Words in the user's request such as 'scout', 'researcher', or 'reviewer' describe the job"
+        ));
+        assert!(spec.description.contains(
+            "If no specialized agent matches, omit subagent_type so the general agent handles the task"
+        ));
+        assert!(!spec.description.contains("internal"));
+        assert_eq!(
+            spec.parameters.pointer("/properties/subagent_type/enum"),
+            Some(&json!(["general", "indexer"]))
+        );
+        assert_eq!(
+            spec.parameters.pointer("/required"),
+            Some(&json!(["objective"]))
+        );
     }
 }

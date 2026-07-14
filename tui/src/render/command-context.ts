@@ -26,7 +26,7 @@ function textPrompt(text: string): CreateMessageDto {
 const COMPACT_MIN_MESSAGES = 5;
 
 // Map the abstract view kind from slash commands onto an overlay entry.
-function viewKindToOverlay(view: { kind: string; askId?: string }): OverlayEntry | null {
+function viewKindToOverlay(view: { kind: string }): OverlayEntry | null {
   switch (view.kind) {
     case "agent_picker":
       return { kind: "agent_picker" };
@@ -36,8 +36,6 @@ function viewKindToOverlay(view: { kind: string; askId?: string }): OverlayEntry
       return { kind: "help" };
     case "plugins":
       return { kind: "plugins" };
-    case "permission":
-      return view.askId ? { kind: "permission", askId: view.askId } : null;
     default:
       return null;
   }

@@ -31,7 +31,7 @@ use openlet_core::adapters::memory_store::MemoryStore;
 use openlet_core::adapters::permission_manager::PermissionManager;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::dispatch::HookChains;
-use openlet_core::tools::{ReadHistory, ToolInvocation, dispatch_batch};
+use openlet_core::tools::{ReadHistory, ToolDispatchResult, ToolInvocation, dispatch_batch};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::MessageId;
@@ -45,25 +45,19 @@ mod mock_artifact_local {
     pub use crate::common::mock_artifact::MemArtifactStore;
 }
 
-fn find_ask(
-    events: &[(AgentEvent, openlet_core::adapters::event_sink::Persistence)],
-) -> Option<AskId> {
-    events.iter().find_map(|(ev, _)| match ev {
-        AgentEvent::PermissionAsked { ask_id, .. } => Some(*ask_id),
-        _ => None,
-    })
+struct PendingDispatch {
+    permission: Arc<ConfigPermissionMgr>,
+    recording: Arc<RecordingEventSink>,
+    cancel: CancellationToken,
+    handle: tokio::task::JoinHandle<Vec<ToolDispatchResult>>,
 }
 
-#[tokio::test]
-async fn pending_permission_publishes_ask_then_reply_unparks_tool() {
+fn spawn_pending_dispatch(call_count: usize) -> PendingDispatch {
     let session_id = SessionId::new();
     let registry = make_registry(vec![Arc::new(NoopTool::new("writer", false))]);
-
-    // Real gate, no rules → WorkspaceWrite mode falls through to Ask for
-    // any unmatched permission. This is precisely the production default
-    // when a user runs the agent with `--mode workspace-write` and the
-    // model requests a tool no rule pre-approves.
-    let permission: Arc<dyn PermissionManager> = Arc::new(ConfigPermissionMgr::new());
+    let permission_impl = Arc::new(ConfigPermissionMgr::new());
+    let permission: Arc<dyn PermissionManager> =
+        Arc::clone(&permission_impl) as Arc<dyn PermissionManager>;
     let recording = Arc::new(RecordingEventSink::new());
     let events: Arc<dyn EventSink> = Arc::clone(&recording) as Arc<dyn EventSink>;
 
@@ -106,14 +100,15 @@ async fn pending_permission_publishes_ask_then_reply_unparks_tool() {
         }
     };
 
-    let invocations = vec![ToolInvocation {
-        call_id: "c1".into(),
-        name: "writer".into(),
-        args: json!({}),
-    }];
+    let invocations = (0..call_count)
+        .map(|i| ToolInvocation {
+            call_id: format!("c{}", i + 1),
+            name: "writer".into(),
+            args: json!({}),
+        })
+        .collect();
 
-    // Spawn dispatch — it WILL park on the deferred until we reply.
-    let dispatch_handle = {
+    let handle = {
         let registry = Arc::clone(&registry);
         let permission = Arc::clone(&permission);
         let hook_chains = Arc::clone(&hook_chains);
@@ -133,28 +128,44 @@ async fn pending_permission_publishes_ask_then_reply_unparks_tool() {
         })
     };
 
-    // Poll for the PermissionAsked event. Before the fix this never
-    // arrives and the dispatch future is parked forever, so the timeout
-    // is the regression guard: if we can't find the ask in 2s, the bug
-    // is back.
-    let ask_id = tokio::time::timeout(Duration::from_secs(2), async {
+    PendingDispatch {
+        permission: permission_impl,
+        recording,
+        cancel,
+        handle,
+    }
+}
+
+async fn wait_for_ask(recording: &RecordingEventSink, except: Option<AskId>) -> AskId {
+    tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            if let Some(id) = find_ask(&recording.snapshot()) {
+            if let Some(id) = recording.snapshot().iter().find_map(|(ev, _)| match ev {
+                AgentEvent::PermissionAsked { ask_id, .. } if Some(*ask_id) != except => {
+                    Some(*ask_id)
+                }
+                _ => None,
+            }) {
                 break id;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("PermissionAsked must be published before the deferred is awaited");
+    .expect("PermissionAsked must be published before the deferred is awaited")
+}
 
-    // Reply allow — this resolves the deferred and unparks the tool.
-    permission
+#[tokio::test]
+async fn pending_permission_publishes_ask_then_reply_unparks_tool() {
+    let dispatch = spawn_pending_dispatch(1);
+    let ask_id = wait_for_ask(&dispatch.recording, None).await;
+
+    dispatch
+        .permission
         .reply(ask_id, Decision::Allow)
         .await
         .expect("reply to the announced ask");
 
-    let results = tokio::time::timeout(Duration::from_secs(2), dispatch_handle)
+    let results = tokio::time::timeout(Duration::from_secs(2), dispatch.handle)
         .await
         .expect("dispatch must complete once the ask is answered")
         .expect("dispatch task join");
@@ -164,5 +175,39 @@ async fn pending_permission_publishes_ask_then_reply_unparks_tool() {
         results[0].outcome.is_ok(),
         "tool must run after the ask is allowed: {:?}",
         results[0].outcome
+    );
+}
+
+#[tokio::test]
+async fn cancelling_pending_permission_drains_ask_and_publishes_resolution() {
+    let dispatch = spawn_pending_dispatch(1);
+    let ask_id = wait_for_ask(&dispatch.recording, None).await;
+    dispatch.cancel.cancel();
+
+    let results = tokio::time::timeout(Duration::from_secs(2), dispatch.handle)
+        .await
+        .expect("dispatch must complete after cancellation")
+        .expect("dispatch task join");
+
+    assert_eq!(results.len(), 1);
+    assert!(
+        matches!(
+            results[0].outcome,
+            Err(openlet_core::error::ToolError::PermissionDenied(_))
+        ),
+        "cancelled pending tool must be denied: {:?}",
+        results[0].outcome
+    );
+    assert_eq!(
+        dispatch.permission.pending_count(),
+        0,
+        "cancel must drain the pending ask"
+    );
+    assert!(
+        dispatch.recording.snapshot().iter().any(|(ev, _)| matches!(
+            ev,
+            AgentEvent::PermissionResolved { ask_id: resolved, .. } if *resolved == ask_id
+        )),
+        "cancel must publish PermissionResolved for the pending ask"
     );
 }

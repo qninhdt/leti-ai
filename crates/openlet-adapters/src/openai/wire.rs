@@ -148,3 +148,44 @@ fn tool_to_wire(t: &ToolSpec) -> OpenAiTool<'_> {
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use openlet_core::adapters::model_provider::ToolSpec;
+    use serde_json::json;
+
+    #[test]
+    fn tool_catalog_description_and_enum_survive_wire_serialization() {
+        let req = ChatRequest {
+            model: "test/model".into(),
+            messages: Vec::new(),
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![ToolSpec {
+                name: "subagent_task".into(),
+                description: "Available agent types:\n- general\n- indexer".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "subagent_type": { "type": ["string", "null"], "enum": ["general", "indexer"] }
+                    }
+                }),
+            }],
+            stream: true,
+            headers: Default::default(),
+        };
+
+        let body = serde_json::to_value(to_wire(&req)).expect("wire request serializes");
+        let function = &body["tools"][0]["function"];
+        assert_eq!(
+            function["description"],
+            "Available agent types:\n- general\n- indexer"
+        );
+        assert_eq!(
+            function["parameters"]["properties"]["subagent_type"]["enum"],
+            json!(["general", "indexer"])
+        );
+    }
+}

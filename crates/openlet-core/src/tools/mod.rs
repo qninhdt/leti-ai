@@ -28,6 +28,15 @@ use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::types::permission::PermissionRequest;
 
+/// Controls how the dispatcher handles an otherwise interactive permission
+/// decision for a tool. Explicit allow and deny decisions are unaffected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PromptPolicy {
+    #[default]
+    Interactive,
+    ContinueOnAsk,
+}
+
 /// Typed tool. Implementations declare a JSON-schema-able `Input`, a
 /// serializable `Output`, the permission they require, and a `parallel_safe`
 /// flag. The registry erases concrete types away at registration time.
@@ -51,6 +60,13 @@ pub trait Tool: Send + Sync + 'static {
     /// tools in the same assistant turn. Defaults to `false` (serial).
     fn parallel_safe(&self) -> bool {
         false
+    }
+
+    /// Whether an `Ask` decision should wait for a human response. Tools that
+    /// opt out still pass through hooks and permission evaluation; only the
+    /// resulting pending ask is cancelled before execution continues.
+    fn prompt_policy(&self) -> PromptPolicy {
+        PromptPolicy::Interactive
     }
 
     /// Map a typed input to the permission(s) the runtime must check

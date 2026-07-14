@@ -46,12 +46,7 @@ export function useKeyRouter(): void {
     if (top) {
       if (overlayHandler?.(key)) return;
       if (isEscape(key)) {
-        // A permission overlay must be RESOLVED (via permission_resolved by
-        // askId), never silently dismissed — popping it would orphan the
-        // pending request with no way to re-surface it. Swallow Esc here; the
-        // explicit reply/deny wiring lands in Phase 5. Other overlays
-        // (pickers, help, plugins, palette) are freely Esc-dismissable.
-        if (top.kind !== "permission") store.popOverlay();
+        store.popOverlay();
         return;
       }
       // Overlay is modal: swallow keys that would otherwise hit the route.

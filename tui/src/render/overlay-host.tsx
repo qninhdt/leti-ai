@@ -1,8 +1,7 @@
 // Renders the overlay stack atop the active route. Only the TOP entry is shown
 // (modal semantics), centered over a dim backdrop. Dispatches each overlay kind
 // to its dialog content: pickers / help / plugins / command palette are plain
-// content wrapped here in a panel box; the permission dialog carries its own
-// left-bar chrome (and owns its keys), so it renders raw. Interactive dialogs
+// content wrapped here in a panel box. Interactive dialogs
 // install their own key handler via the router's overlay seam; pure-content
 // dialogs rely on the router's Esc-pops-overlay path.
 
@@ -12,7 +11,6 @@ import { theme } from "../theme/index.js";
 import { useStoreSelector } from "./store-bridge.js";
 import { AgentPickerDialog } from "../dialogs/agent-picker.js";
 import { SessionPickerDialog } from "../dialogs/session-picker.js";
-import { PermissionDialog } from "../dialogs/permission-dialog.js";
 import { QuestionDialog } from "../dialogs/question-dialog.js";
 import { HelpDialog } from "../dialogs/help-dialog.js";
 import { PluginsDialog } from "../dialogs/plugins-dialog.js";
@@ -42,12 +40,8 @@ export function OverlayHost() {
           alignItems="center"
         >
           <Switch>
-            <Match when={entry().kind === "permission"}>
-              {/* Renders its own bordered panel + owns its keys. */}
-              <PermissionDialog askId={(entry() as { kind: "permission"; askId: string }).askId} />
-            </Match>
             <Match when={entry().kind === "question"}>
-              {/* Owns its own chrome + keys, like the permission dialog. */}
+              {/* Owns its own chrome + keys; renders raw without the panel box. */}
               <QuestionDialog
                 questionId={(entry() as { kind: "question"; questionId: string }).questionId}
               />
