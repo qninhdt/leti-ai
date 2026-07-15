@@ -74,7 +74,8 @@ export function MessageAssistant(props: MessageAssistantProps) {
   const subagents = useStoreSelector((s) => s.subagents);
   const subagentFor = (p: PartView): SubagentView | undefined => {
     const call = parseSubagentCall(p.tool_args, p.tool_result);
-    return call?.taskId ? subagents()[call.taskId] : undefined;
+    if (call?.taskId) return subagents()[call.taskId];
+    return Object.values(subagents()).find((row) => row.tool_call_id === p.tool_call_id);
   };
 
   // Tool-call ids that render as BLOCK cards — those fold their own result, so
@@ -167,11 +168,8 @@ export function MessageAssistant(props: MessageAssistantProps) {
         <Match when={name() === "ask_user"}>
           <ToolAskUser part={p()} result={out()} />
         </Match>
-        {/* subagent_task renders an inline task block: agent slug, live
-            status/output tail, cost. Live state comes from the `subagents`
-            store slice keyed by the call's task_id (fed by subagent.* frames);
-            a promoted task shows a "result below" affordance instead of the
-            output (delivered as an injected parent turn). */}
+        {/* subagent_task renders an inline task card from its stable task and
+            child-session association; live status arrives via subagent frames. */}
         <Match when={name() === "subagent_task"}>
           <ToolSubagentBlock part={p()} live={subagentFor(p())} />
         </Match>

@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::adapters::memory_store::{ReadObservation, ReadScope, fingerprint_bytes};
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::tools::Tool;
@@ -130,6 +131,26 @@ impl Tool for ReadTool {
         // Record in read_history (workspace-relative path) so write/edit
         // can gate later in the same session.
         ctx.read_history.record(input.path.clone()).await;
+
+        // Record a durable, content-fingerprinted observation so the
+        // workspace-delta reminder producer can later detect that this file
+        // changed or was deleted — surviving restarts. The fingerprint is over
+        // the FULL file bytes (not the paginated slice); a paginated/truncated
+        // read is marked `Range` scope so a later change reminder does not
+        // claim the unseen remainder was authoritative. Best-effort: an
+        // observation write failure must never fail the read itself.
+        let was_partial = truncated || input.offset.is_some() || input.limit.is_some();
+        let observation = ReadObservation {
+            session_id: ctx.session_id,
+            path: input.path.clone(),
+            fingerprint: Some(fingerprint_bytes(&bytes)),
+            scope: if was_partial {
+                ReadScope::Range
+            } else {
+                ReadScope::Full
+            },
+        };
+        let _ = ctx.memory.record_observation(observation).await;
 
         Ok(ReadOutput {
             path: input.path.display().to_string(),

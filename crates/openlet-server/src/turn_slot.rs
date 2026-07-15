@@ -9,8 +9,10 @@
 //! in one place.
 
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use openlet_core::error::CoreError;
 use openlet_core::types::session::{SessionId, SessionStatus};
 use tokio_util::sync::CancellationToken;
@@ -101,7 +103,18 @@ pub(crate) fn spawn_driven_turn<F>(
         let _exit_guard = ExitGuard(handle.exited.clone());
 
         let cancel = handle.cancel.clone();
-        let outcome = driver_fut.await;
+        // A driver panic must not strand the per-session slot or the FIFO
+        // queue behind it. Convert it into a terminal error so the normal
+        // finalizer drains the next injected turn.
+        let outcome = match AssertUnwindSafe(driver_fut).catch_unwind().await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                tracing::error!(session = %sid, "{label} panicked; containing turn failure");
+                Err(CoreError::Memory(openlet_core::error::MemoryError::Io(
+                    "turn driver panicked".into(),
+                )))
+            }
+        };
         let final_status = match &outcome {
             Ok(_) => SessionStatus::Idle,
             Err(_) if cancel.is_cancelled() => SessionStatus::Cancelled,

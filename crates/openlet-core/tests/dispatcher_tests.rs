@@ -351,7 +351,7 @@ impl Tool for OrderingWrite {
 }
 
 #[tokio::test]
-async fn parallel_safe_reads_overlap_write_runs_after() {
+async fn unsafe_write_is_an_ordered_wave_barrier() {
     let started = Arc::new(Instant::now());
     let safe_finished = Arc::new(AtomicUsize::new(0));
     let write_seen_after = Arc::new(AtomicUsize::new(usize::MAX));
@@ -473,20 +473,20 @@ async fn parallel_safe_reads_overlap_write_runs_after() {
         assert!(r.outcome.is_ok(), "{} failed: {:?}", r.call_id, r.outcome);
     }
 
-    // Reads overlapped: 3x100ms = 300ms serial, but concurrent should
-    // finish around 100ms. Write adds another 50ms. Total budget 200ms
-    // is generous enough to skip flake on a slow CI box but tight enough
-    // to fail if reads accidentally serialize.
+    // Ordered waves preserve the assistant's invocation order: read_a,
+    // then write_x, then read_b/read_c concurrently. That is roughly
+    // 100 + 50 + 100ms, not the old all-reads-first partitioning.
     assert!(
-        wallclock < Duration::from_millis(200),
-        "expected concurrent reads, took {wallclock:?}"
+        wallclock < Duration::from_millis(350),
+        "expected the final safe wave to overlap, took {wallclock:?}"
     );
 
-    // Write started after all 3 safe-set tools finished.
+    // The write may start only after the preceding safe wave, not before it
+    // or after later safe calls that appear after the barrier.
     assert_eq!(
         write_seen_after.load(Ordering::SeqCst),
-        3,
-        "write started before safe set drained"
+        1,
+        "write did not respect the preceding safe wave"
     );
 }
 

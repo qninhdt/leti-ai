@@ -8,7 +8,9 @@
 
 use std::sync::Arc;
 
-use openlet_core::runtime::subagent::{MAX_OUTPUT_BYTES, TaskHandle, TaskRegistry, TaskStatus};
+use openlet_core::runtime::subagent::{
+    BackgroundTransition, DeliveryOwnership, MAX_OUTPUT_BYTES, TaskHandle, TaskRegistry, TaskStatus,
+};
 use openlet_core::types::session::SessionId;
 use rust_decimal::Decimal;
 use std::sync::atomic::AtomicBool;
@@ -23,11 +25,67 @@ fn make_handle(root: SessionId) -> TaskHandle {
         cancel: CancellationToken::new(),
         finished: Arc::new(Notify::new()),
         root_session_id: root,
+        parent_session_id: root,
+        delivery: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         settled: Arc::new(AtomicBool::new(false)),
         inbox_notify: Arc::new(Notify::new()),
-        was_promoted: Arc::new(AtomicBool::new(false)),
         inbox: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
     }
+}
+
+#[tokio::test]
+async fn background_transition_wakes_foreground_waiter_and_selects_outbox_owner() {
+    let registry = TaskRegistry::new(1);
+    let root = SessionId::new();
+    let id = registry.admit(root).expect("admit");
+    registry.insert(id, make_handle(root));
+
+    assert_eq!(
+        registry.background_task(id, root),
+        BackgroundTransition::Backgrounded
+    );
+    assert_eq!(
+        registry.background_task(id, root),
+        BackgroundTransition::AlreadyBackground
+    );
+    let acknowledgement = registry
+        .await_foreground_completion(id)
+        .await
+        .expect("acknowledgement");
+    assert_eq!(acknowledgement.status, TaskStatus::Running);
+    assert!(!acknowledgement.finished);
+    assert_eq!(
+        registry.settle_delivery(id),
+        Some(DeliveryOwnership::TerminalBackground)
+    );
+    registry.set_status(id, TaskStatus::Finished).await;
+    let terminal_ack = registry
+        .await_foreground_completion(id)
+        .await
+        .expect("terminal acknowledgement");
+    assert_eq!(terminal_ack.status, TaskStatus::Running);
+    assert!(terminal_ack.output.is_empty());
+    assert_eq!(
+        registry.background_task(id, root),
+        BackgroundTransition::AlreadyTerminal
+    );
+}
+
+#[test]
+fn settlement_wins_race_and_keeps_foreground_owner() {
+    let registry = TaskRegistry::new(1);
+    let root = SessionId::new();
+    let id = registry.admit(root).expect("admit");
+    registry.insert(id, make_handle(root));
+
+    assert_eq!(
+        registry.settle_delivery(id),
+        Some(DeliveryOwnership::TerminalForeground)
+    );
+    assert_eq!(
+        registry.background_task(id, root),
+        BackgroundTransition::AlreadyTerminal
+    );
 }
 
 // ---- Quota balance ---------------------------------------------------

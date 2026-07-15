@@ -137,8 +137,13 @@ pub enum AgentEvent {
     /// fan-out without subscribing globally.
     SubagentSpawned {
         task_id: Uuid,
+        tool_call_id: String,
+        child_session_id: SessionId,
         parent_session_id: SessionId,
         subagent_type: String,
+        objective: String,
+        description: Option<String>,
+        background: bool,
     },
     /// `subagent.progress` — TRANSIENT. Streaming text fragment from a
     /// running subagent's assistant turn. Bounded by the per-task 10MB
@@ -150,28 +155,14 @@ pub enum AgentEvent {
         parent_session_id: SessionId,
         delta: String,
     },
-    /// `subagent.promoted` — durable. Emitted when the model calls
-    /// `promote_task` on a background task: its terminal result will be
-    /// auto-injected into the parent conversation (instead of requiring a
-    /// `task_status` poll). `parent_session_id` routes it to the parent's
-    /// per-session SSE stream so the TUI can badge the task block.
-    SubagentPromoted {
-        task_id: Uuid,
-        parent_session_id: SessionId,
-    },
-    /// `subagent.settled` — durable. Carries final output snapshot +
-    /// cost so a parent's `task_status` poll observes a consistent
-    /// terminal state. `parent_session_id` mirrors `SubagentSpawned` so
-    /// per-session SSE filtering routes the event to the parent.
-    ///
-    /// NOTE (Phase 3): for a *promoted* task the `output` field is empty
-    /// — the result re-enters the parent conversation via an injected
-    /// turn instead (OpenCode synthetic-message pattern). Non-promoted
-    /// background/sync tasks still carry their output here.
+    /// `subagent.settled` — durable lifecycle metadata. Child output never
+    /// rides public SSE; foreground output belongs to the original tool
+    /// result and background output belongs to its typed parent reminder.
     SubagentSettled {
         task_id: Uuid,
+        child_session_id: SessionId,
         parent_session_id: SessionId,
-        output: String,
+        status: String,
         cost_usd: Option<String>,
     },
     /// `subagent.message` — durable. Emitted when a sibling subagent sends
@@ -233,7 +224,6 @@ impl AgentEvent {
             Self::AttachmentAccepted { .. } => "attachment.accepted",
             Self::SubagentSpawned { .. } => "subagent.spawned",
             Self::SubagentProgress { .. } => "subagent.progress",
-            Self::SubagentPromoted { .. } => "subagent.promoted",
             Self::SubagentSettled { .. } => "subagent.settled",
             Self::SubagentMessage { .. } => "subagent.message",
             Self::SubagentRoster { .. } => "subagent.roster",
@@ -268,9 +258,6 @@ impl AgentEvent {
                 parent_session_id, ..
             }
             | Self::SubagentProgress {
-                parent_session_id, ..
-            }
-            | Self::SubagentPromoted {
                 parent_session_id, ..
             }
             | Self::SubagentSettled {
@@ -428,8 +415,13 @@ mod tests {
         let parent = SessionId::new();
         let spawned = AgentEvent::SubagentSpawned {
             task_id: uuid::Uuid::nil(),
+            tool_call_id: "call".into(),
+            child_session_id: SessionId::new(),
             parent_session_id: parent,
             subagent_type: "t".into(),
+            objective: "task".into(),
+            description: None,
+            background: false,
         };
         assert_eq!(spawned.session_id(), Some(parent));
         assert_eq!(AgentEvent::Heartbeat.session_id(), None);

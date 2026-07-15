@@ -18,8 +18,10 @@ use async_trait::async_trait;
 use chrono::Utc;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::adapters::tool_executor::ToolCtx;
-use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus, plan_subagent_spawn};
-use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
+use openlet_core::runtime::subagent::{
+    BackgroundTransition, DeliveryOwnership, SpawnError, TaskId, TaskStatus, plan_subagent_spawn,
+};
+use openlet_core::tools::builtins::subagent_task::{SpawnedSubagent, SubagentSpawner};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::part::Part;
@@ -110,7 +112,9 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         ctx: &ToolCtx,
         subagent_type: &str,
         objective: &str,
-    ) -> Result<TaskId, SpawnError> {
+        scope: Option<&str>,
+        background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError> {
         let state = self.state()?;
         let parent_meta = state
             .memory
@@ -131,6 +135,22 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             self.max_depth,
         )?;
 
+        // A task born in background mode uses the exact same ownership CAS as
+        // a later TUI conversion. Establish it before any driver can settle.
+        if background
+            && !matches!(
+                state
+                    .task_registry
+                    .background_task(plan.task_id, parent_meta.id),
+                BackgroundTransition::Backgrounded | BackgroundTransition::AlreadyBackground
+            )
+        {
+            state.task_registry.finalize(plan.task_id);
+            return Err(SpawnError::Internal(
+                "background task ownership could not be initialized".into(),
+            ));
+        }
+
         // Persist the child session synchronously so SSE consumers see
         // the row before SubagentSpawned fires. We MUST persist
         // `plan.child` verbatim (via create_session_with_meta) rather than
@@ -148,6 +168,16 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             return Err(SpawnError::Internal(format!("create child session: {e}")));
         }
 
+        let agent_resources = match state.agents.get(&parent_meta.agent_id).cloned() {
+            Some(resources) => resources,
+            None => {
+                state.task_registry.finalize(plan.task_id);
+                return Err(SpawnError::Internal(
+                    "parent agent_resources missing".into(),
+                ));
+            }
+        };
+
         // Seed the child with a single user message holding the objective.
         let user_msg = Message {
             id: MessageId::new(),
@@ -155,11 +185,13 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             role: Role::User,
             created_at: Utc::now(),
         };
-        let user_msg_id = state
-            .memory
-            .append_message(plan.child.id, user_msg)
-            .await
-            .map_err(|e| SpawnError::Internal(format!("seed user message: {e}")))?;
+        let user_msg_id = match state.memory.append_message(plan.child.id, user_msg).await {
+            Ok(id) => id,
+            Err(e) => {
+                state.task_registry.finalize(plan.task_id);
+                return Err(SpawnError::Internal(format!("seed user message: {e}")));
+            }
+        };
         let part = Part::Text {
             id: openlet_core::types::part::PartId::new(),
             text: objective.to_string(),
@@ -169,19 +201,23 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         // empty user turn and producing garbage. Surface as
         // `SpawnError::Internal` so the caller fails fast and the
         // operator sees the storage error instead of a confused agent.
-        state
-            .memory
-            .append_part(user_msg_id, part)
-            .await
-            .map_err(|e| SpawnError::Internal(format!("seed user part: {e}")))?;
+        if let Err(e) = state.memory.append_part(user_msg_id, part).await {
+            state.task_registry.finalize(plan.task_id);
+            return Err(SpawnError::Internal(format!("seed user part: {e}")));
+        }
 
         let _ = state
             .events
             .publish(
                 AgentEvent::SubagentSpawned {
                     task_id: plan.task_id.0,
+                    tool_call_id: ctx.call_id.clone(),
+                    child_session_id: plan.child.id,
                     parent_session_id: parent_meta.id,
                     subagent_type: subagent_type.to_string(),
+                    objective: objective.to_string(),
+                    description: scope.map(str::to_string),
+                    background,
                 },
                 Persistence::Durable,
             )
@@ -193,14 +229,6 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         let child_cancel = plan.child_cancel.clone();
         let agent_slug = plan.agent_slug.clone();
         let parent_id = parent_meta.id;
-        let agent_resources = state
-            .agents
-            .get(&parent_meta.agent_id)
-            .cloned()
-            .ok_or_else(|| {
-                state.task_registry.finalize(plan.task_id);
-                SpawnError::Internal("parent agent_resources missing".into())
-            })?;
         let child_session_id = plan.child.id;
         let handle_name = plan.handle_name.clone();
         let driver_root = root;
@@ -210,8 +238,8 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         publish_roster(state, driver_root).await;
 
         tokio::spawn(async move {
-            let _ = crate::subagent_driver::drive_subagent(
-                driver_state,
+            if let Err(error) = crate::subagent_driver::drive_subagent(
+                driver_state.clone(),
                 task_id,
                 parent_id,
                 child_session_id,
@@ -222,10 +250,77 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
                 driver_root,
                 handle_name,
             )
-            .await;
+            .await
+            {
+                // Every admitted task must settle even if setup fails before
+                // the driver's normal terminal path. This fallback owns only
+                // the exceptional path; a normally settled driver returns
+                // Ok and has already published/finalized itself.
+                let status = TaskStatus::Failed(error.to_string());
+                let delivery = driver_state
+                    .task_registry
+                    .settle_delivery(task_id)
+                    .unwrap_or(DeliveryOwnership::TerminalForeground);
+                driver_state
+                    .task_registry
+                    .set_status(task_id, status.clone())
+                    .await;
+                if driver_state.task_registry.claim_settle(task_id) {
+                    if delivery == DeliveryOwnership::TerminalBackground {
+                        match driver_state
+                            .memory
+                            .append_background_task_settled(
+                                openlet_core::adapters::memory_store::BackgroundTaskSettlement {
+                                    parent_session_id: parent_id,
+                                    task_id: task_id.0.to_string(),
+                                    child_session_id,
+                                    status: status.label().to_string(),
+                                    output: error.to_string(),
+                                    cost_usd: None,
+                                },
+                            )
+                            .await
+                        {
+                            Ok(_) => {
+                                if let Err(delivery_error) =
+                                    crate::injected_turn::enqueue_background_task_delivery(
+                                        &driver_state,
+                                        parent_id,
+                                        &task_id.0.to_string(),
+                                    )
+                                    .await
+                                {
+                                    tracing::error!(%task_id, %parent_id, error = %delivery_error, "failed background task settlement remains pending for recovery");
+                                }
+                            }
+                            Err(persist_error) => {
+                                tracing::error!(%task_id, %parent_id, error = %persist_error, "failed to persist background task setup failure");
+                            }
+                        }
+                    }
+                    let _ = driver_state
+                        .events
+                        .publish(
+                            AgentEvent::SubagentSettled {
+                                task_id: task_id.0,
+                                child_session_id,
+                                parent_session_id: parent_id,
+                                status: status.label().to_string(),
+                                cost_usd: None,
+                            },
+                            Persistence::Durable,
+                        )
+                        .await;
+                }
+                driver_state.task_registry.finalize(task_id);
+                publish_roster(&driver_state, driver_root).await;
+            }
         });
 
-        Ok(plan.task_id)
+        Ok(SpawnedSubagent {
+            task_id: plan.task_id,
+            child_session_id,
+        })
     }
 
     async fn await_completion(
@@ -241,6 +336,26 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
                 .ok_or(SpawnError::Internal(
                     "task vanished before completion".into(),
                 ))?;
+        let cost = if snap.cost_usd.is_zero() {
+            None
+        } else {
+            Some(format!("{:.4}", snap.cost_usd))
+        };
+        Ok((snap.output, cost, snap.status))
+    }
+
+    async fn await_foreground_completion(
+        &self,
+        task_id: TaskId,
+    ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
+        let state = self.state()?;
+        let snap = state
+            .task_registry
+            .await_foreground_completion(task_id)
+            .await
+            .ok_or(SpawnError::Internal(
+                "task vanished before foreground completion".into(),
+            ))?;
         let cost = if snap.cost_usd.is_zero() {
             None
         } else {

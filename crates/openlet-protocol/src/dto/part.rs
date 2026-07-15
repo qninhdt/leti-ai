@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use openlet_core::types::part::{Part, PartId};
+use openlet_core::types::part::{Part, PartId, ReminderKind};
 
 /// Wire shape for `Part`. Mirrors the domain enum 1:1 but skips the
 /// `Image.bytes` field (images surface via the artifact store URL,
@@ -62,9 +62,22 @@ pub enum PartDto {
         compacted_message_ids: Vec<String>,
         original_token_count: u32,
     },
+    CompactionRequest {
+        id: Uuid,
+        state: openlet_core::types::part::CompactionAttemptState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary_message_id: Option<String>,
+    },
     Plan {
         id: Uuid,
         plan: String,
+    },
+    RuntimeReminder {
+        id: Uuid,
+        reminder_kind: ReminderKind,
+        stable_key: String,
+        content: String,
+        projection_epoch: u32,
     },
 }
 
@@ -143,9 +156,31 @@ impl From<Part> for PartDto {
                 compacted_message_ids,
                 original_token_count,
             },
+            Part::CompactionRequest {
+                id,
+                state,
+                summary_message_id,
+            } => Self::CompactionRequest {
+                id: id.as_uuid(),
+                state,
+                summary_message_id,
+            },
             Part::Plan { id, plan } => Self::Plan {
                 id: id.as_uuid(),
                 plan,
+            },
+            Part::RuntimeReminder {
+                id,
+                reminder_kind,
+                stable_key,
+                content,
+                projection_epoch,
+            } => Self::RuntimeReminder {
+                id: id.as_uuid(),
+                reminder_kind,
+                stable_key,
+                content,
+                projection_epoch,
             },
         }
     }

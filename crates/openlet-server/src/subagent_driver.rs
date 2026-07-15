@@ -11,7 +11,7 @@ use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::error::CoreError;
 use openlet_core::projection::ProjectionCaps;
 use openlet_core::runtime::LoopContext;
-use openlet_core::runtime::subagent::{TaskId, TaskStatus};
+use openlet_core::runtime::subagent::{DeliveryOwnership, TaskId, TaskStatus};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
@@ -39,10 +39,6 @@ pub(crate) async fn drive_subagent(
 ) -> Result<(), CoreError> {
     let registry = state.task_registry.clone();
 
-    let llm_messages =
-        crate::turn_driver::project_session(&state, child_session_id, ProjectionCaps::default())
-            .await?;
-
     let tools = crate::turn_driver::tool_specs(&state);
 
     let read_history = state
@@ -63,16 +59,23 @@ pub(crate) async fn drive_subagent(
         &agent_resources.spec.workspace_root,
     );
 
+    let projection_caps = ProjectionCaps::default();
+    let handles =
+        crate::turn_driver::runtime_handles(&state, agent_resources.fs.clone(), child_perm);
+    let llm_messages = openlet_core::runtime::prepare_session_messages(
+        &handles,
+        child_session_id,
+        projection_caps,
+        openlet_core::runtime::ReminderRequestContext::default(),
+    )
+    .await?;
     let loop_ctx = LoopContext {
         agent_id: agent_resources.spec.id,
-        handles: crate::turn_driver::runtime_handles(
-            &state,
-            agent_resources.fs.clone(),
-            child_perm,
-        ),
+        handles,
         read_history,
         mode: child_meta.map(|m| m.permission_mode).unwrap_or_default(),
         max_steps: crate::turn_driver::MAX_TURN_STEPS,
+        projection_caps,
         agent: agent_def,
     };
 
@@ -185,10 +188,11 @@ pub(crate) async fn drive_subagent(
         }
         // Re-project the child session so the drained messages enter the
         // next objective's input.
-        match crate::turn_driver::project_session(
-            &state,
+        match openlet_core::runtime::prepare_session_messages(
+            &loop_ctx.handles,
             child_session_id,
             ProjectionCaps::default(),
+            openlet_core::runtime::ReminderRequestContext::default(),
         )
         .await
         {
@@ -205,15 +209,9 @@ pub(crate) async fn drive_subagent(
         }
     }
 
-    // Terminal side-effect (ONCE, after the loop). Promotion changes HOW
-    // the output is delivered (Validation Session 1, OpenCode synthetic-
-    // message pattern):
-    //   - PROMOTED task → the output re-enters the parent conversation as
-    //     an injected `InjectedResult` turn (untrusted-wrapped, fail-closed
-    //     Ask via the Phase 2 queue). `SubagentSettled` then carries status
-    //     + cost ONLY (empty output) so the result is not double-rendered.
-    //   - NON-promoted task → `SubagentSettled` carries the output as
-    //     before; the parent polls via `task_status`.
+    // Terminal side-effect (ONCE, after the loop). Foreground callers own
+    // their original tool result; background callers own exactly one typed
+    // reminder/outbox notification. Lifecycle SSE never carries child output.
     let snap = registry
         .poll_async(task_id)
         .await
@@ -225,36 +223,63 @@ pub(crate) async fn drive_subagent(
     } else {
         Some(format!("{total_cost:.4}"))
     };
-    let was_promoted = registry.is_promoted(task_id);
-    registry.set_status(task_id, final_status.clone()).await;
-
     // Guard the terminal side-effect behind the one-shot `settled` slot so
     // a task cannot both inject AND publish-with-output. Claiming BEFORE
     // `finalize` (which removes the handle) ensures the slot is present.
     // The quota decrement in `finalize` remains ungated (`saturating_dec`).
+    let delivery = registry
+        .settle_delivery(task_id)
+        .unwrap_or(DeliveryOwnership::TerminalForeground);
+    registry.set_status(task_id, final_status.clone()).await;
     if registry.claim_settle(task_id) {
-        // A promoted task delivers its result via injection; a non-promoted
-        // one carries it in the settled frame. Only inject a genuinely
-        // finished promoted task's output — a cancelled/failed promoted
-        // task just settles (no injected result turn to render).
-        let injected =
-            was_promoted && matches!(final_status, TaskStatus::Finished) && !snap.is_empty();
-        if injected {
-            crate::injected_turn::enqueue_or_start_turn(
-                &state,
-                parent_session_id,
-                snap.clone(),
-                crate::app_state::TurnOrigin::InjectedResult { task_id },
-            );
+        if delivery == DeliveryOwnership::TerminalBackground {
+            // Persist the terminal notification before scheduling the parent
+            // wake. The SQLite delivery key makes retries/reconnects
+            // idempotent and keeps output out of public lifecycle frames.
+            let reminder_persisted = match state
+                .memory
+                .append_background_task_settled(
+                    openlet_core::adapters::memory_store::BackgroundTaskSettlement {
+                        parent_session_id,
+                        task_id: task_id.0.to_string(),
+                        child_session_id,
+                        status: final_status.label().to_string(),
+                        output: snap.clone(),
+                        cost_usd: cost_str.clone(),
+                    },
+                )
+                .await
+            {
+                Ok(_) => true,
+                Err(error) => {
+                    tracing::error!(
+                        %task_id,
+                        %parent_session_id,
+                        error = %error,
+                        "background task settlement reminder was not persisted; parent wake deferred"
+                    );
+                    false
+                }
+            };
+            if reminder_persisted
+                && let Err(error) = crate::injected_turn::enqueue_background_task_delivery(
+                    &state,
+                    parent_session_id,
+                    &task_id.0.to_string(),
+                )
+                .await
+            {
+                tracing::error!(%task_id, %parent_session_id, error = %error, "background settlement remains pending for recovery");
+            }
         }
-        let settled_output = if injected { String::new() } else { snap };
         let _ = state
             .events
             .publish(
                 AgentEvent::SubagentSettled {
                     task_id: task_id.0,
+                    child_session_id,
                     parent_session_id,
-                    output: settled_output,
+                    status: final_status.label().to_string(),
                     cost_usd: cost_str,
                 },
                 Persistence::Durable,

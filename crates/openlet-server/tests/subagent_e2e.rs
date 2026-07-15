@@ -272,9 +272,10 @@ async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
 
     let task_id = h
         .spawner
-        .spawn(&ctx, "general", "do the thing")
+        .spawn(&ctx, "general", "do the thing", None, false)
         .await
-        .expect("spawn admits");
+        .expect("spawn admits")
+        .task_id;
 
     let (output, cost, status) =
         tokio::time::timeout(Duration::from_secs(10), h.spawner.await_completion(task_id))
@@ -310,9 +311,10 @@ async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
     // unit-level `finalize`).
     let task_id2 = h
         .spawner
-        .spawn(&ctx, "general", "second thing")
+        .spawn(&ctx, "general", "second thing", None, false)
         .await
-        .expect("second spawn admits — first child's slot was released");
+        .expect("second spawn admits — first child's slot was released")
+        .task_id;
     assert_ne!(task_id, task_id2, "distinct tasks");
     let (_o2, _c2, status2) = tokio::time::timeout(
         Duration::from_secs(10),
@@ -325,67 +327,64 @@ async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
 }
 
 #[tokio::test]
-async fn promoted_task_injects_result_into_parent_and_settles_without_output() {
-    // Phase 3: a PROMOTED background task delivers its output via an
-    // injected `InjectedResult` turn in the PARENT session (untrusted-
-    // wrapped), and its `SubagentSettled` frame carries NO output payload
-    // (OpenCode synthetic-message pattern). The parent's injected turn
-    // itself drives a (scripted) model turn, so we supply two turns: the
-    // child's, then the parent's injected turn.
+async fn background_task_persists_one_typed_parent_reminder_without_user_text() {
     let h = Harness::build(vec![
-        text_turn_with_usage("child computed 42"),
-        text_turn_with_usage("parent acknowledges"),
+        text_turn_with_usage("child found the answer"),
+        text_turn_with_usage("parent incorporated the result"),
     ])
     .await;
     let ctx = h.parent_ctx(CancellationToken::new()).await;
     let parent_sid = ctx.session_id;
 
-    // Spawn background + mark promoted BEFORE it settles.
-    let task_id = h
+    let spawned = h
         .spawner
-        .spawn(&ctx, "general", "compute the answer")
+        .spawn(&ctx, "general", "research", None, true)
         .await
-        .expect("spawn admits");
-    assert!(
-        h.task_registry.mark_promoted(task_id),
-        "live background task can be promoted"
-    );
+        .expect("background spawn");
+    let (_output, _cost, status) = h
+        .spawner
+        .await_completion(spawned.task_id)
+        .await
+        .expect("child settles");
+    assert_eq!(status, TaskStatus::Finished);
 
-    // Await the child's terminal settle via the registry.
-    let snap = tokio::time::timeout(
-        Duration::from_secs(10),
-        h.task_registry.await_completion(task_id),
-    )
-    .await
-    .expect("await did not hang")
-    .expect("terminal snapshot");
-    assert_eq!(snap.status, TaskStatus::Finished);
-
-    // The parent session must receive an injected turn carrying the child's
-    // output wrapped as untrusted data. Poll the parent message log.
-    let mut injected_seen = false;
-    for _ in 0..300 {
-        let msgs = h.memory.list_messages(parent_sid).await.expect("messages");
-        for m in &msgs {
-            let parts = h.memory.list_parts(parent_sid, m.id).await.expect("parts");
-            for p in parts {
-                if let openlet_core::types::part::Part::Text { text, .. } = p
-                    && text.contains("child computed 42")
-                    && text.contains("<untrusted-subagent-output")
-                {
-                    injected_seen = true;
+    // Task status becomes terminal immediately before the driver's durable
+    // parent notification write, so wait for that write rather than coupling
+    // the test to scheduler timing.
+    let mut reminder_count = 0;
+    for _ in 0..100 {
+        reminder_count = 0;
+        for message in h.memory.list_messages(parent_sid).await.expect("messages") {
+            for part in h
+                .memory
+                .list_parts(parent_sid, message.id)
+                .await
+                .expect("parts")
+            {
+                match part {
+                    openlet_core::types::part::Part::RuntimeReminder {
+                        reminder_kind:
+                            openlet_core::types::part::ReminderKind::BackgroundTaskSettled,
+                        content,
+                        ..
+                    } => {
+                        reminder_count += 1;
+                        assert!(content.contains("child found the answer"));
+                    }
+                    openlet_core::types::part::Part::Text { text, .. } => assert!(
+                        !text.contains("<untrusted-subagent-output"),
+                        "background delivery must not create a synthetic user text bubble"
+                    ),
+                    _ => {}
                 }
             }
         }
-        if injected_seen {
+        if reminder_count == 1 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert!(
-        injected_seen,
-        "promoted task's output must re-enter the parent as an untrusted-wrapped injected turn"
-    );
+    assert_eq!(reminder_count, 1, "settlement owns one durable reminder");
 }
 
 #[tokio::test]
@@ -399,9 +398,10 @@ async fn cancelling_parent_cascades_to_child() {
 
     let task_id = h
         .spawner
-        .spawn(&ctx, "general", "long task")
+        .spawn(&ctx, "general", "long task", None, false)
         .await
-        .expect("spawn");
+        .expect("spawn")
+        .task_id;
     // Trip the parent token — the child's cancel is a child_token of it.
     cancel.cancel();
 

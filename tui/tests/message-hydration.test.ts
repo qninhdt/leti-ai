@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { hydrateMessages, serverPartToView } from "../src/store/message-hydration.js";
+import {
+  hydrateMessages,
+  isRuntimeReminderOnly,
+  serverPartToView,
+} from "../src/store/message-hydration.js";
 
 import type { ServerMessageDto } from "../src/api/types.js";
 import type { MessageView } from "../src/store/types.js";
@@ -46,21 +50,85 @@ describe("serverPartToView", () => {
     expect(serverPartToView({ kind: "step_start", id: "p2" })).toBeNull();
   });
 
-  it("surfaces a compaction marker with its folded token count", () => {
+  it("maps a typed compaction request to the timeline divider", () => {
     const v = serverPartToView({
-      kind: "compaction",
+      kind: "compaction_request",
       id: "p1",
-      summary: "earlier turns summarized",
-      compacted_message_ids: ["m0", "m1"],
-      original_token_count: 4200,
+      state: "committed",
     });
     expect(v).not.toBeNull();
     expect(v?.kind).toBe("compaction");
-    expect(v?.original_token_count).toBe(4200);
+    expect(v?.original_token_count).toBe(0);
+  });
+
+  it("hides a failed compaction request from the timeline", () => {
+    expect(
+      serverPartToView({ kind: "compaction_request", id: "p1", state: "failed" }),
+    ).toBeNull();
+  });
+
+  it("retains a runtime reminder as typed control state", () => {
+    const v = serverPartToView({
+      kind: "runtime_reminder",
+      id: "r1",
+      reminder_kind: "execution_constraint",
+      stable_key: "mode:read_only",
+      content: "read only",
+      projection_epoch: 2,
+    });
+    expect(v).toMatchObject({
+      kind: "runtime_reminder",
+      reminder_kind: "execution_constraint",
+      projection_epoch: 2,
+    });
   });
 });
 
 describe("hydrateMessages", () => {
+  it("keeps reminder-only messages in control state without classifying user text as control", () => {
+    const server: ServerMessageDto[] = [
+      {
+        id: "r1",
+        session_id: "s1",
+        role: "user",
+        created_at: "t",
+        parts: [{
+          kind: "runtime_reminder",
+          id: "rp1",
+          reminder_kind: "execution_constraint",
+          stable_key: "mode:read_only",
+          content: "read only",
+          projection_epoch: 0,
+        }],
+      },
+      {
+        id: "u1",
+        session_id: "s1",
+        role: "user",
+        created_at: "t",
+        parts: [{ kind: "text", id: "up1", text: "<system-reminder>user text</system-reminder>" }],
+      },
+    ];
+    const out = hydrateMessages([], server);
+    expect(out).toHaveLength(2);
+    expect(isRuntimeReminderOnly(out[0]!)).toBe(true);
+    expect(isRuntimeReminderOnly(out[1]!)).toBe(false);
+  });
+
+  it("keeps a legacy child objective visible when it has no structural control provenance", () => {
+    const server: ServerMessageDto[] = [{
+      id: "child-objective",
+      session_id: "child-1",
+      role: "user",
+      created_at: "t",
+      parts: [{ kind: "text", id: "objective-text", text: "Inspect the parser and report findings." }],
+    }];
+    const out = hydrateMessages([], server);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.parts[0]!.text).toBe("Inspect the parser and report findings.");
+    expect(isRuntimeReminderOnly(out[0]!)).toBe(false);
+  });
+
   it("folds a tool result into the assistant message that issued the call", () => {
     const server = [assistantWithCall("m1", "c1", "write"), toolResult("m2", "c1", "ok")];
     const out = hydrateMessages([], server);
@@ -176,35 +244,47 @@ describe("hydrateMessages", () => {
     expect(out[0]!.parts[0]!.text).toBe("explain @a.ts");
   });
 
-  it("hides messages a compaction superseded but keeps the marker's divider", () => {
-    // GET /messages returns the RAW append-only log: the original turns, the
-    // synthetic "Summarize…" user request, and the raw summary assistant
-    // message — the last two are superseded by the compaction marker and must
-    // not render as stray turns beside the divider.
+  it("keeps human history and renders typed divider followed by summary", () => {
     const server: ServerMessageDto[] = [
       { id: "u0", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "u0p", text: "old question" }] },
-      { id: "synth", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "sp", text: "Summarize the conversation history above." }] },
-      { id: "sum", session_id: "s1", role: "assistant", created_at: "t", parts: [{ kind: "text", id: "sump", text: "Goal: …" }] },
-      {
-        id: "comp",
-        session_id: "s1",
-        role: "assistant",
-        created_at: "t",
-        parts: [{ kind: "compaction", id: "cp", summary: "Goal: …", compacted_message_ids: ["u0", "synth", "sum"], original_token_count: 3200 }],
-      },
+      { id: "synth", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "compaction_request", id: "sp", state: "committed" }] },
+      { id: "sum", session_id: "s1", role: "assistant", created_at: "t", parts: [{ kind: "text", id: "sump", text: "Goal: …" }, { kind: "compaction", id: "cp", summary: "Goal: …", compacted_message_ids: ["u0"], original_token_count: 3200 }] },
       { id: "u1", session_id: "s1", role: "user", created_at: "t", parts: [{ kind: "text", id: "u1p", text: "next question" }] },
     ];
     const out = hydrateMessages([], server);
-    // Superseded turns dropped; marker + surrounding real turns survive.
-    expect(out.map((m) => m.id)).toEqual(["comp", "u1"]);
-    expect(out[0]!.parts[0]!.kind).toBe("compaction");
-    expect(out[0]!.parts[0]!.original_token_count).toBe(3200);
+    expect(out.map((m) => m.id)).toEqual(["u0", "synth", "sum", "u1"]);
+    expect(out[1]!.parts[0]!.kind).toBe("compaction");
+    expect(out[2]!.parts[0]!.text).toBe("Goal: …");
   });
 
-  it("keeps superseded call+result together (no orphaned result) when dropped", () => {
-    // A superseded assistant turn that issued a tool call: filtering the whole
-    // message must take its tool result with it, not strand the result as an
-    // orphan standalone row.
+  it("suppresses a partial assistant summary owned by a failed attempt", () => {
+    const out = hydrateMessages([], [
+      {
+        id: "request",
+        session_id: "s1",
+        role: "user",
+        created_at: "t",
+        parts: [
+          {
+            kind: "compaction_request",
+            id: "request-part",
+            state: "failed",
+            summary_message_id: "partial",
+          },
+        ],
+      },
+      {
+        id: "partial",
+        session_id: "s1",
+        role: "assistant",
+        created_at: "t",
+        parts: [{ kind: "text", id: "partial-part", text: "half a summary" }],
+      },
+    ]);
+    expect(out).toHaveLength(0);
+  });
+
+  it("keeps compacted call/result history in the human timeline", () => {
     const server: ServerMessageDto[] = [
       assistantWithCall("a0", "c0", "read"),
       toolResult("t0", "c0", "file body"),
@@ -217,6 +297,6 @@ describe("hydrateMessages", () => {
       },
     ];
     const out = hydrateMessages([], server);
-    expect(out.map((m) => m.id)).toEqual(["comp"]);
+    expect(out.map((m) => m.id)).toEqual(["a0", "comp"]);
   });
 });

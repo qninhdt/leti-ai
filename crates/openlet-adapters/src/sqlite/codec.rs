@@ -140,6 +140,8 @@ pub(crate) fn part_kind(part: &Part) -> &'static str {
         Part::StepStart { .. } => "step_start",
         Part::StepFinish { .. } => "step_finish",
         Part::Compaction { .. } => "compaction",
+        Part::CompactionRequest { .. } => "compaction_request",
         Part::Plan { .. } => "plan",
+        Part::RuntimeReminder { .. } => "runtime_reminder",
     }
 }

@@ -9,7 +9,7 @@
 import { upsertPartInMessage, updateMessageById, updatePartById } from "./reducers.js";
 
 import type { EventDto } from "../api/types.js";
-import type { IdleNotice, MessageView, PendingQuestion, RosterView, State, SubagentView } from "./types.js";
+import type { MessageView, PendingQuestion, RosterView, State, SubagentView } from "./types.js";
 
 // Sum two 4-decimal USD cost strings. A NaN parse falls back to the prior
 // total so a malformed delta never zeroes the displayed cost.
@@ -200,63 +200,59 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
       const existing = s.subagents[ev.task_id];
       const row: SubagentView = existing ?? {
         task_id: ev.task_id,
+        tool_call_id: ev.tool_call_id,
+        child_session_id: ev.child_session_id,
         parent_session_id: ev.parent_session_id,
         agent: ev.subagent_type,
+        objective: ev.objective,
+        description: ev.description ?? undefined,
+        background: ev.background,
         status: "running",
-        output: "",
-        promoted: false,
       };
-      return { subagents: { ...s.subagents, [ev.task_id]: { ...row, agent: ev.subagent_type } } };
+      return {
+        subagents: {
+          ...s.subagents,
+          [ev.task_id]: {
+            ...row,
+            tool_call_id: ev.tool_call_id,
+            child_session_id: ev.child_session_id,
+            agent: ev.subagent_type,
+            objective: ev.objective,
+            description: ev.description ?? undefined,
+            background: ev.background,
+          },
+        },
+      };
     }
 
     case "subagent_progress": {
       const row = s.subagents[ev.task_id];
       if (!row) return {};
       return {
-        subagents: { ...s.subagents, [ev.task_id]: { ...row, output: row.output + ev.delta } },
+        subagents: { ...s.subagents, [ev.task_id]: { ...row, current_activity: ev.delta } },
       };
     }
 
-    case "subagent_promoted": {
-      const row = s.subagents[ev.task_id];
-      if (!row) return {};
-      return { subagents: { ...s.subagents, [ev.task_id]: { ...row, promoted: true } } };
-    }
-
     case "subagent_settled": {
-      const row = s.subagents[ev.task_id];
-      if (!row) return {};
-      // A promoted task's output re-enters as a normal parent turn, so its
-      // `settled` frame carries NO output payload (empty) — keep the block's
-      // existing progress tail and let the injected turn render the result.
-      // A non-promoted task carries its output here.
-      const output = ev.output.length > 0 ? ev.output : row.output;
+      const row = s.subagents[ev.task_id] ?? {
+        task_id: ev.task_id,
+        tool_call_id: "",
+        child_session_id: ev.child_session_id,
+        parent_session_id: ev.parent_session_id,
+        agent: "subagent",
+        objective: "",
+        background: false,
+        status: "running" as const,
+      };
       const subagents = {
         ...s.subagents,
         [ev.task_id]: {
           ...row,
-          status: statusFromSettled(row.status),
-          output,
+          child_session_id: ev.child_session_id,
+          status: normalizeSettledStatus(ev.status),
           cost: ev.cost_usd ?? row.cost,
         },
       };
-      // Idle-parent passive notice (Phase 6, Finding 7): when a PROMOTED task
-      // settles and its parent session is not actively running a turn, record
-      // a passive notice descriptor. This NEVER starts a turn — the injected
-      // result waits in the parent transcript and the user is merely nudged.
-      // (The server's fail-closed idle policy already prevents autonomous
-      // tool execution; this is the UI half.)
-      const parent = s.sessions[ev.parent_session_id];
-      const parentIdle = !parent || parent.status !== "running";
-      if (row.promoted && parentIdle) {
-        const seq = (s.idleNotices[s.idleNotices.length - 1]?.seq ?? 0) + 1;
-        const note: IdleNotice = {
-          task_id: ev.task_id,
-          parent_session_id: ev.parent_session_id,
-          seq,
-        };
-        return { subagents, idleNotices: s.idleNotices.concat(note).slice(-20) };
-      }
       return { subagents };
     }
 
@@ -296,6 +292,7 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
 
 /// A settled frame flips a running task to finished; a task already marked
 /// cancelled/failed by a status frame keeps that terminal state.
-function statusFromSettled(prev: SubagentView["status"]): SubagentView["status"] {
-  return prev === "cancelled" || prev === "failed" ? prev : "finished";
+function normalizeSettledStatus(status: string): SubagentView["status"] {
+  if (status === "cancelled" || status === "failed") return status;
+  return "finished";
 }

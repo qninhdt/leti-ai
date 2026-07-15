@@ -15,7 +15,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::adapters::event_sink::EventSink;
-use crate::adapters::memory_store::MemoryStore;
+use crate::adapters::memory_store::{
+    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore,
+};
 use crate::dispatch::{HookChains, dispatch, publish_fault_if_any};
 use crate::error::MemoryError;
 use crate::hooks::io::{OnMessageCtx, OnSessionStatusCtx};
@@ -152,6 +154,79 @@ impl MemoryStore for HookedMemoryStore {
         self.inner.append_part(msg, part).await
     }
 
+    async fn append_runtime_reminders(
+        &self,
+        session: SessionId,
+        msg: Message,
+        parts: Vec<Part>,
+    ) -> Result<Option<(MessageId, Vec<PartId>)>, MemoryError> {
+        let Some((id, part_ids)) = self
+            .inner
+            .append_runtime_reminders(session, msg.clone(), parts)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if !self.hook_chains.on_message.is_empty() {
+            let ctx = OnMessageCtx {
+                session_id: Some(session),
+                message: Some(Message { id, ..msg }),
+            };
+            let _ = dispatch(&self.hook_chains.on_message, ctx).await;
+        }
+        Ok(Some((id, part_ids)))
+    }
+
+    async fn append_background_task_settled(
+        &self,
+        settlement: BackgroundTaskSettlement,
+    ) -> Result<Option<(MessageId, Vec<PartId>)>, MemoryError> {
+        self.inner.append_background_task_settled(settlement).await
+    }
+
+    async fn claim_background_task_settlements(
+        &self,
+        parent_session_id: Option<SessionId>,
+        task_id: Option<&str>,
+    ) -> Result<Vec<ClaimedBackgroundTaskSettlement>, MemoryError> {
+        self.inner
+            .claim_background_task_settlements(parent_session_id, task_id)
+            .await
+    }
+
+    async fn acknowledge_background_task_settlement(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        self.inner
+            .acknowledge_background_task_settlement(parent_session_id, task_id, lease_id)
+            .await
+    }
+
+    async fn release_background_task_settlement(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        self.inner
+            .release_background_task_settlement(parent_session_id, task_id, lease_id)
+            .await
+    }
+
+    async fn renew_background_task_settlement_lease(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        self.inner
+            .renew_background_task_settlement_lease(parent_session_id, task_id, lease_id)
+            .await
+    }
+
     async fn upsert_part(
         &self,
         msg: MessageId,
@@ -175,5 +250,19 @@ impl MemoryStore for HookedMemoryStore {
 
     async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError> {
         self.inner.record_read(session, path).await
+    }
+
+    async fn record_observation(
+        &self,
+        obs: crate::adapters::memory_store::ReadObservation,
+    ) -> Result<(), MemoryError> {
+        self.inner.record_observation(obs).await
+    }
+
+    async fn list_observations(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<crate::adapters::memory_store::ReadObservation>, MemoryError> {
+        self.inner.list_observations(session).await
     }
 }

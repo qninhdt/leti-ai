@@ -10,7 +10,6 @@ use std::sync::Arc;
 use crate::adapters::event_sink::EventSink;
 use crate::adapters::memory_store::MemoryStore;
 use crate::error::CoreError;
-use crate::projection::LlmMessage;
 use crate::runtime::doom_guard::{ToolCallSig, TurnSummary as DoomTurnSummary};
 use crate::runtime::persist::{append_message_with_event, append_part_with_event};
 use crate::tools::{ToolDispatchResult, ToolInvocation};
@@ -96,30 +95,6 @@ pub(super) async fn append_tool_message(
         append_part_with_event(memory, events, session_id, mid, part).await?;
     }
     Ok(mid)
-}
-
-/// Re-project the persisted session into the LLM-message shape consumed
-/// by `run_turn`. Always re-fetches messages + parts from `MemoryStore`
-/// so the next turn sees Compaction substitutions and any
-/// out-of-band writes.
-pub(super) async fn project_session_messages(
-    memory: &Arc<dyn MemoryStore>,
-    session_id: SessionId,
-) -> Result<Vec<LlmMessage>, CoreError> {
-    use std::collections::HashMap;
-
-    use crate::projection::{ProjectionCaps, project_for_llm};
-    let messages = memory.list_messages(session_id).await?;
-    let mut parts_by_msg: HashMap<MessageId, Vec<Part>> = HashMap::with_capacity(messages.len());
-    for m in &messages {
-        let parts = memory.list_parts(session_id, m.id).await?;
-        parts_by_msg.insert(m.id, parts);
-    }
-    Ok(project_for_llm(
-        &messages,
-        &parts_by_msg,
-        ProjectionCaps::default(),
-    ))
 }
 
 /// Build a `TurnSummary` for the doom-guard from the assistant message just

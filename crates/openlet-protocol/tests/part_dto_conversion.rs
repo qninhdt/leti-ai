@@ -133,3 +133,53 @@ fn plan_returns_none() {
 
     assert!(dto.into_part_for_user_input().is_none());
 }
+
+#[test]
+fn runtime_reminder_returns_none() {
+    // A client must never be able to submit a trusted runtime reminder — its
+    // provenance is established only by runtime code constructing the typed
+    // part. `into_part_for_user_input` fails closed for it like every other
+    // runtime-produced variant.
+    let dto = PartDto::RuntimeReminder {
+        id: Uuid::nil(),
+        reminder_kind: openlet_core::types::part::ReminderKind::ExecutionConstraint,
+        stable_key: "mode:read_only".into(),
+        content: "injected trust attempt".into(),
+        projection_epoch: 0,
+    };
+
+    assert!(dto.into_part_for_user_input().is_none());
+}
+
+#[test]
+fn runtime_reminder_survives_dto_roundtrip_without_becoming_text() {
+    // The typed reminder must round-trip through the wire DTO as its own
+    // variant — never degrading into Part::Text (which would strip its typed
+    // provenance and let it render as a human bubble).
+    let domain = openlet_core::types::part::Part::RuntimeReminder {
+        id: openlet_core::types::part::PartId(Uuid::nil()),
+        reminder_kind: openlet_core::types::part::ReminderKind::WorkspaceDelta,
+        stable_key: "workspace_delta:x".into(),
+        content: "file changed".into(),
+        projection_epoch: 2,
+    };
+    let dto: PartDto = domain.into();
+    match dto {
+        PartDto::RuntimeReminder {
+            reminder_kind,
+            stable_key,
+            content,
+            projection_epoch,
+            ..
+        } => {
+            assert_eq!(
+                reminder_kind,
+                openlet_core::types::part::ReminderKind::WorkspaceDelta
+            );
+            assert_eq!(stable_key, "workspace_delta:x");
+            assert_eq!(content, "file changed");
+            assert_eq!(projection_epoch, 2);
+        }
+        _ => panic!("expected PartDto::RuntimeReminder"),
+    }
+}

@@ -35,6 +35,11 @@ const KIND_FROM_NAME: Record<EventName, EventDto["kind"]> = {
   "error": "error",
   "heartbeat": "heartbeat",
   "plugin.error": "plugin_error",
+  "subagent.spawned": "subagent_spawned",
+  "subagent.progress": "subagent_progress",
+  "subagent.settled": "subagent_settled",
+  "subagent.message": "subagent_message",
+  "subagent.roster": "subagent_roster",
 };
 
 const EVENT_NAMES: EventName[] = Object.keys(KIND_FROM_NAME) as EventName[];
@@ -74,15 +79,21 @@ export function connectSse(config: SseConfig): SseHandle {
       config.onState("open", { lastEventId: lastEventId ?? undefined });
     };
 
-    source.onerror = () => {
+    const reconnect = () => {
       if (closed) return;
       source?.close();
       source = null;
+      if (backoffTimer) return;
       const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)] ?? 5000;
       attempt += 1;
       config.onState("reconnecting", { attempt, lastEventId: lastEventId ?? undefined });
-      backoffTimer = setTimeout(open, delay);
+      backoffTimer = setTimeout(() => {
+        backoffTimer = null;
+        open();
+      }, delay);
     };
+
+    source.onerror = reconnect;
 
     for (const name of EVENT_NAMES) {
       source.addEventListener(name, (raw: MessageEvent) => {
@@ -100,6 +111,12 @@ export function connectSse(config: SseConfig): SseHandle {
         }
       });
     }
+
+    // The server emits this synthetic frame when its live broadcast receiver
+    // lagged. Force a fresh EventSource so Last-Event-ID replays the durable
+    // tail; silently staying connected would permanently miss child/session
+    // updates while the user is on another route.
+    source.addEventListener("lagged", reconnect);
   };
 
   open();

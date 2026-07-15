@@ -7,7 +7,7 @@
 //! `task_registry.rs`.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rust_decimal::Decimal;
@@ -83,6 +83,37 @@ pub enum TaskStatus {
     Failed(String),
 }
 
+/// The sole owner of a task's terminal output.  A foreground waiter may
+/// hand ownership to the background outbox while the child is still running,
+/// but settlement can only choose one of the two terminal states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryOwnership {
+    ForegroundWaiting,
+    Background,
+    TerminalForeground,
+    TerminalBackground,
+}
+
+impl DeliveryOwnership {
+    pub(crate) const fn as_u8(self) -> u8 {
+        match self {
+            Self::ForegroundWaiting => 0,
+            Self::Background => 1,
+            Self::TerminalForeground => 2,
+            Self::TerminalBackground => 3,
+        }
+    }
+
+    pub(crate) const fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Background,
+            2 => Self::TerminalForeground,
+            3 => Self::TerminalBackground,
+            _ => Self::ForegroundWaiting,
+        }
+    }
+}
+
 impl TaskStatus {
     #[must_use]
     pub fn is_terminal(&self) -> bool {
@@ -113,9 +144,13 @@ pub struct TaskHandle {
     /// (children, grandchildren) carry the same `root_session_id` so
     /// quota counters live in one bucket per root.
     pub root_session_id: SessionId,
+    /// Session that issued the task. Used to authorize a TUI conversion.
+    pub parent_session_id: SessionId,
+    /// Linearizable foreground/background output ownership state.
+    pub delivery: Arc<AtomicU8>,
     /// One-shot guard for the TERMINAL SIDE-EFFECT (the `SubagentSettled`
     /// publish and any future result injection) — NOT the quota
-    /// decrement. A background task that is promoted (Phase 3) settles
+    /// decrement. A background task settles
     /// via a second path; without this guard it could surface its result
     /// twice (once via the normal terminal publish, once via injection).
     /// `claim_settle` flips it exactly once so the terminal side-effect
@@ -123,7 +158,7 @@ pub struct TaskHandle {
     /// deliberately left ungated — see `task_registry::saturating_dec`.
     pub settled: Arc<AtomicBool>,
     /// Wake signal for the re-armable driver loop (Phase 2). A subagent
-    /// that stays alive in the background (promoted — Phase 3 — or with a
+    /// that stays alive in the background with a
     /// live inbox — Phase 4) parks on this between `run_loop` objectives;
     /// an external event (message arrival, resume) notifies it to re-enter
     /// `run_loop`. A plain sync child never parks (its loop breaks on first
@@ -131,16 +166,6 @@ pub struct TaskHandle {
     /// Enabled-before-check at the wait site to avoid the lost-wakeup bug
     /// the registry already documents for `finished`.
     pub inbox_notify: Arc<Notify>,
-    /// Promotion flag (Phase 3). Set by `promote_task` on an
-    /// already-background task: on terminal completion the driver injects
-    /// the result into the PARENT session (via `ParentInjector`) instead
-    /// of only publishing `SubagentSettled`, and — per the OpenCode
-    /// synthetic-message pattern — the `SubagentSettled` frame for a
-    /// promoted task carries status + cost ONLY (no output payload), so
-    /// the result surfaces exactly once via the injected turn. A
-    /// non-promoted background/sync task leaves this `false` and keeps its
-    /// output in `SubagentSettled` as before.
-    pub was_promoted: Arc<AtomicBool>,
     /// Inter-agent message inbox (Phase 4). A sibling's `send_message`
     /// pushes an [`InboxMessage`] here; the re-armable driver loop drains
     /// it at the top of the next iteration and projects each message as an
@@ -192,18 +217,6 @@ pub struct RosterEntry {
 }
 
 impl TaskHandle {
-    /// Mark this task promoted (Phase 3). Idempotent.
-    pub fn mark_promoted(&self) {
-        self.was_promoted.store(true, Ordering::Release);
-    }
-
-    /// Whether `promote_task` has flagged this task for parent-injection
-    /// on settle.
-    #[must_use]
-    pub fn is_promoted(&self) -> bool {
-        self.was_promoted.load(Ordering::Acquire)
-    }
-
     /// Attempt to claim the one-shot terminal side-effect slot. Returns
     /// `true` for the FIRST caller (which then owns publishing the
     /// terminal `SubagentSettled` / injecting the result); every

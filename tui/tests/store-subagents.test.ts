@@ -10,14 +10,18 @@ beforeEach(() => {
 });
 
 describe("store subagents slice", () => {
-  it("spawned → progress → settled ends terminal with accumulated output", () => {
+  it("spawned → progress → settled keeps navigation metadata and no output body", () => {
     const s = useStore.getState();
     const task = "task-1";
     s.applyEvent({
       kind: "subagent_spawned",
       task_id: task,
+      tool_call_id: "call-1",
+      child_session_id: "child-1",
       parent_session_id: "parent-1",
       subagent_type: "researcher",
+      objective: "Research it",
+      background: false,
     });
     s.applyEvent({
       kind: "subagent_progress",
@@ -34,25 +38,31 @@ describe("store subagents slice", () => {
     s.applyEvent({
       kind: "subagent_settled",
       task_id: task,
+      child_session_id: "child-1",
       parent_session_id: "parent-1",
-      output: "final result",
+      status: "finished",
       cost_usd: "0.0200",
     });
     const row = useStore.getState().subagents[task];
     expect(row?.status).toBe("finished");
     expect(row?.agent).toBe("researcher");
-    // Non-promoted settled carries its final output.
-    expect(row?.output).toBe("final result");
+    expect(row?.tool_call_id).toBe("call-1");
+    expect(row?.child_session_id).toBe("child-1");
+    expect(row?.current_activity).toBe("result");
   });
 
-  it("promoted task keeps its progress tail (settled frame carries no output)", () => {
+  it("background task keeps its activity through settlement", () => {
     const s = useStore.getState();
     const task = "task-2";
     s.applyEvent({
       kind: "subagent_spawned",
       task_id: task,
+      tool_call_id: "call-2",
+      child_session_id: "child-2",
       parent_session_id: "parent-1",
       subagent_type: "worker",
+      objective: "Work",
+      background: true,
     });
     s.applyEvent({
       kind: "subagent_progress",
@@ -60,20 +70,17 @@ describe("store subagents slice", () => {
       parent_session_id: "parent-1",
       delta: "in-progress tail",
     });
-    s.applyEvent({ kind: "subagent_promoted", task_id: task, parent_session_id: "parent-1" });
-    // Promoted settle: output is delivered via the injected parent turn, so the
-    // frame's output is empty. The block must keep the prior tail.
     s.applyEvent({
       kind: "subagent_settled",
       task_id: task,
+      child_session_id: "child-2",
       parent_session_id: "parent-1",
-      output: "",
+      status: "finished",
       cost_usd: "0.0100",
     });
     const row = useStore.getState().subagents[task];
-    expect(row?.promoted).toBe(true);
     expect(row?.status).toBe("finished");
-    expect(row?.output).toBe("in-progress tail");
+    expect(row?.current_activity).toBe("in-progress tail");
   });
 
   it("ignores subagent_message / subagent_roster in the core slice (Phase 6 owns them)", () => {

@@ -19,6 +19,28 @@ pub fn project_for_llm(
     parts_by_msg: &HashMap<MessageId, Vec<Part>>,
     caps: ProjectionCaps,
 ) -> Vec<LlmMessage> {
+    project_for_llm_mode(msgs, parts_by_msg, caps, None)
+}
+
+/// Projection used only by an explicit compaction attempt. The typed
+/// boundary is rendered with the request wording at this seam; it remains a
+/// control part, never persisted user text.
+#[must_use]
+pub fn project_for_compaction(
+    msgs: &[Message],
+    parts_by_msg: &HashMap<MessageId, Vec<Part>>,
+    caps: ProjectionCaps,
+    request: &str,
+) -> Vec<LlmMessage> {
+    project_for_llm_mode(msgs, parts_by_msg, caps, Some(request))
+}
+
+fn project_for_llm_mode(
+    msgs: &[Message],
+    parts_by_msg: &HashMap<MessageId, Vec<Part>>,
+    caps: ProjectionCaps,
+    compaction_request: Option<&str>,
+) -> Vec<LlmMessage> {
     let (compacted_ids, summaries) = collect_compactions(msgs, parts_by_msg);
     let mut out = Vec::with_capacity(msgs.len());
     let mut emitted_summary_for: HashSet<MessageId> = HashSet::new();
@@ -40,12 +62,28 @@ pub fn project_for_llm(
         let parts = parts_by_msg.get(&msg.id).map(Vec::as_slice).unwrap_or(&[]);
         match msg.role {
             Role::System => project_system(parts, &mut out),
-            Role::User => project_user(parts, caps, &mut out),
+            Role::User => project_user(parts, caps, &mut out, compaction_request),
             Role::Assistant => project_assistant(parts, caps, &mut out),
             Role::Tool => project_tool(parts, &mut out),
         }
     }
     out
+}
+
+/// Message ids that participate in the effective post-compaction history.
+/// Runtime request preparation uses this exact boundary for reminder dedupe,
+/// keeping persistence and projection from developing different ideas of
+/// which control records the model can still see.
+#[must_use]
+pub fn effective_message_ids(
+    msgs: &[Message],
+    parts_by_msg: &HashMap<MessageId, Vec<Part>>,
+) -> HashSet<MessageId> {
+    let (compacted_ids, _) = collect_compactions(msgs, parts_by_msg);
+    msgs.iter()
+        .filter(|msg| !compacted_ids.contains_key(&msg.id))
+        .map(|msg| msg.id)
+        .collect()
 }
 
 /// Walk parts; for each `Part::Compaction`, map every superseded message id
@@ -102,20 +140,79 @@ fn project_system(parts: &[Part], out: &mut Vec<LlmMessage>) {
     out.push(LlmMessage::simple(LlmRole::System, content));
 }
 
-fn project_user(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMessage>) {
-    let mut content = collect_text(parts);
-    let attachment_text = collect_attachment_fallback_text(parts, caps);
+fn project_user(
+    parts: &[Part],
+    caps: ProjectionCaps,
+    out: &mut Vec<LlmMessage>,
+    compaction_request: Option<&str>,
+) {
+    let mut content = escape_untrusted_reminder_delimiters(&collect_text(parts));
+    let attachment_text =
+        escape_untrusted_reminder_delimiters(&collect_attachment_fallback_text(parts, caps));
     if !attachment_text.is_empty() {
         if !content.is_empty() {
             content.push('\n');
         }
         content.push_str(&attachment_text);
     }
+    // Harness-authored reminders render as user-side `<system-reminder>`
+    // blocks. Trusted provenance comes from the typed `Part::RuntimeReminder`
+    // variant existing — never from tag text in ordinary user `Part::Text`,
+    // which flows through `collect_text` above as untrusted content.
+    let reminder_xml = collect_reminder_xml(parts);
+    if !reminder_xml.is_empty() {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(&reminder_xml);
+    }
+    if parts.iter().any(|part| {
+        matches!(
+            part,
+            Part::CompactionRequest {
+                state: crate::types::part::CompactionAttemptState::Pending,
+                ..
+            }
+        )
+    }) && let Some(request) = compaction_request
+    {
+        if !content.is_empty() {
+            content.push('\n');
+        }
+        content.push_str(request);
+    }
     let has_image_part = parts.iter().any(|p| matches!(p, Part::Image { .. }));
     if content.is_empty() && !has_image_part {
         return;
     }
     out.push(LlmMessage::simple(LlmRole::User, content));
+}
+
+fn escape_untrusted_reminder_delimiters(text: &str) -> String {
+    text.replace("<system-reminder", "&lt;system-reminder")
+        .replace("</system-reminder", "&lt;/system-reminder")
+}
+
+/// Render `Part::RuntimeReminder` parts as delimited `<system-reminder>`
+/// blocks. Content is escaped so a reminder body cannot forge the closing
+/// delimiter and smuggle text outside the reminder frame.
+fn collect_reminder_xml(parts: &[Part]) -> String {
+    let mut buf = String::new();
+    for p in parts {
+        if let Part::RuntimeReminder { content, .. } = p {
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            let escaped = content
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            buf.push_str("<system-reminder>\n");
+            buf.push_str(&escaped);
+            buf.push_str("\n</system-reminder>");
+        }
+    }
+    buf
 }
 
 /// Gather a text fallback for `Part::Image` / `Part::Document` parts.
@@ -178,9 +275,10 @@ fn project_assistant(parts: &[Part], caps: ProjectionCaps, out: &mut Vec<LlmMess
     let mut reasoning = String::new();
     let mut tool_calls: Vec<LlmToolCall> = Vec::new();
 
+    let is_compaction_summary = parts.iter().any(|p| matches!(p, Part::Compaction { .. }));
     for p in parts {
         match p {
-            Part::Text { text, .. } => {
+            Part::Text { text, .. } if !is_compaction_summary => {
                 if !content.is_empty() {
                     content.push('\n');
                 }

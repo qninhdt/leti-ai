@@ -4,10 +4,10 @@
 //! Responsibilities:
 //! 1. Permission check: resolves `Decision::Pending` by awaiting the
 //!    deferred and treating `Deny` as a tool-error.
-//! 2. Parallel-safe partition: splits the per-turn tool_calls into a
-//!    safe set (run concurrently via `FuturesUnordered`) and a serial
-//!    set (run sequentially). Order is preserved on the way out so the
-//!    LLM-message projection stays deterministic.
+//! 2. Ordered waves: each contiguous run of parallel-safe calls overlaps;
+//!    every unsafe call is a barrier. This preserves assistant invocation
+//!    order around mutations while still allowing sibling reads/tasks to fan
+//!    out.
 //! 3. Error mapping: tool errors become `ToolResult` parts with `ok:
 //!    false` and a model-readable message.
 
@@ -85,42 +85,49 @@ pub async fn dispatch_batch(
 
     let mut out: Vec<Option<ToolDispatchResult>> = (0..len).map(|_| None).collect();
 
-    // Run parallel-safe set concurrently.
-    let safe: Vec<_> = indexed.iter().filter(|(_, _, s)| *s).cloned().collect();
-    let mut futs = FuturesUnordered::new();
-    for (idx, inv, _) in safe {
-        let registry = Arc::clone(registry);
-        let permission = Arc::clone(permission);
-        let hooks = Arc::clone(hook_chains);
-        let events = Arc::clone(events);
-        let ctx = ctx_for(&inv);
-        let pctx = perm_ctx.clone();
-        futs.push(async move {
-            let result = run_one_with_hooks(
-                &registry,
-                &permission,
-                &hooks,
-                &events,
-                session_id,
-                ctx,
-                pctx,
-                &inv,
-            )
-            .await;
-            (idx, inv, result)
-        });
-    }
-    while let Some((idx, inv, result)) = futs.next().await {
-        record_tool_metric(&result, &inv.name);
-        out[idx] = Some(ToolDispatchResult {
-            call_id: inv.call_id,
-            name: inv.name,
-            outcome: result,
-        });
-    }
+    let mut cursor = 0;
+    while cursor < indexed.len() {
+        if indexed[cursor].2 {
+            let wave_start = cursor;
+            while cursor < indexed.len() && indexed[cursor].2 {
+                cursor += 1;
+            }
+            let mut futs = FuturesUnordered::new();
+            for (idx, inv, _) in indexed[wave_start..cursor].iter().cloned() {
+                let registry = Arc::clone(registry);
+                let permission = Arc::clone(permission);
+                let hooks = Arc::clone(hook_chains);
+                let events = Arc::clone(events);
+                let ctx = ctx_for(&inv);
+                let pctx = perm_ctx.clone();
+                futs.push(async move {
+                    let result = run_one_with_hooks(
+                        &registry,
+                        &permission,
+                        &hooks,
+                        &events,
+                        session_id,
+                        ctx,
+                        pctx,
+                        &inv,
+                    )
+                    .await;
+                    (idx, inv, result)
+                });
+            }
+            while let Some((idx, inv, result)) = futs.next().await {
+                record_tool_metric(&result, &inv.name);
+                out[idx] = Some(ToolDispatchResult {
+                    call_id: inv.call_id,
+                    name: inv.name,
+                    outcome: result,
+                });
+            }
+            continue;
+        }
 
-    // Run non-safe set serially.
-    for (idx, inv, _) in indexed.into_iter().filter(|(_, _, s)| !*s) {
+        let (idx, inv, _) = indexed[cursor].clone();
+        cursor += 1;
         let ctx = ctx_for(&inv);
         let result = run_one_with_hooks(
             registry,

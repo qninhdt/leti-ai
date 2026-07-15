@@ -13,6 +13,7 @@
 import { Index, Show } from "solid-js";
 
 import { theme } from "../theme/index.js";
+import { isRuntimeReminderOnly } from "../store/message-hydration.js";
 import { MessageUser } from "./message-user.js";
 import { MessageAssistant } from "./message-assistant.js";
 
@@ -37,7 +38,7 @@ export function MessageList(props: MessageListProps) {
           <text fg={oc.textMuted}>· read-only until ExitPlanMode</text>
         </box>
       </Show>
-      <Index each={props.messages}>
+      <Index each={props.messages.filter((message) => !isRuntimeReminderOnly(message))}>
         {(message) => (
           <box marginTop={1}>
             <Show

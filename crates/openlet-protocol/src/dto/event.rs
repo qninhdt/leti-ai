@@ -109,22 +109,25 @@ pub enum EventDto {
     },
     SubagentSpawned {
         task_id: Uuid,
+        tool_call_id: String,
+        child_session_id: Uuid,
         parent_session_id: Uuid,
         subagent_type: String,
+        objective: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+        background: bool,
     },
     SubagentProgress {
         task_id: Uuid,
         parent_session_id: Uuid,
         delta: String,
     },
-    SubagentPromoted {
-        task_id: Uuid,
-        parent_session_id: Uuid,
-    },
     SubagentSettled {
         task_id: Uuid,
+        child_session_id: Uuid,
         parent_session_id: Uuid,
-        output: String,
+        status: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_usd: Option<String>,
     },
@@ -470,12 +473,22 @@ impl From<AgentEvent> for EventDto {
             },
             AgentEvent::SubagentSpawned {
                 task_id,
+                tool_call_id,
+                child_session_id,
                 parent_session_id,
                 subagent_type,
+                objective,
+                description,
+                background,
             } => Self::SubagentSpawned {
                 task_id,
+                tool_call_id,
+                child_session_id: child_session_id.as_uuid(),
                 parent_session_id: parent_session_id.as_uuid(),
                 subagent_type,
+                objective,
+                description,
+                background,
             },
             AgentEvent::SubagentProgress {
                 task_id,
@@ -486,22 +499,17 @@ impl From<AgentEvent> for EventDto {
                 parent_session_id: parent_session_id.as_uuid(),
                 delta,
             },
-            AgentEvent::SubagentPromoted {
-                task_id,
-                parent_session_id,
-            } => Self::SubagentPromoted {
-                task_id,
-                parent_session_id: parent_session_id.as_uuid(),
-            },
             AgentEvent::SubagentSettled {
                 task_id,
+                child_session_id,
                 parent_session_id,
-                output,
+                status,
                 cost_usd,
             } => Self::SubagentSettled {
                 task_id,
+                child_session_id: child_session_id.as_uuid(),
                 parent_session_id: parent_session_id.as_uuid(),
-                output,
+                status,
                 cost_usd,
             },
             AgentEvent::SubagentMessage {

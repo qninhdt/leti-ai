@@ -8,12 +8,14 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
 
-use openlet_core::adapters::memory_store::MemoryStore;
+use openlet_core::adapters::memory_store::{
+    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore,
+};
 use openlet_core::error::MemoryError;
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::pagination::{Page, PageResult};
-use openlet_core::types::part::{Part, PartId};
+use openlet_core::types::part::{Part, PartId, ReminderKind};
 use openlet_core::types::permission::PermissionMode;
 use openlet_core::types::session::{SessionFilter, SessionId, SessionMeta, SessionStatus};
 
@@ -375,6 +377,439 @@ impl MemoryStore for SqliteMemoryStore {
         Ok(id)
     }
 
+    async fn append_runtime_reminders(
+        &self,
+        session: SessionId,
+        msg: Message,
+        parts: Vec<Part>,
+    ) -> Result<Option<(MessageId, Vec<PartId>)>, MemoryError> {
+        if parts.is_empty() {
+            return Ok(None);
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_io)?;
+        let message_id = msg.id;
+        sqlx::query(
+            r#"INSERT INTO messages (id, session_id, role, seq, created_at, meta)
+               VALUES (
+                 ?, ?, ?,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?),
+                 ?, '{}'
+               )"#,
+        )
+        .bind(message_id.to_string())
+        .bind(session.to_string())
+        .bind(role_str(msg.role))
+        .bind(session.to_string())
+        .bind(msg.created_at.timestamp_millis())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+
+        let mut inserted = Vec::new();
+        for part in parts {
+            let Part::RuntimeReminder {
+                id,
+                reminder_kind,
+                ref stable_key,
+                projection_epoch,
+                ..
+            } = part
+            else {
+                return Err(MemoryError::Io(
+                    "append_runtime_reminders received a non-reminder part".into(),
+                ));
+            };
+            let kind = serde_json::to_value(reminder_kind)
+                .map_err(|e| MemoryError::Io(format!("encode reminder kind: {e}")))?
+                .as_str()
+                .ok_or_else(|| MemoryError::Io("reminder kind was not a string".into()))?
+                .to_owned();
+            let payload = encode_json(&part, "encode runtime reminder")?;
+            sqlx::query(
+                r#"INSERT INTO parts (id, message_id, seq, kind, payload)
+                   VALUES (
+                     ?, ?,
+                     (SELECT COALESCE(MAX(seq), 0) + 1 FROM parts WHERE message_id = ?),
+                     'runtime_reminder', ?
+                   )"#,
+            )
+            .bind(id.to_string())
+            .bind(message_id.to_string())
+            .bind(message_id.to_string())
+            .bind(payload)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_io)?;
+            let reservation = sqlx::query(
+                r#"INSERT INTO runtime_reminder_deliveries
+                   (session_id, reminder_kind, stable_key, projection_epoch, message_id, part_id)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(session_id, reminder_kind, stable_key, projection_epoch) DO NOTHING"#,
+            )
+            .bind(session.to_string())
+            .bind(kind)
+            .bind(stable_key)
+            .bind(i64::from(projection_epoch))
+            .bind(message_id.to_string())
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_io)?;
+            if reservation.rows_affected() == 0 {
+                sqlx::query("DELETE FROM parts WHERE id = ?")
+                    .bind(id.to_string())
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(map_io)?;
+                continue;
+            }
+            inserted.push(id);
+        }
+
+        if inserted.is_empty() {
+            sqlx::query("DELETE FROM messages WHERE id = ?")
+                .bind(message_id.to_string())
+                .execute(&mut *tx)
+                .await
+                .map_err(map_io)?;
+            tx.commit().await.map_err(map_io)?;
+            return Ok(None);
+        }
+
+        sqlx::query(r#"UPDATE sessions SET updated_at = ? WHERE id = ?"#)
+            .bind(now_ms())
+            .bind(session.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_io)?;
+        tx.commit().await.map_err(map_io)?;
+        Ok(Some((message_id, inserted)))
+    }
+
+    async fn append_background_task_settled(
+        &self,
+        settlement: BackgroundTaskSettlement,
+    ) -> Result<Option<(MessageId, Vec<PartId>)>, MemoryError> {
+        let message_id = MessageId::new();
+        let part_id = PartId::new();
+        let stable_key = format!("task:{}", settlement.task_id);
+        let kind = serde_json::to_value(ReminderKind::BackgroundTaskSettled)
+            .map_err(|e| MemoryError::Io(format!("encode reminder kind: {e}")))?
+            .as_str()
+            .ok_or_else(|| MemoryError::Io("reminder kind was not a string".into()))?
+            .to_owned();
+
+        // Fast path for replay/restart. The unique delivery key remains the
+        // linearization point for concurrent settlement workers.
+        if let Some(row) = sqlx::query(
+            "SELECT message_id, part_id FROM runtime_reminder_deliveries WHERE session_id = ? AND reminder_kind = ? AND stable_key = ? AND projection_epoch = 0",
+        )
+        .bind(settlement.parent_session_id.to_string())
+        .bind(&kind)
+        .bind(&stable_key)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_io)?
+        {
+            // A previous process may have committed the reminder just before
+            // it died. Always (re)materialize the outbox row on this
+            // idempotent path so a retry restores startup recovery instead
+            // of treating the reminder reservation as the whole delivery.
+            sqlx::query(
+                r#"INSERT INTO background_task_delivery_outbox
+                   (parent_session_id, task_id, child_session_id, status, output, cost_usd, scheduled_at)
+                   VALUES (?, ?, ?, ?, ?, ?, NULL)
+                   ON CONFLICT(parent_session_id, task_id) DO NOTHING"#,
+            )
+            .bind(settlement.parent_session_id.to_string())
+            .bind(&settlement.task_id)
+            .bind(settlement.child_session_id.to_string())
+            .bind(&settlement.status)
+            .bind(&settlement.output)
+            .bind(&settlement.cost_usd)
+            .execute(&self.pool)
+            .await
+            .map_err(map_io)?;
+            let mid: String = row.try_get("message_id").map_err(map_io)?;
+            let pid: String = row.try_get("part_id").map_err(map_io)?;
+            let mid = mid
+                .parse::<uuid::Uuid>()
+                .map(MessageId)
+                .map_err(|e| MemoryError::Io(format!("message id: {e}")))?;
+            let pid = pid
+                .parse::<uuid::Uuid>()
+                .map(PartId)
+                .map_err(|e| MemoryError::Io(format!("part id: {e}")))?;
+            return Ok(Some((mid, vec![pid])));
+        }
+
+        let body = format!(
+            "Background subagent task {} ({}) settled with status {}.\n{}{}",
+            settlement.task_id,
+            settlement.child_session_id,
+            settlement.status,
+            settlement.output,
+            settlement
+                .cost_usd
+                .as_deref()
+                .map_or(String::new(), |cost| format!("\nCost: ${cost}"))
+        );
+        let part = Part::RuntimeReminder {
+            id: part_id,
+            reminder_kind: ReminderKind::BackgroundTaskSettled,
+            stable_key: stable_key.clone(),
+            content: body,
+            projection_epoch: 0,
+        };
+        // The reminder, its exactly-once reservation, and its recovery outbox
+        // entry are one transaction. A crash therefore exposes either none of
+        // them or all of them to restart recovery.
+        let mut tx = self.pool.begin().await.map_err(map_io)?;
+        sqlx::query(
+            r#"INSERT INTO messages (id, session_id, role, seq, created_at, meta)
+               VALUES (?, ?, ?,
+                 (SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE session_id = ?),
+                 ?, '{}')"#,
+        )
+        .bind(message_id.to_string())
+        .bind(settlement.parent_session_id.to_string())
+        .bind(role_str(openlet_core::types::message::Role::User))
+        .bind(settlement.parent_session_id.to_string())
+        .bind(chrono::Utc::now().timestamp_millis())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        sqlx::query(
+            r#"INSERT INTO parts (id, message_id, seq, kind, payload)
+               VALUES (?, ?, 1, 'runtime_reminder', ?)"#,
+        )
+        .bind(part_id.to_string())
+        .bind(message_id.to_string())
+        .bind(encode_json(&part, "encode background reminder")?)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        let reservation = sqlx::query(
+            r#"INSERT INTO runtime_reminder_deliveries
+               (session_id, reminder_kind, stable_key, projection_epoch, message_id, part_id)
+               VALUES (?, ?, ?, 0, ?, ?)
+               ON CONFLICT(session_id, reminder_kind, stable_key, projection_epoch) DO NOTHING"#,
+        )
+        .bind(settlement.parent_session_id.to_string())
+        .bind(&kind)
+        .bind(&stable_key)
+        .bind(message_id.to_string())
+        .bind(part_id.to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        if reservation.rows_affected() == 0 {
+            tx.rollback().await.map_err(map_io)?;
+            // A concurrent winner committed first. Re-enter through the
+            // idempotent path, which also ensures its outbox row exists.
+            return self.append_background_task_settled(settlement).await;
+        }
+        sqlx::query(
+            r#"INSERT INTO background_task_delivery_outbox
+               (parent_session_id, task_id, child_session_id, status, output, cost_usd, scheduled_at)
+               VALUES (?, ?, ?, ?, ?, ?, NULL)
+               ON CONFLICT(parent_session_id, task_id) DO NOTHING"#,
+        )
+        .bind(settlement.parent_session_id.to_string())
+        .bind(&settlement.task_id)
+        .bind(settlement.child_session_id.to_string())
+        .bind(&settlement.status)
+        .bind(&settlement.output)
+        .bind(&settlement.cost_usd)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+            .bind(now_ms())
+            .bind(settlement.parent_session_id.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_io)?;
+        tx.commit().await.map_err(map_io)?;
+        Ok(Some((message_id, vec![part_id])))
+    }
+
+    async fn claim_background_task_settlements(
+        &self,
+        parent_session_id: Option<SessionId>,
+        task_id: Option<&str>,
+    ) -> Result<Vec<ClaimedBackgroundTaskSettlement>, MemoryError> {
+        // Each queued/running parent turn renews its own lease. Expiry is
+        // therefore a durable crash/panic detector across server processes.
+        const LEASE_MS: i64 = 30_000;
+
+        let now = now_ms();
+        let mut tx = self.pool.begin().await.map_err(map_io)?;
+        let rows = match (parent_session_id, task_id) {
+            (Some(parent_session_id), Some(task_id)) => sqlx::query(
+                r#"SELECT parent_session_id, task_id, child_session_id, status, output, cost_usd
+                   FROM background_task_delivery_outbox
+                   WHERE parent_session_id = ? AND task_id = ?
+                     AND (delivery_state = 'pending'
+                          OR (delivery_state = 'leased' AND lease_expires_at <= ?))
+                   ORDER BY rowid"#,
+            )
+            .bind(parent_session_id.to_string())
+            .bind(task_id)
+            .bind(now)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_io)?,
+            (None, None) => sqlx::query(
+                r#"SELECT parent_session_id, task_id, child_session_id, status, output, cost_usd
+                   FROM background_task_delivery_outbox
+                   WHERE delivery_state = 'pending'
+                      OR (delivery_state = 'leased' AND lease_expires_at <= ?)
+                   ORDER BY rowid"#,
+            )
+            .bind(now)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_io)?,
+            _ => {
+                return Err(MemoryError::Io(
+                    "background delivery claim requires both parent session and task id".into(),
+                ));
+            }
+        };
+
+        let mut claimed = Vec::with_capacity(rows.len());
+        for row in rows {
+            let parent_session_id = row
+                .try_get::<String, _>("parent_session_id")
+                .map_err(map_io)?
+                .parse::<uuid::Uuid>()
+                .map(SessionId)
+                .map_err(|e| MemoryError::Io(e.to_string()))?;
+            let task_id: String = row.try_get("task_id").map_err(map_io)?;
+            let lease_id = uuid::Uuid::new_v4().to_string();
+            let updated = sqlx::query(
+                r#"UPDATE background_task_delivery_outbox
+                   SET delivery_state = 'leased', lease_id = ?,
+                       lease_expires_at = ?, delivery_attempts = delivery_attempts + 1
+                   WHERE parent_session_id = ? AND task_id = ?
+                     AND (delivery_state = 'pending'
+                          OR (delivery_state = 'leased' AND lease_expires_at <= ?))"#,
+            )
+            .bind(&lease_id)
+            .bind(now + LEASE_MS)
+            .bind(parent_session_id.to_string())
+            .bind(&task_id)
+            .bind(now)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_io)?;
+            if updated.rows_affected() == 0 {
+                continue;
+            }
+
+            let child_session_id = row
+                .try_get::<String, _>("child_session_id")
+                .map_err(map_io)?
+                .parse::<uuid::Uuid>()
+                .map(SessionId)
+                .map_err(|e| MemoryError::Io(e.to_string()))?;
+            claimed.push(ClaimedBackgroundTaskSettlement {
+                settlement: BackgroundTaskSettlement {
+                    parent_session_id,
+                    task_id,
+                    child_session_id,
+                    status: row.try_get("status").map_err(map_io)?,
+                    output: row.try_get("output").map_err(map_io)?,
+                    cost_usd: row.try_get("cost_usd").map_err(map_io)?,
+                },
+                lease_id,
+            });
+        }
+        tx.commit().await.map_err(map_io)?;
+        Ok(claimed)
+    }
+
+    async fn acknowledge_background_task_settlement(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        let updated = sqlx::query(
+            r#"UPDATE background_task_delivery_outbox
+               SET delivery_state = 'delivered', delivered_at = ?,
+                   lease_id = NULL, lease_expires_at = NULL
+               WHERE parent_session_id = ? AND task_id = ?
+                 AND delivery_state = 'leased' AND lease_id = ?"#,
+        )
+        .bind(now_ms())
+        .bind(parent_session_id.to_string())
+        .bind(task_id)
+        .bind(lease_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        if updated.rows_affected() == 0 {
+            return Err(MemoryError::Io(
+                "background delivery lease was lost before acknowledgement".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn release_background_task_settlement(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        let released = sqlx::query(
+            r#"UPDATE background_task_delivery_outbox
+               SET delivery_state = 'pending', lease_id = NULL, lease_expires_at = NULL
+               WHERE parent_session_id = ? AND task_id = ?
+                 AND delivery_state = 'leased' AND lease_id = ?"#,
+        )
+        .bind(parent_session_id.to_string())
+        .bind(task_id)
+        .bind(lease_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        if released.rows_affected() == 0 {
+            return Err(MemoryError::Io(
+                "background delivery lease was lost before release".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn renew_background_task_settlement_lease(
+        &self,
+        parent_session_id: SessionId,
+        task_id: &str,
+        lease_id: &str,
+    ) -> Result<(), MemoryError> {
+        const LEASE_MS: i64 = 30_000;
+        let renewed = sqlx::query(
+            "UPDATE background_task_delivery_outbox SET lease_expires_at = ? WHERE parent_session_id = ? AND task_id = ? AND delivery_state = 'leased' AND lease_id = ?",
+        )
+        .bind(now_ms() + LEASE_MS)
+        .bind(parent_session_id.to_string())
+        .bind(task_id)
+        .bind(lease_id)
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        if renewed.rows_affected() == 0 {
+            return Err(MemoryError::Io(
+                "background delivery lease was lost before renewal".into(),
+            ));
+        }
+        Ok(())
+    }
+
     async fn upsert_part(
         &self,
         msg: MessageId,
@@ -470,6 +905,8 @@ impl MemoryStore for SqliteMemoryStore {
 
     async fn record_read(&self, session: SessionId, path: PathBuf) -> Result<(), MemoryError> {
         let path_str = path.to_string_lossy().to_string();
+        // Legacy path-only record: leave fingerprint/scope untouched on
+        // conflict so a bare read never erases a richer prior observation.
         sqlx::query(
             r#"INSERT INTO session_reads (session_id, path, read_at)
                VALUES (?, ?, ?)
@@ -482,6 +919,65 @@ impl MemoryStore for SqliteMemoryStore {
         .await
         .map_err(map_io)?;
         Ok(())
+    }
+
+    async fn record_observation(
+        &self,
+        obs: openlet_core::adapters::memory_store::ReadObservation,
+    ) -> Result<(), MemoryError> {
+        let path_str = obs.path.to_string_lossy().to_string();
+        // Atomic upsert by (session_id, path). The fingerprint + scope are
+        // always overwritten with the latest observation so a re-read of a
+        // changed file records its new content hash.
+        sqlx::query(
+            r#"INSERT INTO session_reads (session_id, path, read_at, fingerprint, scope)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(session_id, path) DO UPDATE SET
+                   read_at = excluded.read_at,
+                   fingerprint = excluded.fingerprint,
+                   scope = excluded.scope"#,
+        )
+        .bind(obs.session_id.to_string())
+        .bind(path_str)
+        .bind(now_ms())
+        .bind(obs.fingerprint.as_deref())
+        .bind(obs.scope.as_str())
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        Ok(())
+    }
+
+    async fn list_observations(
+        &self,
+        session: SessionId,
+    ) -> Result<Vec<openlet_core::adapters::memory_store::ReadObservation>, MemoryError> {
+        use openlet_core::adapters::memory_store::{ReadObservation, ReadScope};
+        let rows = sqlx::query(
+            r#"SELECT path, fingerprint, scope FROM session_reads
+               WHERE session_id = ? ORDER BY read_at ASC"#,
+        )
+        .bind(session.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            let path: String = row.try_get("path").map_err(map_io)?;
+            let fingerprint: Option<String> = row.try_get("fingerprint").map_err(map_io)?;
+            let scope: Option<String> = row.try_get("scope").map_err(map_io)?;
+            out.push(ReadObservation {
+                session_id: session,
+                path: PathBuf::from(path),
+                fingerprint,
+                scope: scope
+                    .as_deref()
+                    .map(ReadScope::from_label)
+                    .unwrap_or(ReadScope::Full),
+            });
+        }
+        Ok(out)
     }
 
     async fn list_parts(

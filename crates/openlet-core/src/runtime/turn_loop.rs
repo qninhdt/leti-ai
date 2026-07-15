@@ -32,9 +32,7 @@ use crate::types::permission::{PermissionCtx, PermissionMode};
 
 use super::ConversationRuntime;
 use super::TurnInput;
-use super::turn_loop_helpers::{
-    append_tool_message, build_doom_summary, collect_tool_calls, project_session_messages,
-};
+use super::turn_loop_helpers::{append_tool_message, build_doom_summary, collect_tool_calls};
 
 /// Per-loop tunables. Caller owns the workspace + read-history handle so
 /// the same `ReadHistory` carries through every step of the same session.
@@ -46,6 +44,9 @@ pub struct LoopContext {
     pub read_history: ReadHistory,
     pub mode: PermissionMode,
     pub max_steps: usize,
+    /// Provider capabilities used every time the durable transcript is
+    /// freshly prepared between tool-loop steps.
+    pub projection_caps: crate::projection::ProjectionCaps,
     /// Optional agent definition. When provided, compaction triggers
     /// at the top of each loop iteration once projected tokens cross
     /// `agent.context_window * agent.compaction_threshold`.
@@ -126,6 +127,18 @@ impl ConversationRuntime {
             if model_steps >= loop_ctx.max_steps {
                 break;
             }
+            input.messages = crate::runtime::request_prep::prepare_session_messages(
+                &loop_ctx.handles,
+                session_id,
+                loop_ctx.projection_caps,
+                crate::runtime::request_prep::ReminderRequestContext {
+                    turn_index: model_steps,
+                    max_turns: loop_ctx.max_steps,
+                    actual_input_tokens: last_actual_tokens,
+                    context_window: loop_ctx.agent.as_ref().map(|agent| agent.context_window),
+                },
+            )
+            .await?;
             // Compaction check at top of each iteration. Skipped during a
             // compaction-induced turn to avoid recursion.
             if let Some(agent) = loop_ctx.agent.as_ref()
@@ -399,8 +412,6 @@ impl ConversationRuntime {
 
             // Append a tool-role message holding all results.
             append_tool_message(memory, &loop_ctx.handles.events, session_id, &results).await?;
-            // Project all messages so far into the next LLM input.
-            input.messages = project_session_messages(memory, session_id).await?;
         }
         Ok(LoopOutcome {
             steps: loop_ctx.max_steps,

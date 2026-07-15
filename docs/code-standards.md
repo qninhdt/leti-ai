@@ -79,6 +79,6 @@ Standards the openlet-ai codebase actually follows. Derived from the code +
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check && cargo audit
+cargo deny check && cargo audit --ignore RUSTSEC-2026-0176 --ignore RUSTSEC-2026-0177
 ( cd tui && npm run typecheck && npm test && npm pack --dry-run )
 ```

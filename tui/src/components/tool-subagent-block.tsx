@@ -6,15 +6,14 @@
 // spawned/progress/settled SSE frames); the static agent/objective come from
 // the tool call's own args via parseSubagentCall.
 //
-// Promoted-task rule (Validation Session 1): a promoted task's `settled` frame
-// carries NO output — the result re-enters the PARENT transcript as an injected
-// turn. So a promoted, finished block shows a "result delivered below" note
-// instead of duplicating the output here (which it never receives).
 
-import { createMemo, Show } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import "opentui-spinner/solid";
+import type { BoxRenderable, KeyEvent, MouseEvent } from "@opentui/core";
 
 import { theme } from "../theme/index.js";
+import { useStore } from "../store/index.js";
+import { useRuntime } from "../render/app-context.js";
 import { SPLIT_BORDER } from "../utils/border-chars.js";
 import { parseSubagentCall } from "./tool-subagent-parse.js";
 
@@ -27,10 +26,11 @@ export interface ToolSubagentBlockProps {
   live?: SubagentView;
 }
 
-const COLLAPSE_LINES = 12;
-
 export function ToolSubagentBlock(props: ToolSubagentBlockProps) {
   const oc = theme.oc;
+  const runtime = useRuntime();
+  let card: BoxRenderable | undefined;
+  const [backgrounding, setBackgrounding] = createSignal(false);
 
   const call = createMemo(() =>
     parseSubagentCall(props.part.tool_args, props.part.tool_result),
@@ -47,16 +47,41 @@ export function ToolSubagentBlock(props: ToolSubagentBlockProps) {
 
   const running = () => status() === "running";
   const agent = () => props.live?.agent || call()?.agent || "subagent";
-  const promoted = () => props.live?.promoted ?? false;
-
-  const outputTail = createMemo(() => {
-    const out = props.live?.output ?? "";
-    if (!out) return "";
-    const lines = out.split("\n");
-    return lines.length > COLLAPSE_LINES ? lines.slice(-COLLAPSE_LINES).join("\n") : out;
-  });
+  const mode = () => (props.live?.background ?? call()?.background ? "background" : "foreground");
 
   const title = () => `# Subagent: @${agent()}`;
+  const childSessionId = () => props.live?.child_session_id;
+  const taskId = () => props.live?.task_id ?? call()?.taskId;
+  const openChild = () => {
+    const id = childSessionId();
+    if (id) useStore.getState().setActiveSession(id);
+  };
+  const onCardClick = (event: MouseEvent) => {
+    event.stopPropagation();
+    card?.focus();
+    openChild();
+  };
+  const onCardKey = (event: KeyEvent) => {
+    if (event.name === "return" || event.name === "enter" || event.name === "space") {
+      event.preventDefault();
+      openChild();
+    }
+  };
+  const background = async (event: MouseEvent) => {
+    event.stopPropagation();
+    const id = taskId();
+    const parent = props.live?.parent_session_id;
+    if (!id || !parent || backgrounding()) return;
+    setBackgrounding(true);
+    try {
+      await runtime.client.backgroundTask(parent, id);
+      useStore.getState().setNotice("Subagent continues in background");
+    } catch (error) {
+      useStore.getState().setClientError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBackgrounding(false);
+    }
+  };
 
   return (
     <box
@@ -70,6 +95,16 @@ export function ToolSubagentBlock(props: ToolSubagentBlockProps) {
       marginTop={1}
       gap={1}
       flexDirection="column"
+      onMouseUp={onCardClick}
+      onKeyDown={onCardKey}
+      ref={(node: BoxRenderable) => {
+        // Spawn is asynchronous, so make the stable card focusable before
+        // its child id arrives; Enter simply no-ops until navigation exists.
+        node.focusable = true;
+        // Keep the focus target stable even when a nested text node received
+        // the mouse event.
+        card = node;
+      }}
     >
       <Show
         when={running()}
@@ -91,21 +126,19 @@ export function ToolSubagentBlock(props: ToolSubagentBlockProps) {
         </text>
       </Show>
 
-      {/* Promoted + finished: output was delivered into the parent transcript
-          below, not carried on the settled frame — point the reader there
-          instead of rendering an empty body. */}
-      <Show
-        when={promoted() && status() === "finished"}
-        fallback={
-          <Show when={outputTail()}>
-            <text paddingLeft={3} fg={oc.text}>
-              {outputTail()}
-            </text>
-          </Show>
-        }
-      >
+      <Show when={props.live?.current_activity}>
         <text paddingLeft={3} fg={oc.textMuted}>
-          ↳ result delivered below
+          {props.live?.current_activity}
+        </text>
+      </Show>
+
+      <text paddingLeft={3} fg={oc.textMuted}>
+        {mode()}{props.live?.cost ? ` · $${props.live.cost}` : ""}
+      </text>
+
+      <Show when={running() && mode() === "foreground" && taskId() && props.live?.parent_session_id}>
+        <text paddingLeft={3} fg={oc.primary} onMouseUp={background}>
+          {backgrounding() ? "backgrounding…" : "continue in background"}
         </text>
       </Show>
 

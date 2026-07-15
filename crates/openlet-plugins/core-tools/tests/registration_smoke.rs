@@ -3,7 +3,7 @@
 //! The plugin's whole job is to register the built-in tool set through the
 //! public `register_tool` extension point. This test installs it against
 //! stub dependencies and asserts the contract every boot relies on:
-//!   - exactly 15 tools are registered,
+//!   - exactly 14 tools are registered,
 //!   - no two share a wire name (a collision would mis-route dispatch),
 //!   - install succeeds with no capability error.
 //!
@@ -22,7 +22,7 @@ use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::runtime::subagent::task_types::{SpawnError, TaskId, TaskStatus};
 use openlet_core::tools::builtins::bash::{BashOutput, ShellExecutor};
 use openlet_core::tools::builtins::python::{PythonExecutor, PythonOutput};
-use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
+use openlet_core::tools::builtins::subagent_task::{SpawnedSubagent, SubagentSpawner};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::message::{Message, MessageId};
@@ -78,7 +78,9 @@ impl SubagentSpawner for StubSpawner {
         _ctx: &ToolCtx,
         _subagent_type: &str,
         _objective: &str,
-    ) -> Result<TaskId, SpawnError> {
+        _scope: Option<&str>,
+        _background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError> {
         Err(SpawnError::Internal("stub".to_string()))
     }
     async fn await_completion(
@@ -213,7 +215,7 @@ fn build_plugin() -> CoreToolsPlugin {
 }
 
 #[tokio::test]
-async fn installs_all_fifteen_tools_without_collision() {
+async fn installs_all_fourteen_tools_without_collision() {
     let plugin = build_plugin();
     let mut ctx = PluginContext::new(
         plugin.manifest().clone(),
@@ -234,8 +236,8 @@ async fn installs_all_fifteen_tools_without_collision() {
 
     assert_eq!(
         names.len(),
-        15,
-        "core-tools must register exactly 15 tools, got {names:?}"
+        14,
+        "core-tools must register exactly 14 tools, got {names:?}"
     );
 
     // No id collisions — dedup the names and compare counts.
@@ -261,7 +263,6 @@ async fn installs_all_fifteen_tools_without_collision() {
         "todo",
         "subagent_task",
         "task_status",
-        "promote_task",
         "send_message",
     ] {
         assert!(
@@ -282,7 +283,7 @@ async fn installs_all_fifteen_tools_without_collision() {
 }
 
 /// Wiring a `PythonExecutor` via `.with_python()` adds exactly one tool —
-/// `python` — on top of the default 15, and nothing else shifts. Locks the
+/// `python` — on top of the default 14, and nothing else shifts. Locks the
 /// opt-in registration branch that the four-arg `new` leaves dormant.
 #[tokio::test]
 async fn with_python_registers_the_python_tool() {
@@ -303,8 +304,8 @@ async fn with_python_registers_the_python_tool() {
 
     assert_eq!(
         names.len(),
-        16,
-        "wiring python must register exactly 16 tools, got {names:?}"
+        15,
+        "wiring python must register exactly 15 tools, got {names:?}"
     );
     assert!(
         names.contains(&"python"),

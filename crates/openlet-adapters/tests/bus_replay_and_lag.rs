@@ -184,6 +184,20 @@ async fn replay_since_global_returns_cross_session_events_in_id_order() {
 }
 
 #[tokio::test]
+async fn replay_paginates_past_one_thousand_events_to_a_captured_tip() {
+    let (bus, session) = make_bus_with_session().await;
+    for _ in 0..1_005 {
+        bus.publish(session_status_event(session), Persistence::Durable)
+            .await
+            .unwrap();
+    }
+    let replay = bus.replay_since(session, 0).await.unwrap();
+    assert_eq!(replay.len(), 1_005);
+    assert_eq!(replay.first().and_then(|event| event.event_id), Some(1));
+    assert_eq!(replay.last().and_then(|event| event.event_id), Some(1_005));
+}
+
+#[tokio::test]
 async fn publish_with_no_subscribers_does_not_error() {
     let (bus, session) = make_bus_with_session().await;
     // No subscriber attached. Broadcast `Err` is suppressed; durable

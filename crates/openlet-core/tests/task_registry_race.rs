@@ -22,9 +22,10 @@ fn make_handle(root: SessionId) -> TaskHandle {
         cancel: CancellationToken::new(),
         finished: Arc::new(Notify::new()),
         root_session_id: root,
+        parent_session_id: root,
+        delivery: Arc::new(std::sync::atomic::AtomicU8::new(0)),
         settled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         inbox_notify: Arc::new(Notify::new()),
-        was_promoted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         inbox: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
     }
 }

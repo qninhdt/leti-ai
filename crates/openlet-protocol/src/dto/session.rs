@@ -104,6 +104,14 @@ pub struct AbortAckDto {
     pub aborted: bool,
 }
 
+/// Result of moving a running foreground subagent to the durable background
+/// delivery path. The task and child session are unchanged.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct BackgroundTaskAckDto {
+    pub task_id: uuid::Uuid,
+    pub status: String,
+}
+
 /// `POST /v1/session/:id/compact` ack. `compacted` is false when there was
 /// nothing to compact (conversation at/under the preserved-recent floor).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

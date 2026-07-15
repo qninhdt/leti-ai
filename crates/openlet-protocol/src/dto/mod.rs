@@ -24,4 +24,6 @@ pub use model::ModelDto;
 pub use part::PartDto;
 pub use permission::{PermissionReplyDto, PermissionReplyKind, PermissionRequestDto};
 pub use question::QuestionAnswerDto;
-pub use session::{AbortAckDto, CompactAckDto, CreateSessionDto, SessionDto, SetModeDto};
+pub use session::{
+    AbortAckDto, BackgroundTaskAckDto, CompactAckDto, CreateSessionDto, SessionDto, SetModeDto,
+};

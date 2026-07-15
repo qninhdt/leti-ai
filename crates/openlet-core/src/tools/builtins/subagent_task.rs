@@ -3,8 +3,9 @@
 //! The tool's `run` is the boundary between the model-facing JSON shape
 //! and the [`runtime::subagent`] state machine. Sync mode awaits
 //! completion and returns a final `{output, cost_usd}`. Background mode
-//! returns a `task_id` immediately so the parent can poll via
-//! `task_status`.
+//! returns a task/child-session descriptor immediately; terminal output is
+//! delivered once through a typed parent reminder (while `task_status` stays
+//! available for inspection).
 //!
 //! Quotas + depth caps live in `runtime::subagent::plan_subagent_spawn`;
 //! this tool only converts admit errors to typed [`ToolError`] variants.
@@ -26,6 +27,7 @@ use crate::error::ToolError;
 use crate::runtime::subagent::{SpawnError, TaskId, TaskStatus};
 use crate::tools::{PromptPolicy, Tool};
 use crate::types::permission::PermissionRequest;
+use crate::types::session::SessionId;
 
 /// Driver hook the server crate installs at boot. Given a resolved
 /// spawn plan + `task_id`, it kicks off a nested
@@ -44,7 +46,9 @@ pub trait SubagentSpawner: Send + Sync + 'static {
         ctx: &ToolCtx,
         subagent_type: &str,
         objective: &str,
-    ) -> Result<TaskId, SpawnError>;
+        scope: Option<&str>,
+        background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError>;
 
     /// Await terminal status for `task_id`. Returns the final output
     /// and accumulated cost (rendered as a 4-decimal USD string).
@@ -52,6 +56,22 @@ pub trait SubagentSpawner: Send + Sync + 'static {
         &self,
         task_id: TaskId,
     ) -> Result<(String, Option<String>, TaskStatus), SpawnError>;
+
+    /// Wait for the original foreground invocation. Implementations may return
+    /// a running acknowledgement when the TUI atomically backgrounds that
+    /// invocation; explicit resume/poll callers keep using `await_completion`.
+    async fn await_foreground_completion(
+        &self,
+        task_id: TaskId,
+    ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
+        self.await_completion(task_id).await
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpawnedSubagent {
+    pub task_id: TaskId,
+    pub child_session_id: SessionId,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -66,8 +86,9 @@ pub struct SubagentTaskInput {
     /// Currently passed through unchanged for the subagent's prompt.
     #[serde(default)]
     pub scope: Option<String>,
-    /// `true` returns immediately with `{task_id, status: "running"}`;
-    /// the caller polls via `task_status`. Default = false (sync).
+    /// `true` returns immediately with `{task_id, child_session_id,
+    /// status: "running"}` and schedules typed completion delivery. Default
+    /// = false (foreground join).
     #[serde(default)]
     pub background: bool,
     /// Resume marker — the model can submit the previously-issued
@@ -81,6 +102,8 @@ pub struct SubagentTaskInput {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct SubagentTaskOutput {
     pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_session_id: Option<String>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
@@ -120,10 +143,7 @@ impl Tool for SubagentTaskTool {
          background=true to run async and poll via task_status. Bounded by per-session depth + quota."
     }
     fn parallel_safe(&self) -> bool {
-        // Background mode could in theory parallelize, but sync mode
-        // blocks the caller — keep serial to make the doom-guard
-        // bookkeeping deterministic.
-        false
+        true
     }
     fn prompt_policy(&self) -> PromptPolicy {
         PromptPolicy::ContinueOnAsk
@@ -146,6 +166,10 @@ impl Tool for SubagentTaskTool {
             if input.background {
                 return Ok(SubagentTaskOutput {
                     task_id: existing.to_string(),
+                    child_session_id: ctx
+                        .task_registry
+                        .child_session(id)
+                        .map(|session| session.to_string()),
                     status: "running".into(),
                     output: None,
                     cost_usd: None,
@@ -158,6 +182,10 @@ impl Tool for SubagentTaskTool {
                 .map_err(map_spawn_err)?;
             return Ok(SubagentTaskOutput {
                 task_id: existing.to_string(),
+                child_session_id: ctx
+                    .task_registry
+                    .child_session(id)
+                    .map(|session| session.to_string()),
                 status: status.label().to_string(),
                 output: Some(output),
                 cost_usd: cost,
@@ -168,15 +196,22 @@ impl Tool for SubagentTaskTool {
         // agent. An explicit type is passed through unchanged and validated by
         // the spawner; unknown names never silently become another agent.
         let subagent_type = input.subagent_type.as_deref().unwrap_or("general");
-        let task_id = self
+        let spawned = self
             .spawner
-            .spawn(&ctx, subagent_type, &input.objective)
+            .spawn(
+                &ctx,
+                subagent_type,
+                &input.objective,
+                input.scope.as_deref(),
+                input.background,
+            )
             .await
             .map_err(map_spawn_err)?;
 
         if input.background {
             return Ok(SubagentTaskOutput {
-                task_id: task_id.0.to_string(),
+                task_id: spawned.task_id.0.to_string(),
+                child_session_id: Some(spawned.child_session_id.to_string()),
                 status: "running".into(),
                 output: None,
                 cost_usd: None,
@@ -185,11 +220,12 @@ impl Tool for SubagentTaskTool {
 
         let (output, cost, status) = self
             .spawner
-            .await_completion(task_id)
+            .await_foreground_completion(spawned.task_id)
             .await
             .map_err(map_spawn_err)?;
         Ok(SubagentTaskOutput {
-            task_id: task_id.0.to_string(),
+            task_id: spawned.task_id.0.to_string(),
+            child_session_id: Some(spawned.child_session_id.to_string()),
             status: status.label().to_string(),
             output: Some(output),
             cost_usd: cost,

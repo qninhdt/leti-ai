@@ -36,7 +36,9 @@ pub use auth::{
     AuthError, AuthLayer, AuthPrincipal, Authenticator, LocalDevAuthenticator, PrincipalType,
 };
 pub use error::AppError;
-pub use injected_turn::{enqueue_or_start_turn, wrap_untrusted};
+pub use injected_turn::{
+    enqueue_or_start_turn, recover_background_task_deliveries, wrap_untrusted,
+};
 pub use middleware::{WORKSPACE_HEADER, WorkspaceRoutingLayer};
 pub use router::RouterBuilder;
 pub use subagent_spawner::RuntimeSubagentSpawner;

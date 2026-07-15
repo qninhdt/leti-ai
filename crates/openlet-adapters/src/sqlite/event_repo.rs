@@ -100,19 +100,37 @@ impl SqliteEventRepo {
         after_id: i64,
     ) -> Result<Vec<(i64, AgentEvent)>, EventError> {
         self.check_cursor_in_window(after_id).await?;
-        let rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"SELECT id, payload FROM events
-               WHERE session_id = ? AND id > ?
-               ORDER BY id ASC
-               LIMIT ?"#,
-        )
-        .bind(session_id.to_string())
-        .bind(after_id)
-        .bind(REPLAY_PAGE_LIMIT)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_io)?;
-
+        let tip: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM events")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_io)?;
+        let Some(tip) = tip else {
+            return Ok(Vec::new());
+        };
+        let mut cursor = after_id;
+        let mut rows = Vec::new();
+        loop {
+            let page: Vec<(i64, String)> = sqlx::query_as(
+                r#"SELECT id, payload FROM events
+                   WHERE session_id = ? AND id > ? AND id <= ?
+                   ORDER BY id ASC LIMIT ?"#,
+            )
+            .bind(session_id.to_string())
+            .bind(cursor)
+            .bind(tip)
+            .bind(REPLAY_PAGE_LIMIT)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_io)?;
+            let count = page.len();
+            if let Some((id, _)) = page.last() {
+                cursor = *id;
+            }
+            rows.extend(page);
+            if count < REPLAY_PAGE_LIMIT as usize {
+                break;
+            }
+        }
         decode_rows(rows)
     }
 
@@ -124,18 +142,36 @@ impl SqliteEventRepo {
         after_id: i64,
     ) -> Result<Vec<(i64, AgentEvent)>, EventError> {
         self.check_cursor_in_window(after_id).await?;
-        let rows: Vec<(i64, String)> = sqlx::query_as(
-            r#"SELECT id, payload FROM events
-               WHERE id > ?
-               ORDER BY id ASC
-               LIMIT ?"#,
-        )
-        .bind(after_id)
-        .bind(REPLAY_PAGE_LIMIT)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_io)?;
-
+        let tip: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM events")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_io)?;
+        let Some(tip) = tip else {
+            return Ok(Vec::new());
+        };
+        let mut cursor = after_id;
+        let mut rows = Vec::new();
+        loop {
+            let page: Vec<(i64, String)> = sqlx::query_as(
+                r#"SELECT id, payload FROM events
+                   WHERE id > ? AND id <= ?
+                   ORDER BY id ASC LIMIT ?"#,
+            )
+            .bind(cursor)
+            .bind(tip)
+            .bind(REPLAY_PAGE_LIMIT)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_io)?;
+            let count = page.len();
+            if let Some((id, _)) = page.last() {
+                cursor = *id;
+            }
+            rows.extend(page);
+            if count < REPLAY_PAGE_LIMIT as usize {
+                break;
+            }
+        }
         decode_rows(rows)
     }
 }

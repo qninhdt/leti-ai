@@ -15,8 +15,8 @@ use rust_decimal::Decimal;
 
 use super::task_types::{
     DEFAULT_MAX_INBOX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_MESSAGE_BYTES,
-    DEFAULT_MAX_PER_SESSION, HandleName, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle,
-    TaskId, TaskSnapshot, TaskStatus,
+    DEFAULT_MAX_PER_SESSION, DeliveryOwnership, HandleName, MAX_OUTPUT_BYTES, RosterEntry,
+    SpawnError, TaskHandle, TaskId, TaskSnapshot, TaskStatus,
 };
 use crate::types::session::SessionId;
 
@@ -54,6 +54,9 @@ pub struct TaskRegistry {
     /// still returns the real result instead of a spurious "vanished".
     /// Bounded ring — see [`TerminalCache`].
     terminal: Arc<Mutex<TerminalCache>>,
+    /// Live task-to-child-session association, published before the driver
+    /// starts so callers can navigate a foreground child while it is running.
+    child_sessions: Arc<DashMap<TaskId, SessionId>>,
     max_per_session: usize,
     /// CUMULATIVE spawn counter per ROOT session — distinct from the
     /// concurrency counter (`session_descendants`, which decrements on
@@ -104,6 +107,17 @@ struct TerminalCache {
 /// finalize) while bounding memory on a busy server.
 const TERMINAL_CACHE_CAP: usize = 1024;
 
+/// Result of trying to hand a running foreground task to the background
+/// delivery path. This is deliberately separate from `TaskStatus`: a task can
+/// still be running while its output owner has changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundTransition {
+    Backgrounded,
+    AlreadyBackground,
+    AlreadyTerminal,
+    NotFound,
+}
+
 impl TerminalCache {
     fn insert(&mut self, id: TaskId, snap: TaskSnapshot) {
         if self.map.insert(id, snap).is_none() {
@@ -143,6 +157,7 @@ impl TaskRegistry {
             session_descendants: Arc::new(DashMap::new()),
             lifetime_spawns: Arc::new(DashMap::new()),
             terminal: Arc::new(Mutex::new(TerminalCache::default())),
+            child_sessions: Arc::new(DashMap::new()),
             max_per_session,
             max_lifetime_spawns,
             roster: Arc::new(DashMap::new()),
@@ -258,6 +273,15 @@ impl TaskRegistry {
         self.tasks.insert(id, handle);
     }
 
+    pub fn link_child(&self, id: TaskId, child_session_id: SessionId) {
+        self.child_sessions.insert(id, child_session_id);
+    }
+
+    #[must_use]
+    pub fn child_session(&self, id: TaskId) -> Option<SessionId> {
+        self.child_sessions.get(&id).map(|session| *session)
+    }
+
     /// Drop a finished task from the live map and decrement its root's
     /// quota counter. Called explicitly by the subagent driver at the tail
     /// of its lifecycle (after the re-arm loop settles). NOTE: this is an
@@ -293,6 +317,81 @@ impl TaskRegistry {
         })
     }
 
+    /// Atomically transfer terminal-output ownership from a foreground waiter
+    /// to the durable background outbox. A settlement racing this operation
+    /// wins by changing the same CAS word to a terminal state; in that case
+    /// foreground remains the sole owner of the original tool result.
+    pub fn background_task(
+        &self,
+        id: TaskId,
+        parent_session_id: SessionId,
+    ) -> BackgroundTransition {
+        let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
+            return if self.terminal.lock().unwrap().get(id).is_some() {
+                BackgroundTransition::AlreadyTerminal
+            } else {
+                BackgroundTransition::NotFound
+            };
+        };
+        if handle.parent_session_id != parent_session_id {
+            return BackgroundTransition::NotFound;
+        }
+        match handle.delivery.compare_exchange(
+            DeliveryOwnership::ForegroundWaiting.as_u8(),
+            DeliveryOwnership::Background.as_u8(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // Wake a foreground `await_completion` so its blocked tool
+                // call returns its running acknowledgement immediately.
+                handle.finished.notify_waiters();
+                BackgroundTransition::Backgrounded
+            }
+            Err(value) => match DeliveryOwnership::from_u8(value) {
+                DeliveryOwnership::Background => BackgroundTransition::AlreadyBackground,
+                DeliveryOwnership::TerminalForeground | DeliveryOwnership::TerminalBackground => {
+                    BackgroundTransition::AlreadyTerminal
+                }
+                DeliveryOwnership::ForegroundWaiting => unreachable!("CAS returned expected value"),
+            },
+        }
+    }
+
+    /// Resolve which path owns settlement. Must run before publishing any
+    /// terminal side effect, while the task handle is still live.
+    #[must_use]
+    pub fn settle_delivery(&self, id: TaskId) -> Option<DeliveryOwnership> {
+        let handle = self.tasks.get(&id).map(|h| h.clone())?;
+        loop {
+            let current = DeliveryOwnership::from_u8(handle.delivery.load(Ordering::Acquire));
+            let terminal = match current {
+                DeliveryOwnership::ForegroundWaiting => DeliveryOwnership::TerminalForeground,
+                DeliveryOwnership::Background => DeliveryOwnership::TerminalBackground,
+                terminal => return Some(terminal),
+            };
+            if handle
+                .delivery
+                .compare_exchange(
+                    current.as_u8(),
+                    terminal.as_u8(),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                return Some(terminal);
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn delivery_ownership(&self, id: TaskId) -> Option<DeliveryOwnership> {
+        self.tasks
+            .get(&id)
+            .map(|handle| DeliveryOwnership::from_u8(handle.delivery.load(Ordering::Acquire)))
+    }
+
     /// Trip the cancellation token for `id`. Idempotent.
     pub fn cancel(&self, id: TaskId) {
         if let Some(handle) = self.tasks.get(&id) {
@@ -310,9 +409,24 @@ impl TaskRegistry {
         }
     }
 
-    /// Park until task `id` finishes (status becomes terminal). Returns
-    /// `None` if the task id was never installed or was already removed.
+    /// Park until task `id` finishes, regardless of its output owner.
+    /// Used by explicit inspection/resume paths, which must observe the real
+    /// terminal state even for tasks that were backgrounded at spawn.
     pub async fn await_completion(&self, id: TaskId) -> Option<TaskSnapshot> {
+        self.await_with_delivery(id, false).await
+    }
+
+    /// Wait for a foreground tool call, but return a running acknowledgement
+    /// if the TUI hands its output ownership to the background outbox.
+    pub async fn await_foreground_completion(&self, id: TaskId) -> Option<TaskSnapshot> {
+        self.await_with_delivery(id, true).await
+    }
+
+    async fn await_with_delivery(
+        &self,
+        id: TaskId,
+        acknowledge_background: bool,
+    ) -> Option<TaskSnapshot> {
         let Some(handle) = self.tasks.get(&id).map(|h| h.clone()) else {
             // Lost the race: the driver already finalized (removed the
             // live entry) before we looked it up. The terminal snapshot
@@ -329,6 +443,20 @@ impl TaskRegistry {
             notified.as_mut().enable();
             {
                 let s = handle.status.read().await;
+                if acknowledge_background
+                    && matches!(
+                        DeliveryOwnership::from_u8(handle.delivery.load(Ordering::Acquire)),
+                        DeliveryOwnership::Background | DeliveryOwnership::TerminalBackground
+                    )
+                {
+                    return Some(TaskSnapshot {
+                        task_id: id,
+                        status: TaskStatus::Running,
+                        output: String::new(),
+                        cost_usd: Decimal::ZERO,
+                        finished: false,
+                    });
+                }
                 if s.is_terminal() {
                     let status = s.clone();
                     drop(s);
@@ -412,31 +540,6 @@ impl TaskRegistry {
         self.tasks
             .get(&id)
             .map(|h| h.claim_settle())
-            .unwrap_or(false)
-    }
-
-    /// Mark task `id` as promoted (Phase 3): its terminal result will be
-    /// re-injected into the parent session via `ParentInjector` instead of
-    /// surfaced only through a `task_status` poll. Returns `true` if the
-    /// task exists and was marked (idempotent — a second call still returns
-    /// `true`), `false` if the task id is unknown / already finalized.
-    pub fn mark_promoted(&self, id: TaskId) -> bool {
-        self.tasks
-            .get(&id)
-            .map(|h| {
-                h.mark_promoted();
-                true
-            })
-            .unwrap_or(false)
-    }
-
-    /// `true` if task `id` is live and has been promoted. A finalized /
-    /// unknown task returns `false`.
-    #[must_use]
-    pub fn is_promoted(&self, id: TaskId) -> bool {
-        self.tasks
-            .get(&id)
-            .map(|h| h.is_promoted())
             .unwrap_or(false)
     }
 

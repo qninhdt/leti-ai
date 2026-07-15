@@ -2,7 +2,7 @@
 //!
 //! Triggered at the top of each `run_loop` iteration when projected token
 //! count exceeds `agent.context_window * agent.compaction_threshold`. A
-//! synthetic user message asks the model to summarize older messages; the
+//! typed control part supplies a model-only summarization request; the
 //! resulting assistant text is stored as `Part::Compaction` and the
 //! projection layer substitutes it for the listed `compacted_message_ids`.
 //!
@@ -24,13 +24,13 @@ use crate::projection::LlmMessage;
 use crate::runtime::persist::{append_message_with_event, append_part_with_event};
 use crate::runtime::token_estimate::estimate_conversation_tokens;
 use crate::types::message::{Message, MessageId, Role};
-use crate::types::part::{Part, PartId};
+use crate::types::part::{CompactionAttemptState, Part, PartId};
 use crate::types::session::SessionId;
 
 /// Number of most-recent messages preserved verbatim (never compacted).
 pub const PRESERVE_RECENT: usize = 4;
 
-/// Synthetic user prompt asking the model to summarize older messages.
+/// Model-only prompt asking the model to summarize older messages.
 /// Phrased to preserve goal/decisions/files while dropping tool-output
 /// bodies.
 ///
@@ -101,26 +101,30 @@ pub fn should_compact(
     CompactDecision::Run { keep }
 }
 
-/// Persist a synthetic user message asking for compaction. Marked as
-/// `synthetic` via the message metadata path once that exists; today we
-/// just append a plain user message — the COMPACTION_REQUEST text is
-/// distinctive enough to be filterable.
+/// Persist a typed compaction boundary. Request wording is injected only by
+/// `prepare_compaction_session_messages` for the one explicit model call.
 pub async fn append_synthetic_request(
     memory: &Arc<dyn MemoryStore>,
     events: &Arc<dyn EventSink>,
     session_id: SessionId,
-) -> Result<MessageId, CoreError> {
+) -> Result<(MessageId, PartId), CoreError> {
     let mid = append_message_with_event(memory, events, session_id, Role::User).await?;
-    let part = Part::Text {
-        id: PartId::new(),
-        text: COMPACTION_REQUEST.to_owned(),
-    };
-    memory.append_part(mid, part).await?;
-    Ok(mid)
+    let id = PartId::new();
+    memory
+        .append_part(
+            mid,
+            Part::CompactionRequest {
+                id,
+                state: CompactionAttemptState::Pending,
+                summary_message_id: None,
+            },
+        )
+        .await?;
+    Ok((mid, id))
 }
 
 /// Build the projection used for the compaction turn: drop the assistant
-/// reasoning, append a synthetic user turn requesting the summary, and
+/// reasoning, append the model-only request, and
 /// keep only the last `keep` real messages alongside the summarization
 /// instruction. The full message log stays intact in storage; this is the
 /// *projection* the model sees for the compaction call.
@@ -135,7 +139,14 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
         .iter()
         .filter(|m| !matches!(m.role, LlmRole::System))
         .collect();
-    let request = LlmMessage::simple(LlmRole::User, COMPACTION_REQUEST.clone());
+    let request = body
+        .iter()
+        .find_map(|m| (m.content == *COMPACTION_REQUEST).then(|| (*m).clone()))
+        .unwrap_or_else(|| LlmMessage::simple(LlmRole::User, COMPACTION_REQUEST.clone()));
+    let body: Vec<&LlmMessage> = body
+        .into_iter()
+        .filter(|m| m.content != *COMPACTION_REQUEST)
+        .collect();
     if body.len() > keep {
         let split = body.len() - keep;
         for m in &body[..split] {
@@ -143,7 +154,7 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
         }
         // The summarization request goes after the older block so the
         // summarizer has the context above it before the instruction.
-        out.push(request);
+        out.push(request.clone());
         for m in &body[split..] {
             out.push((*m).clone());
         }
@@ -160,19 +171,19 @@ pub fn build_compaction_projection(full: &[LlmMessage], keep: usize) -> Vec<LlmM
     out
 }
 
-/// Persist the compaction summary as a `Part::Compaction` on a freshly
-/// created assistant message. `superseded` lists the message IDs the
-/// summary replaces; the projection layer substitutes the summary in
-/// their place on subsequent turns.
+/// Attach compaction metadata to the assistant message that produced the
+/// summary. Its normal text remains visible in the timeline, while the model
+/// projection substitutes the typed summary for compacted history exactly
+/// once.
 pub async fn append_compaction_part(
     memory: &Arc<dyn MemoryStore>,
     events: &Arc<dyn EventSink>,
     session_id: SessionId,
+    message_id: MessageId,
     summary: String,
     superseded: Vec<MessageId>,
     original_token_count: u32,
 ) -> Result<MessageId, CoreError> {
-    let mid = append_message_with_event(memory, events, session_id, Role::Assistant).await?;
     let part_id = PartId::new();
     let part = Part::Compaction {
         id: part_id,
@@ -183,8 +194,8 @@ pub async fn append_compaction_part(
             .collect::<Vec<_>>(),
         original_token_count,
     };
-    append_part_with_event(memory, events, session_id, mid, part).await?;
-    Ok(mid)
+    append_part_with_event(memory, events, session_id, message_id, part).await?;
+    Ok(message_id)
 }
 
 /// Identify the message IDs that a compaction would supersede. Drops the

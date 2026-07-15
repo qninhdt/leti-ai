@@ -218,7 +218,9 @@ impl openlet_core::tools::builtins::subagent_task::SubagentSpawner for StubSubag
         _ctx: &openlet_core::adapters::tool_executor::ToolCtx,
         _subagent_type: &str,
         _objective: &str,
-    ) -> Result<TaskId, SpawnError> {
+        _scope: Option<&str>,
+        _background: bool,
+    ) -> Result<openlet_core::tools::builtins::subagent_task::SpawnedSubagent, SpawnError> {
         Err(SpawnError::Internal("stub spawner".into()))
     }
     async fn await_completion(

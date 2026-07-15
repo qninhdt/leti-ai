@@ -84,6 +84,7 @@ impl RouterBuilder {
             .routes(routes!(session::create, session::list))
             .routes(routes!(session::get_one, session::delete))
             .routes(routes!(session::set_mode))
+            .routes(routes!(session::background_task))
             .routes(routes!(cancel::abort));
         self
     }

@@ -16,11 +16,14 @@ use crate::dispatch::{DispatchOutcome, dispatch, publish_fault_if_any};
 use crate::error::CoreError;
 use crate::hooks::io::{CompactionPhase, OnCompactionCtx};
 use crate::types::event::AgentEvent;
+use crate::types::message::MessageId;
+use crate::types::part::{CompactionAttemptState, Part, PartId};
+use crate::types::session::SessionId;
 
 use super::ConversationRuntime;
 use super::TurnInput;
 use super::turn_loop::LoopContext;
-use super::turn_loop_helpers::{collect_assistant_text, project_session_messages};
+use super::turn_loop_helpers::collect_assistant_text;
 
 /// Signal returned by `run_compaction` telling `run_loop` how to proceed
 /// after a compaction step. Hard failures propagate as `Err` instead.
@@ -132,37 +135,46 @@ impl ConversationRuntime {
         }
         // Determine which existing messages will be superseded.
         let messages = memory.list_messages(session_id).await?;
-        let mut superseded = superseded_messages(&messages, keep);
+        let superseded = superseded_messages(&messages, keep);
         let original_tokens = estimate_conversation_tokens(&input.messages) as u32;
-        // Append synthetic user message asking for summary. The synthetic
-        // id is added to `superseded` so the projection substitutes the
+        // Persist a typed request marker. Its message id is added to
+        // `superseded` so the projection substitutes the
         // summary in its place — otherwise the next turn would see the
         // literal "Summarize the conversation history above" prompt it
         // never issued.
-        let synth_id =
+        let (request_message_id, request_part_id) =
             append_synthetic_request(memory, &loop_ctx.handles.events, session_id).await?;
         // Build a one-shot compaction projection and run a turn. The
         // result text becomes Part::Compaction.
         let mut compact_input = input.clone();
-        compact_input.messages = build_compaction_projection(&input.messages, keep);
+        // Reload after persisting the typed marker so compaction uses the
+        // same request-preparation boundary as every normal provider call.
+        let fresh = crate::runtime::request_prep::prepare_compaction_session_messages(
+            &loop_ctx.handles,
+            session_id,
+            loop_ctx.projection_caps,
+            &crate::runtime::compaction::COMPACTION_REQUEST,
+        )
+        .await?;
+        compact_input.messages = build_compaction_projection(&fresh, keep);
         compact_input.tools = Vec::new();
-        // If the compaction turn fails or is cancelled, the synthetic
-        // "Summarize the conversation above" message remains in storage as
-        // a real user turn. Roll it back by superseding it in a no-op
-        // compaction part rather than leaving it visible to subsequent
-        // projections.
+        // A failed or cancelled attempt is marked failed, so the typed
+        // request remains hidden from both the timeline and later projections.
         let outcome = match self.run_turn(compact_input, cancel).await {
             Ok(o) => o,
             Err(e) => {
-                let _ = append_compaction_part(
+                let summary_message_id =
+                    latest_attempt_assistant(memory, session_id, request_message_id).await?;
+                set_compaction_request_state(
                     memory,
                     &loop_ctx.handles.events,
                     session_id,
-                    String::new(),
-                    vec![synth_id],
-                    0,
+                    request_message_id,
+                    request_part_id,
+                    CompactionAttemptState::Failed,
+                    summary_message_id,
                 )
-                .await;
+                .await?;
                 return Err(e);
             }
         };
@@ -174,29 +186,36 @@ impl ConversationRuntime {
         // back the synthetic request and the empty assistant turn, then
         // bubble the failure up so the caller can retry.
         if summary.trim().is_empty() {
-            let _ = append_compaction_part(
+            set_compaction_request_state(
                 memory,
                 &loop_ctx.handles.events,
                 session_id,
-                String::new(),
-                vec![synth_id, outcome.assistant_message_id],
-                0,
+                request_message_id,
+                request_part_id,
+                CompactionAttemptState::Failed,
+                Some(outcome.assistant_message_id.0.to_string()),
             )
-            .await;
+            .await?;
             return Err(CoreError::ContextOverflowAfterCompaction);
         }
-        superseded.push(synth_id);
-        // The compaction-turn's assistant message holds the verbatim
-        // summary as Part::Text; substitute it via the Compaction part on
-        // subsequent projections so the model doesn't see the summary twice.
-        superseded.push(outcome.assistant_message_id);
         let _comp_id = append_compaction_part(
             memory,
             &loop_ctx.handles.events,
             session_id,
+            outcome.assistant_message_id,
             summary,
             superseded,
             original_tokens,
+        )
+        .await?;
+        set_compaction_request_state(
+            memory,
+            &loop_ctx.handles.events,
+            session_id,
+            request_message_id,
+            request_part_id,
+            CompactionAttemptState::Committed,
+            Some(outcome.assistant_message_id.0.to_string()),
         )
         .await?;
         // Compaction committed durably — count it here, after the part is
@@ -204,7 +223,18 @@ impl ConversationRuntime {
         metrics::counter!("openlet_compactions_total").increment(1);
         // Re-project so the next turn sees the summary in place of the
         // compacted messages.
-        input.messages = project_session_messages(memory, session_id).await?;
+        input.messages = crate::runtime::request_prep::prepare_session_messages(
+            &loop_ctx.handles,
+            session_id,
+            loop_ctx.projection_caps,
+            crate::runtime::request_prep::ReminderRequestContext {
+                turn_index: 0,
+                max_turns: loop_ctx.max_steps,
+                actual_input_tokens: None,
+                context_window: Some(agent.context_window),
+            },
+        )
+        .await?;
         // Reset provider-actual anchor — last value referred to the
         // pre-compaction prompt and is now stale.
         *last_actual_tokens = None;
@@ -264,4 +294,56 @@ impl ConversationRuntime {
         }
         Ok(CompactionFlow::Continue)
     }
+}
+
+async fn set_compaction_request_state(
+    memory: &Arc<dyn MemoryStore>,
+    events: &Arc<dyn crate::adapters::event_sink::EventSink>,
+    session_id: SessionId,
+    message_id: MessageId,
+    part_id: PartId,
+    state: CompactionAttemptState,
+    summary_message_id: Option<String>,
+) -> Result<(), CoreError> {
+    memory
+        .upsert_part(
+            message_id,
+            part_id,
+            Part::CompactionRequest {
+                id: part_id,
+                state,
+                summary_message_id,
+            },
+        )
+        .await?;
+    let _ = events
+        .publish(
+            AgentEvent::PartUpdated {
+                session_id,
+                message_id,
+                part_id,
+            },
+            Persistence::Durable,
+        )
+        .await;
+    Ok(())
+}
+
+async fn latest_attempt_assistant(
+    memory: &Arc<dyn MemoryStore>,
+    session_id: SessionId,
+    request_message_id: MessageId,
+) -> Result<Option<String>, CoreError> {
+    let messages = memory.list_messages(session_id).await?;
+    let Some(start) = messages
+        .iter()
+        .position(|message| message.id == request_message_id)
+    else {
+        return Ok(None);
+    };
+    Ok(messages[start + 1..]
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::types::message::Role::Assistant)
+        .map(|message| message.id.0.to_string()))
 }

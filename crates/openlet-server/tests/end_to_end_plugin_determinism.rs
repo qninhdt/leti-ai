@@ -317,6 +317,7 @@ fn stub_task_registry() -> Arc<openlet_core::runtime::subagent::TaskRegistry> {
 
 fn stub_spawner() -> Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner> {
     use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus};
+    use openlet_core::tools::builtins::subagent_task::SpawnedSubagent;
 
     struct StubSpawner;
 
@@ -327,7 +328,9 @@ fn stub_spawner() -> Arc<dyn openlet_core::tools::builtins::subagent_task::Subag
             _ctx: &ToolCtx,
             _subagent_type: &str,
             _objective: &str,
-        ) -> Result<TaskId, SpawnError> {
+            _scope: Option<&str>,
+            _background: bool,
+        ) -> Result<SpawnedSubagent, SpawnError> {
             Err(SpawnError::Internal("stub".into()))
         }
         async fn await_completion(

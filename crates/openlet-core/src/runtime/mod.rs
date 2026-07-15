@@ -18,6 +18,8 @@ pub(crate) mod persist;
 pub mod processor;
 pub mod prompt;
 pub mod question_registry;
+pub mod reminders;
+pub mod request_prep;
 pub mod retry;
 pub mod subagent;
 pub mod token_estimate;
@@ -37,6 +39,7 @@ pub use handles::RuntimeHandles;
 pub use processor::{Processor, ProcessorEvent, ProcessorPart, ProcessorState};
 pub use prompt::{compose_system_prompt, select_provider_prompt};
 pub use question_registry::{CancelReason, QuestionId, QuestionRegistry, ResolveError};
+pub use request_prep::{ReminderRequestContext, prepare_session_messages};
 pub use retry::RetryConfig;
 pub use token_estimate::{
     CHARS_PER_TOKEN, anchored_estimate, estimate_conversation_tokens, estimate_message_tokens,

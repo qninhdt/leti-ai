@@ -274,8 +274,13 @@ fn attachment_accepted_converts() {
 fn subagent_spawned_converts() {
     let ev = AgentEvent::SubagentSpawned {
         task_id: Uuid::nil(),
+        tool_call_id: "call-1".into(),
+        child_session_id: sid(),
         parent_session_id: sid(),
         subagent_type: "researcher".into(),
+        objective: "research".into(),
+        description: None,
+        background: false,
     };
     let _dto: EventDto = ev.into();
 }
@@ -294,18 +299,10 @@ fn subagent_progress_converts() {
 fn subagent_settled_converts() {
     let ev = AgentEvent::SubagentSettled {
         task_id: Uuid::nil(),
+        child_session_id: sid(),
         parent_session_id: sid(),
-        output: "final answer".into(),
+        status: "finished".into(),
         cost_usd: Some("0.05".into()),
-    };
-    let _dto: EventDto = ev.into();
-}
-
-#[test]
-fn subagent_promoted_converts() {
-    let ev = AgentEvent::SubagentPromoted {
-        task_id: Uuid::nil(),
-        parent_session_id: sid(),
     };
     let _dto: EventDto = ev.into();
 }

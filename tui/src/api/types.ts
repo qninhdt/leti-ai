@@ -36,6 +36,7 @@ export interface AgentDto {
 export interface SessionDto {
   id: string;
   agent_id: string;
+  parent_session_id?: string | null;
   status: SessionStatus;
   permission_mode: PermissionMode;
   created_at: string;
@@ -46,7 +47,7 @@ export interface SessionDto {
 export interface PartDto {
   id: string;
   message_id: string;
-  kind: "text" | "reasoning" | "tool_call" | "tool_result" | "step_finish" | "compaction";
+  kind: "text" | "reasoning" | "tool_call" | "tool_result" | "step_finish" | "compaction" | "runtime_reminder";
   text?: string;
   tool_name?: string;
   tool_args?: unknown;
@@ -59,6 +60,21 @@ export interface PartDto {
   // Present only on kind:"compaction" — the token count that was summarized
   // away, shown on the transcript divider so the user sees the boundary.
   original_token_count?: number;
+  // Present only on kind:"runtime_reminder" — harness-authored context that
+  // projects to the model but must NEVER render as a human user bubble.
+  // `kind` above is the Part discriminator; `reminder_kind` is the closed
+  // ReminderKind provenance tag (execution_constraint, task_state, etc.).
+  reminder_kind?:
+    | "execution_constraint"
+    | "task_state"
+    | "workspace_delta"
+    | "background_task_settled"
+    | "compaction_recovery"
+    | "runtime_limit"
+    | "exceptional_outcome";
+  stable_key?: string;
+  content?: string;
+  projection_epoch?: number;
 }
 
 export interface MessageDto {
@@ -85,7 +101,23 @@ export type ServerPartDto =
   | { kind: "step_start"; id: string }
   | { kind: "step_finish"; id: string; reason: string }
   | { kind: "compaction"; id: string; summary: string; compacted_message_ids: string[]; original_token_count: number }
-  | { kind: "plan"; id: string; plan: string };
+  | { kind: "compaction_request"; id: string; state: "pending" | "committed" | "failed"; summary_message_id?: string }
+  | { kind: "plan"; id: string; plan: string }
+  | {
+      kind: "runtime_reminder";
+      id: string;
+      reminder_kind:
+        | "execution_constraint"
+        | "task_state"
+        | "workspace_delta"
+        | "background_task_settled"
+        | "compaction_recovery"
+        | "runtime_limit"
+        | "exceptional_outcome";
+      stable_key: string;
+      content: string;
+      projection_epoch: number;
+    };
 
 export interface ServerMessageDto {
   id: string;
@@ -160,6 +192,11 @@ export interface AbortAckDto {
   ok: true;
 }
 
+export interface BackgroundTaskAckDto {
+  task_id: string;
+  status: string;
+}
+
 export interface CompactAckDto {
   compacted: boolean;
 }
@@ -230,17 +267,27 @@ export type EventDto =
   | { kind: "plan_mode_entered"; session_id: string; at: string }
   | { kind: "plan_mode_exited"; session_id: string; plan: string; at: string }
   // Subagent frames (Phases 2-4). Names match the Phase-2 rename
-  // (spawned/progress/settled), plus promoted (Phase 3) and message/roster
+  // (spawned/progress/settled), plus message/roster
   // (Phase 4). `parent_session_id` routes each to the parent's per-session
   // stream; `subagent.roster` carries `root_session_id` instead.
-  | { kind: "subagent_spawned"; task_id: string; parent_session_id: string; subagent_type: string }
+  | {
+      kind: "subagent_spawned";
+      task_id: string;
+      tool_call_id: string;
+      child_session_id: string;
+      parent_session_id: string;
+      subagent_type: string;
+      objective: string;
+      description?: string | null;
+      background: boolean;
+    }
   | { kind: "subagent_progress"; task_id: string; parent_session_id: string; delta: string }
-  | { kind: "subagent_promoted"; task_id: string; parent_session_id: string }
   | {
       kind: "subagent_settled";
       task_id: string;
+      child_session_id: string;
       parent_session_id: string;
-      output: string;
+      status: string;
       cost_usd?: string | null;
     }
   | {
@@ -274,4 +321,9 @@ export type EventName =
   | "plan_mode.exited"
   | "error"
   | "heartbeat"
-  | "plugin.error";
+  | "plugin.error"
+  | "subagent.spawned"
+  | "subagent.progress"
+  | "subagent.settled"
+  | "subagent.message"
+  | "subagent.roster";

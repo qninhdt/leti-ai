@@ -6,6 +6,7 @@
 
 import type {
   AbortAckDto,
+  BackgroundTaskAckDto,
   AgentDto,
   CompactAckDto,
   CreateMessageDto,
@@ -48,6 +49,7 @@ export interface OpenletClient {
   promptAsync(sessionId: string, body: CreateMessageDto): Promise<PromptAckDto>;
   listMessages(sessionId: string): Promise<ServerMessageDto[]>;
   abort(sessionId: string): Promise<AbortAckDto>;
+  backgroundTask(sessionId: string, taskId: string): Promise<BackgroundTaskAckDto>;
   compact(sessionId: string): Promise<CompactAckDto>;
   setMode(sessionId: string, body: SetModeDto): Promise<SessionDto>;
   replyPermission(askId: string, body: PermissionReplyDto): Promise<{ ok: true }>;
@@ -101,6 +103,7 @@ export function createClient(config: ClientConfig): OpenletClient {
     promptAsync: (id, body) => request("POST", `/v1/session/${id}/prompt_async`, body),
     listMessages: (id) => request("GET", `/v1/session/${id}/messages`),
     abort: (id) => request("POST", `/v1/session/${id}/abort`),
+    backgroundTask: (sessionId, taskId) => request("POST", `/v1/session/${sessionId}/task/${taskId}/background`),
     compact: (id) => request("POST", `/v1/session/${id}/compact`),
     setMode: (id, body) => request("POST", `/v1/session/${id}/mode`, body),
     replyPermission: (askId, body) => request("POST", `/v1/permission/${askId}`, body),

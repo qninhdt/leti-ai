@@ -66,7 +66,7 @@ pub fn tool_ctx_with(
 }
 
 /// Like [`minimal_tool_ctx`] but with a caller-supplied task registry, so
-/// a test can install tasks and then exercise a tool (`promote_task`,
+/// a test can install tasks and then exercise a tool,
 /// `task_status`) that reads the SAME registry via `ctx.task_registry`.
 #[must_use]
 pub fn minimal_tool_ctx_with_registry(task_registry: Arc<TaskRegistry>) -> ToolCtx {

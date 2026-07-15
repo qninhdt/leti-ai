@@ -246,6 +246,27 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     // as `set_runtime` — idempotent, fires once at boot.
     core_api_impl.set_active_turns(state.active_turns.clone());
 
+    // Claim durable background completions ready for delivery. Leased rows
+    // remain owned until their heartbeat stops and their TTL expires.
+    openlet_server::recover_background_task_deliveries(&state)
+        .await
+        .context("recovering pending background task deliveries")?;
+
+    // Retry pending or expired deliveries. Each live parent turn renews only
+    // its own lease, so one server cannot extend an abandoned worker's row.
+    let delivery_reconciler_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            if let Err(error) =
+                openlet_server::recover_background_task_deliveries(&delivery_reconciler_state).await
+            {
+                tracing::error!(error = %error, "failed to reconcile background task deliveries");
+            }
+        }
+    });
+
     // Resolve the inbound authenticator from the runtime profile. Local
     // profile → dev authenticator (admits a fixed principal, no auth
     // server). Cloud profile → fail-closed: openlet-ai ships no real

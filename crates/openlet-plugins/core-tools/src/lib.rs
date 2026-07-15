@@ -23,8 +23,8 @@ use openlet_core::tools::builtins::python::PythonExecutor;
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
 use openlet_core::tools::builtins::{
     AskUserTool, BashTool, EditTool, EnterPlanModeTool, ExitPlanModeTool, GlobTool, GrepTool,
-    ListTool, PromoteTaskTool, PythonTool, ReadTool, SendMessageTool, SubagentTaskTool,
-    TaskStatusTool, TodoTool, WriteTool,
+    ListTool, PythonTool, ReadTool, SendMessageTool, SubagentTaskTool, TaskStatusTool, TodoTool,
+    WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -130,7 +130,6 @@ impl Plugin for CoreToolsPlugin {
         ctx.register_tool(erase(ExitPlanModeTool::new(self.memory.clone())))?;
         ctx.register_tool(erase(SubagentTaskTool::new(self.spawner.clone())))?;
         ctx.register_tool(erase(TaskStatusTool::new(self.task_registry.clone())))?;
-        ctx.register_tool(erase(PromoteTaskTool::new(self.task_registry.clone())))?;
         ctx.register_tool(erase(SendMessageTool::new(self.task_registry.clone())))?;
         Ok(())
     }

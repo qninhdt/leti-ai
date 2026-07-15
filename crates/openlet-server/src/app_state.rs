@@ -32,18 +32,20 @@ use tokio_util::sync::CancellationToken;
 /// Origin of a turn — determines role framing + permission policy when
 /// the turn is projected and driven. A `User` turn is the normal
 /// interactive prompt (trusted, human attached, `Ask` prompts the user).
-/// Non-`User` origins are AUTONOMOUS injected turns (Phase 3 promotion
-/// results, Phase 4 sibling messages): their body is rendered as
+/// Non-`User` origins are AUTONOMOUS turns (background-settlement wakes and
+/// sibling messages): their body is rendered as
 /// UNTRUSTED data (never authoritative instructions) and any `Ask`
 /// permission decision fail-closes to `Deny` because no human is attached.
 #[derive(Clone, Debug)]
 pub enum TurnOrigin {
     /// Interactive user prompt. Trusted; `Ask` prompts the human.
     User,
-    /// A promoted subagent's result re-injected into the parent session
-    /// (Phase 3). Carries the originating task id for provenance framing.
-    InjectedResult {
+    /// A background task settlement. The durable typed reminder is already
+    /// persisted; the autonomous turn only wakes the parent model.
+    BackgroundTaskSettled {
         task_id: openlet_core::runtime::subagent::TaskId,
+        delivery_lease_id: String,
+        delivery_renewal: CancellationToken,
     },
     /// A message from a sibling subagent (Phase 4). Carries the sender's
     /// unique handle name for provenance framing.

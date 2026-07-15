@@ -14,8 +14,9 @@ use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::runtime::subagent::{SpawnError, TaskId, TaskStatus};
 use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::subagent_task::{
-    SubagentSpawner, SubagentTaskInput, SubagentTaskTool,
+    SpawnedSubagent, SubagentSpawner, SubagentTaskInput, SubagentTaskTool,
 };
+use openlet_core::types::session::SessionId;
 
 mod common;
 use common::tool_ctx::minimal_tool_ctx;
@@ -56,7 +57,9 @@ impl SubagentSpawner for StubSpawner {
         _ctx: &ToolCtx,
         subagent_type: &str,
         _objective: &str,
-    ) -> Result<TaskId, SpawnError> {
+        _scope: Option<&str>,
+        _background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError> {
         self.spawn_calls.fetch_add(1, Ordering::SeqCst);
         self.spawned_types
             .lock()
@@ -86,7 +89,10 @@ impl SubagentSpawner for StubSpawner {
                 })
             }
             Some(SpawnError::MessageRejected(s)) => Err(SpawnError::MessageRejected(s.clone())),
-            None => Ok(self.fixed_id),
+            None => Ok(SpawnedSubagent {
+                task_id: self.fixed_id,
+                child_session_id: SessionId::new(),
+            }),
         }
     }
 

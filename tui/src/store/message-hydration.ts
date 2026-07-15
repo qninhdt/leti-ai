@@ -44,15 +44,29 @@ export function serverPartToView(p: ServerPartDto): PartView | null {
     }
     case "plan":
       return { ...base(p.id), kind: "text", text: p.plan };
-    case "compaction":
-      // Surface the compaction marker so the transcript shows a boundary
-      // divider instead of silently dropping the superseded turns. The
-      // summary body itself isn't rendered inline (the model sees it via the
-      // projection); the divider only reports the folded token count.
+    case "compaction_request":
+      // Failed attempts are durable audit records only. They must not leave
+      // a false compaction divider in the human timeline after cancellation
+      // or an empty/erroring summarization turn.
+      if (p.state === "failed") return null;
+      // The typed request is the timeline divider; it has no human text.
       return {
         ...base(p.id),
         kind: "compaction",
-        original_token_count: p.original_token_count,
+        original_token_count: 0,
+      };
+    case "compaction":
+      // The paired assistant text is the visible summary. Metadata affects
+      // model projection only and must not create a second timeline row.
+      return null;
+    case "runtime_reminder":
+      return {
+        ...base(p.id),
+        kind: "runtime_reminder",
+        reminder_kind: p.reminder_kind,
+        stable_key: p.stable_key,
+        content: p.content,
+        projection_epoch: p.projection_epoch,
       };
     // step_start / step_finish / image / document carry no inline body here —
     // step_finish drives the footer via the step_finished SSE event, images
@@ -120,23 +134,12 @@ function isStreaming(m: MessageView): boolean {
   return m.parts.some((p) => p.buffer.length > 0 || p.reasoning_buffer.length > 0);
 }
 
-/// Collect the message ids superseded by a compaction. `GET /messages` returns
-/// the RAW append-only log, which includes the synthetic "Summarize…" user turn
-/// and the raw summary assistant message that compaction persists — the backend
-/// hides these from the MODEL via the projection layer, but the transcript must
-/// hide them too or they render as stray turns beside the divider. Keyed on the
-/// typed `compacted_message_ids` the marker carries (never text-matched); the
-/// marker's own message is never in its list, so the divider survives the drop.
-function collectSuperseded(server: ServerMessageDto[]): Set<string> {
-  const ids = new Set<string>();
-  for (const m of server) {
-    for (const p of m.parts) {
-      if (p.kind === "compaction") {
-        for (const id of p.compacted_message_ids) ids.add(id);
-      }
-    }
-  }
-  return ids;
+/// A message is "reminder-only" when every one of its parts is a harness-authored
+/// runtime_reminder. Such messages use Role::User on the wire (provider alternation)
+/// but carry NO human-authored content, so they must never render as a user bubble.
+/// Identified by typed provenance (the `runtime_reminder` kind), never by tag text.
+export function isRuntimeReminderOnly(m: Pick<MessageView, "parts">): boolean {
+  return m.parts.length > 0 && m.parts.every((p) => p.kind === "runtime_reminder");
 }
 
 /// Produce the merged message list for a session: server-authoritative folded
@@ -152,12 +155,32 @@ export function hydrateMessages(
   server: ServerMessageDto[],
 ): MessageView[] {
   const storeById = new Map(existing.map((m) => [m.id, m]));
-  // Drop messages a compaction superseded (the synthetic request + raw summary
-  // turn) so they don't render beside the divider. Done before folding so a
-  // superseded assistant message takes its own tool results with it.
-  const superseded = collectSuperseded(server);
-  const visible = server.filter((m) => !superseded.has(m.id));
-  const folded = foldToolResults(visible.map(mapMessage));
+  // Compaction changes model history, not the human timeline: preserve the
+  // raw turns, render the typed request as a divider, and show the generated
+  // assistant summary normally.
+  const failedSummaryIds = new Set<string>();
+  for (const message of server) {
+    for (const part of message.parts) {
+      if (
+        part.kind === "compaction_request" &&
+        part.state === "failed" &&
+        part.summary_message_id
+      ) {
+        failedSummaryIds.add(part.summary_message_id);
+      }
+    }
+  }
+  const folded = foldToolResults(
+    server
+      .filter(
+        (message) =>
+          !failedSummaryIds.has(message.id) &&
+          !message.parts.some(
+            (part) => part.kind === "compaction_request" && part.state === "failed",
+          ),
+      )
+      .map(mapMessage)
+  );
 
   const settled = folded.map((m) => {
     const store = storeById.get(m.id);

@@ -1,7 +1,7 @@
 // Boots the app: parallel-loads agents/plugins/sessions into the store, then
-// opens the SSE stream and routes frames to applyEvent. The SSE connection
-// re-opens when the active session changes (Solid createEffect tracks the
-// accessor), and closes on cleanup.
+// opens one process-lifetime SSE stream and routes frames to applyEvent.
+// Route switches only hydrate the selected transcript; they never interrupt
+// parent/child lifecycle updates.
 
 import { createEffect, onCleanup } from "solid-js";
 
@@ -40,13 +40,19 @@ export function useBootstrap(): void {
   const hydration = createHydrationController(runtime.client);
 
   const activeSessionId = useStoreSelector((s) => s.activeSessionId);
+  // Route switches hydrate the selected transcript but never replace the
+  // process-lifetime SSE connection: parent and child activity continues to
+  // update while either route is visible.
   createEffect(() => {
-    const sessionId = activeSessionId() ?? undefined;
+    const sessionId = activeSessionId();
     // Fetch server-authoritative bodies for the newly active session so its
     // tool calls (name/args/results) render immediately — the SSE stream alone
     // carries only part ids.
     if (sessionId) hydration.refresh(sessionId);
 
+  });
+
+  createEffect(() => {
     // Coalesce the per-token part_delta flood to ~30fps before it hits the
     // store; every other event flushes the buffer first, then applies. The
     // pump is per-connection so its timer is torn down with the stream.
@@ -57,11 +63,13 @@ export function useBootstrap(): void {
 
     const sse = connectSse({
       baseUrl: runtime.baseUrl,
-      sessionId,
       token: runtime.token,
       onEvent: (ev) => {
         pump.push(ev);
         hydration.onEvent(ev);
+        if (ev.kind === "subagent_spawned") {
+          hydration.refresh(ev.child_session_id);
+        }
       },
       onState: (status, detail) => useStore.getState().setConn(status, detail),
     });

@@ -382,8 +382,12 @@ impl openlet_core::tools::builtins::subagent_task::SubagentSpawner for StubSubag
         _ctx: &openlet_core::adapters::tool_executor::ToolCtx,
         _subagent_type: &str,
         _objective: &str,
-    ) -> Result<openlet_core::runtime::subagent::TaskId, openlet_core::runtime::subagent::SpawnError>
-    {
+        _scope: Option<&str>,
+        _background: bool,
+    ) -> Result<
+        openlet_core::tools::builtins::subagent_task::SpawnedSubagent,
+        openlet_core::runtime::subagent::SpawnError,
+    > {
         Err(openlet_core::runtime::subagent::SpawnError::Internal(
             "stub".into(),
         ))

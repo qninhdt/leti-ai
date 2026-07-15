@@ -21,11 +21,11 @@ pub mod task_types;
 
 pub use mention_parser::parse_subagent_mention;
 pub use scoped_permissions::ScopedPermissionManager;
-pub use task_registry::TaskRegistry;
+pub use task_registry::{BackgroundTransition, TaskRegistry};
 pub use task_types::{
-    DEFAULT_MAX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_PER_SESSION, HandleName,
-    InboxMessage, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle, TaskId, TaskSnapshot,
-    TaskStatus,
+    DEFAULT_MAX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_PER_SESSION, DeliveryOwnership,
+    HandleName, InboxMessage, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle, TaskId,
+    TaskSnapshot, TaskStatus,
 };
 
 use std::sync::Arc;
@@ -151,12 +151,16 @@ pub fn plan_subagent_spawn(
         cancel: child_cancel.clone(),
         finished: Arc::new(Notify::new()),
         root_session_id,
+        parent_session_id: parent.id,
+        delivery: Arc::new(std::sync::atomic::AtomicU8::new(
+            DeliveryOwnership::ForegroundWaiting.as_u8(),
+        )),
         settled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        was_promoted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         inbox: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
         inbox_notify: Arc::new(Notify::new()),
     };
     registry.insert(task_id, handle.clone());
+    registry.link_child(task_id, child_id);
 
     // Register the child in the sibling roster under its ROOT session with
     // a unique handle name (auto-suffixed on same-slug collision). The

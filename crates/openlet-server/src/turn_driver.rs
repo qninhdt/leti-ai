@@ -13,18 +13,15 @@
 //! These shared helpers package up the common pieces; each call site
 //! still owns the diverging bits.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use openlet_core::adapters::model_provider::ToolSpec;
 use openlet_core::agent::{AgentDefinition, DynamicSegmentInput};
 use openlet_core::error::CoreError;
-use openlet_core::projection::{LlmMessage, ProjectionCaps, project_for_llm};
+use openlet_core::projection::{LlmMessage, ProjectionCaps};
 use openlet_core::runtime::{LoopContext, RuntimeHandles, TurnInput};
 use openlet_core::types::agent::AgentId;
-use openlet_core::types::message::MessageId;
-use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
 
 use crate::app_state::AppState;
@@ -75,7 +72,14 @@ pub(crate) async fn build_loop_context(
         supports_image_input: provider_caps.supports_vision,
         supports_document_input: provider_caps.supports_document_input,
     };
-    let llm_messages = project_session(state, session_id, projection_caps).await?;
+    let handles = runtime_handles(state, agent.fs.clone(), state.permission.clone());
+    let llm_messages = openlet_core::runtime::prepare_session_messages(
+        &handles,
+        session_id,
+        projection_caps,
+        openlet_core::runtime::ReminderRequestContext::default(),
+    )
+    .await?;
     let tools = tool_specs(state);
     let read_history = state.read_histories.entry(session_id).or_default().clone();
 
@@ -93,10 +97,11 @@ pub(crate) async fn build_loop_context(
 
     let loop_ctx = LoopContext {
         agent_id,
-        handles: runtime_handles(state, agent.fs.clone(), state.permission.clone()),
+        handles,
         read_history,
         mode: session_meta.permission_mode,
         max_steps: MAX_TURN_STEPS,
+        projection_caps,
         agent: agent_def,
     };
 
@@ -144,25 +149,6 @@ pub(crate) fn runtime_handles(
 /// Per-turn step ceiling shared by every turn driver (top-level prompt
 /// loop + nested subagent loop). Caps runaway tool-call cycles.
 pub(crate) const MAX_TURN_STEPS: usize = 50;
-
-/// List a session's messages + parts and project them into LLM-shape.
-///
-/// Centralises the `list_messages` → `parts_by_msg` HashMap →
-/// `project_for_llm` triple every turn driver runs at the top of a
-/// loop.
-pub(crate) async fn project_session(
-    state: &AppState,
-    session_id: SessionId,
-    caps: ProjectionCaps,
-) -> Result<Vec<LlmMessage>, CoreError> {
-    let messages = state.memory.list_messages(session_id).await?;
-    let mut parts_by_msg: HashMap<MessageId, Vec<Part>> = HashMap::with_capacity(messages.len());
-    for m in &messages {
-        let parts = state.memory.list_parts(session_id, m.id).await?;
-        parts_by_msg.insert(m.id, parts);
-    }
-    Ok(project_for_llm(&messages, &parts_by_msg, caps))
-}
 
 /// Materialise the active tool registry as the `Vec<ToolSpec>` shape
 /// the model provider's `chat_stream` consumes. Drops the
@@ -365,7 +351,15 @@ mod compose_prompt_tests {
 
         #[async_trait]
         impl SubagentSpawner for NeverSpawner {
-            async fn spawn(&self, _: &ToolCtx, _: &str, _: &str) -> Result<TaskId, SpawnError> {
+            async fn spawn(
+                &self,
+                _: &ToolCtx,
+                _: &str,
+                _: &str,
+                _: Option<&str>,
+                _: bool,
+            ) -> Result<openlet_core::tools::builtins::subagent_task::SpawnedSubagent, SpawnError>
+            {
                 unreachable!("schema test does not execute the tool")
             }
 

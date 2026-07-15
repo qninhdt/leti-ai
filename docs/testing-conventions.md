@@ -77,6 +77,15 @@ The rule of thumb is **mock the boundary, never the logic under test**.
 - The **mock-LLM e2e layer is the default keyless CI path** — it exercises real transport/sqlite/plugins with deterministic model output.
 - **Never mock a store to dodge a contract** (e.g. sqlite's monotonic `seq`): use the real local adapter — its rich suite is the cloud-impl reference (Phase 7 contract spec).
 - The single permitted real-LLM layer costs money + needs a key; it stays double-gated so keyless CI is green.
+- For runtime controls, assert three views independently: durable typed parts,
+  provider projection, and the TUI view model. In particular, background task
+  output must not appear in lifecycle SSE, and compaction request wording must
+  not be persisted as user text. Cover background outbox replay/idempotency,
+  atomic lease claims and token ownership, acknowledgement only after a
+  successful parent turn, release on parent-turn error, renewal for every live
+  delivery turn, and reconciliation of pending or expired leases. Cover replay
+  backlogs larger than one page and failed compaction markers with partial
+  summaries independently.
 
 ## Time discipline
 - **Virtual time:** prefer `#[tokio::test(start_paused = true)]` + `tokio::time::advance(...)` over real sleeps.
@@ -110,6 +119,12 @@ deterministic spawns; avoid `thread::spawn` from async tests.
 
 `loom` and `shuttle` are not in scope for this phase. They land in a
 follow-up plan.
+
+For a foreground-to-background handoff, test both CAS winner orders. When
+backgrounding wins, the blocked foreground caller receives only a running
+acknowledgement and the durable outbox owns the terminal body; when settlement
+wins, the transition reports already-terminal and the original tool result
+remains the owner.
 
 ## proptest config
 

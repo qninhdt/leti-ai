@@ -126,13 +126,10 @@ tree-sitter = "0.26"
 tree-sitter-bash = "=0.25.1"
 
 # Emulated python interpreter (python tool). Monty is pydantic's
-# agent-oriented Python interpreter: deny-by-default, IO through a single
-# host-callback seam (`OsCall`), resource limits built in. NOT on crates.io
-# (the `monty` name there is a placeholder); pin the git rev so builds are
-# reproducible. Bumping the rev must re-run the security probes in the
-# pyexec integration tests (import socket/subprocess denied, no host disk
-# escape) — a grammar/API bump could otherwise regress the sandbox.
-monty = { git = "https://github.com/pydantic/monty", rev = "4bcbcf5251b3a4a30b22fdfc372e5189adf4b86f" }
+# Agent-oriented Python interpreter: deny-by-default, IO through a single
+# host-callback seam (`OsCall`), resource limits built in. Use the published
+# release so the dependency source remains auditable by the supply-chain gate.
+monty = "=0.0.19-beta.4"
 
 # Prompt templating (Jinja2-style). Pinned exact: 2.0 is a from-scratch
 # rewrite with a different API surface than 1.x; a minor bump could shift

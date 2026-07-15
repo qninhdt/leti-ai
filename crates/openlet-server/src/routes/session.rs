@@ -3,9 +3,10 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use openlet_core::runtime::subagent::{BackgroundTransition, TaskId};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::session::{SessionCapabilities, SessionFilter, SessionId, SessionMeta};
-use openlet_protocol::{CreateSessionDto, SessionDto, SetModeDto};
+use openlet_protocol::{BackgroundTaskAckDto, CreateSessionDto, SessionDto, SetModeDto};
 use uuid::Uuid;
 
 use crate::app_state::AppState;
@@ -122,6 +123,11 @@ pub async fn delete(
     // gone. Idempotent via CAS gate.
     let exit_notify = state.active_turns.get(&sid).map(|h| h.exited.clone());
     let _ = state.try_cancel_active_turn(sid).await;
+    // A root can own background children after its foreground turn has
+    // returned. Deleting it must cascade through those independent task
+    // tokens as well, otherwise a detached child could settle and try to
+    // deliver into a deleted parent session.
+    state.task_registry.cancel_descendants(sid);
     if let Some(exited) = exit_notify {
         // Wait for the driving task's Drop guard to signal exit. Notify
         // permits-on-await semantics: if the task already exited, this
@@ -167,4 +173,48 @@ pub async fn set_mode(
         .await?
         .ok_or_else(|| AppError::not_found("session_not_found", "session not found"))?;
     Ok(Json(SessionDto::from(meta)))
+}
+
+/// `POST /v1/session/:id/task/:task_id/background` — detach a running
+/// foreground task without restarting its child session. The registry's CAS
+/// decides whether the task or a concurrent terminal settlement owns output.
+#[utoipa::path(
+    post,
+    path = "/v1/session/{id}/task/{task_id}/background",
+    tag = "session",
+    params(
+        ("id" = Uuid, Path, description = "Parent session id"),
+        ("task_id" = Uuid, Path, description = "Subagent task id"),
+    ),
+    responses(
+        (status = 200, description = "Task is or was backgrounded", body = BackgroundTaskAckDto),
+        (status = 404, description = "Session or task not found"),
+        (status = 409, description = "Task already settled"),
+    )
+)]
+pub async fn background_task(
+    State(state): State<AppState>,
+    Path((id, task_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<BackgroundTaskAckDto>, AppError> {
+    let parent_session_id = SessionId::from(id);
+    let _ = state.require_session(parent_session_id).await?;
+    match state
+        .task_registry
+        .background_task(TaskId(task_id), parent_session_id)
+    {
+        BackgroundTransition::Backgrounded | BackgroundTransition::AlreadyBackground => {
+            Ok(Json(BackgroundTaskAckDto {
+                task_id,
+                status: "running".to_string(),
+            }))
+        }
+        BackgroundTransition::AlreadyTerminal => Err(AppError::conflict(
+            "task_already_settled",
+            "task settled before it could be backgrounded",
+        )),
+        BackgroundTransition::NotFound => Err(AppError::not_found(
+            "task_not_found",
+            "running task not found under this parent session",
+        )),
+    }
 }

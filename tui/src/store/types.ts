@@ -66,25 +66,23 @@ export interface PendingQuestion {
 }
 
 /// Live view of one subagent task, keyed by `task_id` in the `subagents`
-/// slice. Populated by the `subagent.*` SSE frames (Phase 5). `promoted`
-/// marks a task whose result is auto-injected into the parent (Phase 3) —
-/// for such a task the `settled` frame carries NO output (it re-enters as a
-/// normal parent turn), so the block shows a "result delivered" affordance
-/// rather than duplicating the output.
+/// slice. Populated by the `subagent.*` SSE frames.
 export interface SubagentView {
   task_id: string;
+  tool_call_id: string;
+  child_session_id: string;
   parent_session_id: string;
   /// Agent slug (from the `spawned` frame).
   agent: string;
+  objective: string;
+  description?: string;
+  background: boolean;
   /// running | finished | cancelled | failed. Derived from spawned/settled.
   status: "running" | "finished" | "cancelled" | "failed";
-  /// Live output tail accumulated from `progress` frames + the terminal
-  /// `settled` output (empty for a promoted task — see `promoted`).
-  output: string;
+  /// Current child activity derived from progress/transcript events.
+  current_activity?: string;
   /// 4-decimal USD cost from the `settled` frame.
   cost?: string;
-  /// Set by a `subagent.promoted` frame.
-  promoted: boolean;
 }
 
 // One live named sibling in the roster slice (Phase 6). Fed by the
@@ -96,9 +94,8 @@ export interface RosterView {
   generation: number;
 }
 
-// A passive idle-parent notice (Phase 6, red-team Finding 7). When a promoted
-// task settles into an IDLE parent, the TUI surfaces this notice — it never
-// auto-starts a turn. The user opens it on their next interaction.
+// A passive idle-parent notice. The TUI surfaces it without creating a user
+// transcript row.
 export interface IdleNotice {
   task_id: string;
   parent_session_id: string;
@@ -118,7 +115,7 @@ export interface State {
   /// (Phase 6). Fed by `subagent_roster`; the @mention typeahead's live source.
   roster: Record<string, Record<string, RosterView>>;
   /// Passive idle-parent settle notices (Phase 6, Finding 7). Appended when a
-  /// promoted task settles into an idle parent; rendered as a toast, never a
+  /// background task settles into an idle parent; rendered as a toast, never a
   /// turn-start.
   idleNotices: IdleNotice[];
   agents: AgentDto[];

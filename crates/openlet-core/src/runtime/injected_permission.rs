@@ -1,6 +1,6 @@
 //! Fail-closed permission shim for autonomous (non-`User`) turns.
 //!
-//! An injected turn (a promoted subagent result re-entering the parent —
+//! An autonomous turn (a background subagent settlement or sibling message —
 //! Phase 3 — or an inter-agent `send_message` delivery — Phase 4) runs
 //! with NO human attached to answer an `Ask` prompt. Left unguarded, an
 //! `Ask` decision would either hang forever (no answerer) or, worse,

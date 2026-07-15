@@ -60,6 +60,11 @@ export function createHydrationController(client: OpenletClient): HydrationContr
         // with no role; refetch to pick up its parts. Coalescing keeps this
         // from being chatty during a multi-tool turn.
         void run(ev.session_id);
+      } else if (ev.kind === "part_updated") {
+        // Typed control-state transitions (notably compaction
+        // pending→committed/failed) carry no body in SSE. Rehydrate so the
+        // live timeline uses the same persisted provenance as cold reload.
+        void run(ev.session_id);
       }
     },
   };

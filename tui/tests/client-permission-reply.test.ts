@@ -69,3 +69,16 @@ describe("client.replyPermission — server contract", () => {
     expect(captured.body).toEqual({ decision: "always_allow" });
   });
 });
+
+describe("client.backgroundTask — foreground handoff contract", () => {
+  it("POSTs the parent-scoped background transition endpoint", async () => {
+    const { captured, fetch } = recordingFetch(200, '{"task_id":"task-1","status":"running"}');
+    const client = createClient({ baseUrl: "http://x", fetch });
+
+    await client.backgroundTask("parent-1", "task-1");
+
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe("http://x/v1/session/parent-1/task/task-1/background");
+    expect(captured.body).toBeUndefined();
+  });
+});

@@ -37,6 +37,10 @@ export interface SubagentFooterProps {
   siblingTotal: number;
   /// Rendered cost string (e.g. "0.0100"), if any.
   cost?: string;
+  parentSessionId?: string;
+  previousSessionId?: string;
+  nextSessionId?: string;
+  onNavigate?: (sessionId: string) => void;
 }
 
 export function SubagentFooter(props: SubagentFooterProps) {
@@ -47,6 +51,24 @@ export function SubagentFooter(props: SubagentFooterProps) {
     <box flexDirection="row" gap={1} paddingLeft={1} paddingRight={1}>
       <text fg={oc.accent}>{`@${label()}`}</text>
       <text fg={oc.textMuted}>{pos()}</text>
+      <text
+        fg={props.parentSessionId ? oc.textMuted : oc.border}
+        onMouseUp={() => props.parentSessionId && props.onNavigate?.(props.parentSessionId)}
+      >
+        parent
+      </text>
+      <text
+        fg={props.previousSessionId ? oc.textMuted : oc.border}
+        onMouseUp={() => props.previousSessionId && props.onNavigate?.(props.previousSessionId)}
+      >
+        prev
+      </text>
+      <text
+        fg={props.nextSessionId ? oc.textMuted : oc.border}
+        onMouseUp={() => props.nextSessionId && props.onNavigate?.(props.nextSessionId)}
+      >
+        next
+      </text>
       <box flexGrow={1} />
       <text fg={oc.textMuted}>{props.cost ? `$${props.cost}` : ""}</text>
     </box>

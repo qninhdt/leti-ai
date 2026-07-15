@@ -19,7 +19,9 @@ export function SessionPickerDialog() {
   const oc = theme.oc;
   const sessions = useStoreSelector((s) => s.sessions);
   const ordered = createMemo(() =>
-    Object.values(sessions()).sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    Object.values(sessions())
+      .filter((session) => !session.parent_session_id)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
   );
 
   function select(session: SessionDto): void {

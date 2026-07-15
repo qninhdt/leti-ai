@@ -5,8 +5,9 @@
 pub mod dto;
 
 pub use dto::{
-    AbortAckDto, AgentDto, AskOptionDto, AttachmentKindDto, CompactAckDto, CreateMessageDto,
-    CreateSessionDto, DeltaKindDto, ErrorDto, EventDto, HealthDto, MessageDto, ModelDto,
-    NotificationLevelDto, PartDto, PermissionDecisionDto, PermissionReplyDto, PermissionReplyKind,
-    PermissionRequestDto, PromptAckDto, QuestionAnswerDto, SessionDto, SetModeDto, UsageDto,
+    AbortAckDto, AgentDto, AskOptionDto, AttachmentKindDto, BackgroundTaskAckDto, CompactAckDto,
+    CreateMessageDto, CreateSessionDto, DeltaKindDto, ErrorDto, EventDto, HealthDto, MessageDto,
+    ModelDto, NotificationLevelDto, PartDto, PermissionDecisionDto, PermissionReplyDto,
+    PermissionReplyKind, PermissionRequestDto, PromptAckDto, QuestionAnswerDto, SessionDto,
+    SetModeDto, UsageDto,
 };

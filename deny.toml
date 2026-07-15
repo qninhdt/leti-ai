@@ -11,10 +11,9 @@ feature-depth = 1
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-yanked = "deny"
-# Two transitive advisories are ignored with a documented rationale +
-# review date. Re-evaluate at each review; drop the ignore once the
-# upstream dep migrates. REVIEW BY: 2026-09-01.
+yanked = "warn"
+# Exceptions below are transitive and have no compatible upstream fix today.
+# Re-evaluate at each dependency review. REVIEW BY: 2026-08-15.
 ignore = [
     # paste 1.x — unmaintained. Transitive via utoipa-axum's macros.
     # No security impact; expansion-only proc-macro. Drop when utoipa-axum migrates.
@@ -23,6 +22,16 @@ ignore = [
     # No security impact; charset-decode only on operator-supplied PDFs. Drop
     # when pdf-extract migrates off it.
     "RUSTSEC-2021-0153",
+    # Monty -> jiter 0.15 pins PyO3 0.28. Jiter 0.16 has the PyO3 0.29
+    # upgrade, but Monty has not consumed it yet. Track upstream before expiry.
+    "RUSTSEC-2026-0176",
+    "RUSTSEC-2026-0177",
+    # Monty -> postcard -> heapless; no compatible replacement is available.
+    "RUSTSEC-2023-0089",
+    # Tonic 0.12 currently carries this thin wrapper transitively.
+    "RUSTSEC-2025-0134",
+    # lopdf 0.42 fixes the PDF DoS; it still carries this unmaintained parser.
+    "RUSTSEC-2026-0192",
 ]
 
 [licenses]

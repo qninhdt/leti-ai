@@ -169,8 +169,10 @@ extend the regex (file needs re-redaction on read).
 ## CI hygiene
 
 If `cargo deny check` starts failing on a brand-new advisory, add an
-`ignore = [..]` entry to `deny.toml` with a one-line rationale, then
-schedule a dependency bump. Don't silence the entry without filing the
+`ignore = [..]` entry to `deny.toml` with the affected dependency chain,
+a one-line rationale and a review date, then schedule a dependency bump.
+Use matching `cargo audit --ignore <ADVISORY_ID>` flags only while that
+documented exception remains active. Don't silence an entry without a
 follow-up.
 
 ## Still stuck?

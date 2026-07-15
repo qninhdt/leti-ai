@@ -63,7 +63,43 @@ TUI ── POST /v1/session/:id/prompt_async ──► axum route
 
 Every event the SSE channel emits is also persisted to `events` so a
 disconnected client can `GET /v1/event?session=<uuid>` with a `Last-Event-ID`
-header to catch up.
+header to catch up. Replay pages to a captured high-water mark; a client that
+receives the synthetic `lagged` frame reconnects with the same durable cursor.
+
+## Runtime controls and subagents
+
+Before every provider request, the shared request-preparation boundary reloads
+the durable transcript, collects typed runtime reminders, persists any new
+ones atomically, then projects the effective history. Runtime reminders and
+compaction boundaries are typed `Part`s: they may affect model context but are
+never treated as human-authored transcript text.
+
+`subagent_task` is foreground by default. Foreground calls join their child
+and return its final body only through the originating tool result; contiguous
+parallel-safe calls run as ordered concurrent waves around unsafe-tool
+barriers. Background calls return a task/child-session descriptor immediately.
+The running task card can also call the parent-scoped background endpoint:
+a shared compare-and-swap changes only delivery ownership
+(`ForegroundWaiting → Background`), never the child task or session. A racing
+settlement selects the matching terminal owner, so the original tool result
+and the outbox cannot both expose the child output.
+On terminal settlement the server writes one typed parent reminder and its
+delivery outbox row in one SQLite transaction, emits metadata-only SSE
+lifecycle frames, and schedules a fail-closed autonomous parent turn without
+adding a user bubble. The outbox is durable and uses `pending`, `leased`, and
+`delivered` states: an atomic claim assigns a unique lease token, and each
+live delivery turn renews only its own lease heartbeat. The row is acknowledged
+as `delivered` only after that parent turn succeeds; a turn error releases its
+matching token back to `pending`, while a crash leaves the lease to expire.
+Startup and the periodic reconciler claim both pending and expired-lease rows,
+so a stale worker cannot acknowledge, release, or renew a later attempt.
+
+Compaction persists a typed request boundary. The request wording is injected
+only for the compaction provider call; the generated assistant text remains a
+normal visible summary, while the projection uses its paired compaction part
+to replace older model history exactly once. Attempts transition from pending
+to committed or failed; failed markers and their partial assistant summary are
+suppressed from both normal projection and the human timeline.
 
 ## Error flow
 
@@ -88,6 +124,9 @@ subcommand reads it back, applies the same redactor a second time
 - Parity tests drive the real `OpenAiCompatProvider` against
   `openlet-test-mock-provider` — no network, no API key, byte-exact
   control over chunking and headers.
+- Background settlement coverage uses the real SQLite outbox: prove atomic
+  claims, token-guarded acknowledgement/release/renewal, retry after a failed
+  parent turn, and reconciliation after an expired lease.
 
 ## What changes after MVP
 
