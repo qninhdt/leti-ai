@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use thiserror::Error;
 use tokio::sync::{Notify, RwLock};
@@ -80,7 +81,78 @@ pub enum TaskStatus {
     Running,
     Finished,
     Cancelled,
+    Interrupted,
     Failed(String),
+}
+
+/// Durable lifecycle status for a subagent execution. Unlike [`TaskStatus`],
+/// this survives a process restart and deliberately distinguishes an
+/// operator/process interruption from a terminal failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SubagentExecutionStatus {
+    Pending,
+    Running,
+    Finished,
+    Failed,
+    Cancelled,
+    Interrupted,
+}
+
+impl SubagentExecutionStatus {
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            Self::Finished | Self::Failed | Self::Cancelled | Self::Interrupted
+        )
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Running => "running",
+            Self::Finished => "finished",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "pending" => Self::Pending,
+            "running" => Self::Running,
+            "finished" => Self::Finished,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            "interrupted" => Self::Interrupted,
+            _ => return None,
+        })
+    }
+}
+
+/// Durable execution record. A child session is the agent's identity and
+/// transcript; each invocation against it gets a fresh task id/record.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubagentExecution {
+    pub task_id: TaskId,
+    pub root_session_id: SessionId,
+    pub parent_session_id: SessionId,
+    pub child_session_id: SessionId,
+    pub agent_slug: String,
+    pub objective: String,
+    pub scope: Option<String>,
+    pub background: bool,
+    pub status: SubagentExecutionStatus,
+    pub terminal_reason: Option<String>,
+    pub output: String,
+    pub cost_usd: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub version: u64,
 }
 
 /// The sole owner of a task's terminal output.  A foreground waiter may
@@ -117,7 +189,10 @@ impl DeliveryOwnership {
 impl TaskStatus {
     #[must_use]
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Self::Finished | Self::Cancelled | Self::Failed(_))
+        matches!(
+            self,
+            Self::Finished | Self::Cancelled | Self::Interrupted | Self::Failed(_)
+        )
     }
 
     /// Stable wire label. Used by `task_status` tool + SSE.
@@ -127,6 +202,7 @@ impl TaskStatus {
             Self::Running => "running",
             Self::Finished => "finished",
             Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
             Self::Failed(_) => "failed",
         }
     }
@@ -183,6 +259,8 @@ pub struct TaskHandle {
 /// trusted sender identity.
 #[derive(Debug, Clone)]
 pub struct InboxMessage {
+    /// Durable inbox row id when delivery came through `MemoryStore`.
+    pub id: Option<String>,
     pub from: String,
     pub body: String,
 }

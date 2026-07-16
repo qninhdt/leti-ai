@@ -2,7 +2,10 @@
 
 use chrono::Utc;
 use openlet_adapters::sqlite::{SqliteMemoryStore, open_in_memory};
-use openlet_core::adapters::memory_store::{BackgroundTaskSettlement, MemoryStore};
+use openlet_core::adapters::memory_store::{
+    BackgroundTaskSettlement, MemoryStore, SubagentExecutionPatch, SubagentInboxMessage,
+};
+use openlet_core::runtime::subagent::{SubagentExecution, SubagentExecutionStatus, TaskId};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId, Role};
 use openlet_core::types::pagination::Page;
@@ -120,6 +123,127 @@ async fn migration_idempotent() {
     openlet_adapters::sqlite::run_migrations(&pool)
         .await
         .expect("re-run migrations no-op");
+}
+
+#[tokio::test]
+async fn subagent_execution_is_durable_and_recoverable() {
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+    let agent = AgentId::new();
+    let root = store.create_session(agent, None).await.unwrap();
+    let child = store.create_session(agent, Some(root)).await.unwrap();
+    let now = Utc::now();
+    let task_id = TaskId::new();
+    store
+        .create_subagent_execution(SubagentExecution {
+            task_id,
+            root_session_id: root,
+            parent_session_id: root,
+            child_session_id: child,
+            agent_slug: "general".into(),
+            objective: "inspect the implementation".into(),
+            scope: None,
+            background: true,
+            status: SubagentExecutionStatus::Running,
+            terminal_reason: None,
+            output: String::new(),
+            cost_usd: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+            version: 0,
+        })
+        .await
+        .unwrap();
+
+    let live = store.list_subagent_executions(root, false).await.unwrap();
+    assert_eq!(live.len(), 1);
+    let interrupted = store
+        .interrupt_live_subagent_executions("process_restart")
+        .await
+        .unwrap();
+    assert_eq!(interrupted.len(), 1);
+    assert_eq!(interrupted[0].status, SubagentExecutionStatus::Interrupted);
+    assert_eq!(
+        interrupted[0].terminal_reason.as_deref(),
+        Some("process_restart")
+    );
+
+    let none = store
+        .patch_subagent_execution(
+            task_id,
+            SubagentExecutionPatch {
+                expected_version: 0,
+                status: SubagentExecutionStatus::Finished,
+                terminal_reason: None,
+                output: Some("must not win stale CAS".into()),
+                cost_usd: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(none.is_none(), "recovery transition increments the version");
+}
+
+#[tokio::test]
+async fn subagent_inbox_message_survives_until_explicit_acknowledgement() {
+    let pool = open_in_memory().await.expect("pool");
+    let store = SqliteMemoryStore::new(pool);
+    let agent = AgentId::new();
+    let root = store.create_session(agent, None).await.unwrap();
+    let child = store.create_session(agent, Some(root)).await.unwrap();
+    let task_id = TaskId::new();
+    let now = Utc::now();
+    store
+        .create_subagent_execution(SubagentExecution {
+            task_id,
+            root_session_id: root,
+            parent_session_id: root,
+            child_session_id: child,
+            agent_slug: "general".into(),
+            objective: "receive".into(),
+            scope: None,
+            background: false,
+            status: SubagentExecutionStatus::Running,
+            terminal_reason: None,
+            output: String::new(),
+            cost_usd: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+            version: 0,
+        })
+        .await
+        .unwrap();
+    store
+        .enqueue_subagent_inbox_message(SubagentInboxMessage {
+            id: "message-1".into(),
+            task_id,
+            root_session_id: root,
+            from: "session:sender".into(),
+            body: "untrusted payload".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_pending_subagent_inbox_messages(task_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    store
+        .acknowledge_subagent_inbox_messages(task_id, &["message-1".into()])
+        .await
+        .unwrap();
+    assert!(
+        store
+            .list_pending_subagent_inbox_messages(task_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]

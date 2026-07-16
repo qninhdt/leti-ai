@@ -11,6 +11,7 @@ import { shortId } from "../utils/format.js";
 import { parseTodos, type TodoItem, type TodoStatus } from "./tool-todo-parse.js";
 
 import type { MessageView } from "../store/index.js";
+import type { TodoItemDto } from "../api/types.js";
 
 const EMPTY_MESSAGES: MessageView[] = [];
 
@@ -19,7 +20,6 @@ const GLYPH: Record<TodoStatus, string> = {
   pending: "☐",
   in_progress: "◐",
   completed: "☑",
-  cancelled: "☒",
 };
 
 // Scan a session's messages newest-first for the most recent `todo` tool call.
@@ -48,6 +48,10 @@ export function Sidebar() {
     const id = s.activeSessionId;
     return id ? s.messages[id] ?? EMPTY_MESSAGES : EMPTY_MESSAGES;
   });
+  const liveTodos = useStoreSelector((s) => {
+    const id = s.activeSessionId;
+    return id ? s.todos[id] : undefined;
+  });
 
   const session = createMemo(() => {
     const id = activeSessionId();
@@ -57,14 +61,16 @@ export function Sidebar() {
     const s = session();
     return s ? agents().find((a) => a.id === s.agent_id) ?? null : null;
   });
-  const todos = createMemo(() => latestTodos(messages()));
+  // A durable `todo_updated` snapshot wins, including `[]` (which explicitly
+  // clears the checklist). Before the first live event, fall back to the last
+  // hydrated todo tool call for historical sessions.
+  const todos = createMemo((): TodoItem[] => liveTodos() ?? latestTodos(messages()));
 
   const color = (status: TodoStatus): string => {
     switch (status) {
       case "in_progress":
         return oc.accent;
       case "completed":
-      case "cancelled":
         return oc.textMuted;
       default:
         return oc.text;

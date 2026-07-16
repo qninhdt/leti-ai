@@ -16,9 +16,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::adapters::memory_store::MemoryStore;
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
-use crate::runtime::subagent::{TaskId, TaskRegistry};
+use crate::runtime::subagent::{SubagentExecutionStatus, TaskId, TaskRegistry};
 use crate::tools::Tool;
 use crate::types::permission::PermissionRequest;
 
@@ -51,12 +52,24 @@ pub struct TaskStatusOutput {
 
 pub struct TaskStatusTool {
     registry: Arc<TaskRegistry>,
+    memory: Option<Arc<dyn MemoryStore>>,
 }
 
 impl TaskStatusTool {
     #[must_use]
     pub fn new(registry: Arc<TaskRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            memory: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_memory(registry: Arc<TaskRegistry>, memory: Arc<dyn MemoryStore>) -> Self {
+        Self {
+            registry,
+            memory: Some(memory),
+        }
     }
 }
 
@@ -95,7 +108,30 @@ impl Tool for TaskStatusTool {
         };
         let id = TaskId(uuid);
         let Some(snap) = self.registry.poll_async(id).await else {
-            return Ok(not_found(input.task_id));
+            let Some(memory) = &self.memory else {
+                return Ok(not_found(input.task_id));
+            };
+            let Some(execution) = memory
+                .get_subagent_execution(id)
+                .await
+                .map_err(|e| ToolError::Io(format!("task_status: durable lookup: {e}")))?
+            else {
+                return Ok(not_found(input.task_id));
+            };
+            let (status, error) = match execution.status {
+                SubagentExecutionStatus::Failed => {
+                    ("failed".to_string(), execution.terminal_reason)
+                }
+                status => (status.label().to_string(), None),
+            };
+            return Ok(TaskStatusOutput {
+                task_id: input.task_id,
+                status,
+                output_so_far: execution.output,
+                cost_usd: execution.cost_usd,
+                finished: execution.status.is_terminal(),
+                error,
+            });
         };
         let cost = if snap.cost_usd.is_zero() {
             None

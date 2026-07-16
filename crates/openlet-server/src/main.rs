@@ -117,6 +117,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
     let fs_adapter = stack.fs;
     let shell = stack.shell;
     let python = stack.python;
+    let web_fetcher = stack.web_fetcher;
     let artifacts = stack.artifacts;
 
     // Drain every plugin's registrations through `install_all`. Returns
@@ -148,6 +149,7 @@ async fn run_server(config: Config) -> anyhow::Result<()> {
         core_api,
         shell.clone(),
         Some(python.clone()),
+        Some(web_fetcher.clone()),
         inner_memory.clone(),
         task_registry.clone(),
         spawner_dyn,

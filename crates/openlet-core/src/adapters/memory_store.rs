@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 
 use crate::error::MemoryError;
+use crate::runtime::subagent::{SubagentExecution, SubagentExecutionStatus, TaskId};
 use crate::types::agent::AgentId;
 use crate::types::message::{Message, MessageId};
 use crate::types::pagination::{Page, PageResult};
@@ -91,6 +92,30 @@ pub struct ClaimedBackgroundTaskSettlement {
     pub lease_id: String,
 }
 
+/// Patch accepted by the durable execution store. `expected_version` makes
+/// lifecycle ownership explicit: only one racing settle/cancel/recovery path
+/// can transition an execution.
+#[derive(Debug, Clone)]
+pub struct SubagentExecutionPatch {
+    pub expected_version: u64,
+    pub status: SubagentExecutionStatus,
+    pub terminal_reason: Option<String>,
+    pub output: Option<String>,
+    pub cost_usd: Option<String>,
+}
+
+/// A durable sibling-to-sibling delivery. The body is only ever projected as
+/// untrusted input into the receiving child transcript; it is not exposed in
+/// lifecycle events.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentInboxMessage {
+    pub id: String,
+    pub task_id: TaskId,
+    pub root_session_id: SessionId,
+    pub from: String,
+    pub body: String,
+}
+
 /// Persists sessions, messages, parts, and read history.
 #[async_trait]
 pub trait MemoryStore: Send + Sync + 'static {
@@ -116,6 +141,86 @@ pub trait MemoryStore: Send + Sync + 'static {
     async fn create_session_with_meta(&self, meta: SessionMeta) -> Result<SessionId, MemoryError> {
         self.create_session(meta.agent_id, meta.parent_session_id)
             .await
+    }
+
+    /// Create the child session and its durable execution row. SQLite
+    /// overrides this in one transaction; the default keeps lightweight test
+    /// stores compatible.
+    async fn create_subagent_session_and_execution(
+        &self,
+        child: SessionMeta,
+        execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        self.create_session_with_meta(child).await?;
+        self.create_subagent_execution(execution).await
+    }
+
+    async fn create_subagent_execution(
+        &self,
+        _execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        Err(MemoryError::Unimplemented)
+    }
+
+    async fn get_subagent_execution(
+        &self,
+        _task_id: TaskId,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        Ok(None)
+    }
+
+    async fn list_subagent_executions(
+        &self,
+        _root_session_id: SessionId,
+        _include_terminal: bool,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        Ok(Vec::new())
+    }
+
+    async fn patch_subagent_execution(
+        &self,
+        _task_id: TaskId,
+        _patch: SubagentExecutionPatch,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        Ok(None)
+    }
+
+    /// Convert any pre-crash live execution to `interrupted`. Recovery is
+    /// deliberately non-replaying: callers must explicitly continue the
+    /// saved child session to avoid duplicating side effects.
+    async fn interrupt_live_subagent_executions(
+        &self,
+        _reason: &str,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        Ok(Vec::new())
+    }
+
+    /// Persist a sibling message before waking the in-memory driver. A host
+    /// that has no durable implementation must fail closed rather than lose
+    /// cross-agent coordination on restart.
+    async fn enqueue_subagent_inbox_message(
+        &self,
+        _message: SubagentInboxMessage,
+    ) -> Result<(), MemoryError> {
+        Err(MemoryError::Unimplemented)
+    }
+
+    /// Return undelivered messages in stable creation order.
+    async fn list_pending_subagent_inbox_messages(
+        &self,
+        _task_id: TaskId,
+    ) -> Result<Vec<SubagentInboxMessage>, MemoryError> {
+        Err(MemoryError::Unimplemented)
+    }
+
+    /// Ack messages only after their untrusted child transcript parts were
+    /// successfully persisted. Repeated acknowledgements are idempotent.
+    async fn acknowledge_subagent_inbox_messages(
+        &self,
+        _task_id: TaskId,
+        _ids: &[String],
+    ) -> Result<(), MemoryError> {
+        Err(MemoryError::Unimplemented)
     }
 
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError>;

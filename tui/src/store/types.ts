@@ -12,6 +12,7 @@ import type {
   PluginInfoDto,
   ServerMessageDto,
   SessionDto,
+  TodoItemDto,
 } from "../api/types.js";
 
 // Overlay stack entries. Permissions are blockers rendered in FooterArea and
@@ -77,8 +78,10 @@ export interface SubagentView {
   objective: string;
   description?: string;
   background: boolean;
-  /// running | finished | cancelled | failed. Derived from spawned/settled.
-  status: "running" | "finished" | "cancelled" | "failed";
+  /// running | finished | cancelled | failed | interrupted. Derived from
+  /// spawned/settled. `interrupted` is recoverable: the user may explicitly
+  /// continue the child session after a server restart.
+  status: "running" | "finished" | "cancelled" | "failed" | "interrupted";
   /// Current child activity derived from progress/transcript events.
   current_activity?: string;
   /// 4-decimal USD cost from the `settled` frame.
@@ -108,6 +111,10 @@ export interface State {
   sessions: Record<string, SessionDto>;
   activeSessionId: string | null;
   messages: Record<string, MessageView[]>;
+  /// Authoritative todo snapshots from durable `todo_updated` SSE frames,
+  /// keyed by session. Presence matters: an empty array intentionally clears
+  /// the prior checklist, while `undefined` falls back to hydrated history.
+  todos: Record<string, TodoItemDto[]>;
   /// Subagent task views keyed by `task_id`. Fed by the `subagent.*` frames;
   /// consumed by the inline task block + (Phase 6) the background task panel.
   subagents: Record<string, SubagentView>;

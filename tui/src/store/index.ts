@@ -16,6 +16,7 @@ export const useStore = createStore<State>((set) => ({
   sessions: {},
   activeSessionId: null,
   messages: {},
+  todos: {},
   agents: [],
   plugins: [],
   pluginErrors: [],

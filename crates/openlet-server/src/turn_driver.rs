@@ -143,6 +143,7 @@ pub(crate) fn runtime_handles(
         memory: state.memory.clone(),
         task_registry: state.task_registry.clone(),
         agent_registry: state.agent_registry.clone(),
+        tool_scheduler: state.tool_scheduler.clone(),
     }
 }
 

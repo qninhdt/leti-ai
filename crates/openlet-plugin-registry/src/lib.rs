@@ -17,6 +17,7 @@ use openlet_core::tools::ToolHandle;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::builtins::python::PythonExecutor;
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
+use openlet_core::tools::builtins::web_fetch::WebFetcher;
 use openlet_plugin_api::context::{CoreApi, PluginContext};
 use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_api::manifest::PluginManifest;
@@ -42,6 +43,7 @@ use semver::Version;
 pub fn all_plugins(
     shell: Arc<dyn ShellExecutor>,
     python: Option<Arc<dyn PythonExecutor>>,
+    web_fetcher: Option<Arc<dyn WebFetcher>>,
     memory: Arc<dyn MemoryStore>,
     task_registry: Arc<TaskRegistry>,
     spawner: Arc<dyn SubagentSpawner>,
@@ -50,6 +52,9 @@ pub fn all_plugins(
         openlet_plugin_core_tools::CoreToolsPlugin::new(shell, memory, task_registry, spawner);
     if let Some(python) = python {
         core_tools = core_tools.with_python(python);
+    }
+    if let Some(web_fetcher) = web_fetcher {
+        core_tools = core_tools.with_web_fetcher(web_fetcher);
     }
     vec![
         Arc::new(openlet_plugin_core_agents::CoreAgentsPlugin::new()),

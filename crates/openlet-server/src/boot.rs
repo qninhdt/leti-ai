@@ -141,6 +141,24 @@ pub async fn recover_stale_running_sessions(
             )
             .await;
     }
+    let interrupted = memory
+        .interrupt_live_subagent_executions("process_restart")
+        .await
+        .context("interrupting stale subagent executions")?;
+    for execution in interrupted {
+        let _ = events
+            .publish(
+                openlet_core::types::event::AgentEvent::SubagentSettled {
+                    task_id: execution.task_id.0,
+                    child_session_id: execution.child_session_id,
+                    parent_session_id: execution.parent_session_id,
+                    status: "interrupted".to_string(),
+                    cost_usd: execution.cost_usd,
+                },
+                openlet_core::adapters::event_sink::Persistence::Durable,
+            )
+            .await;
+    }
     Ok(())
 }
 
@@ -189,12 +207,19 @@ pub async fn install_plugins(
     core_api: Arc<dyn CoreApi>,
     shell: Arc<dyn openlet_core::tools::builtins::bash::ShellExecutor>,
     python: Option<Arc<dyn openlet_core::tools::builtins::python::PythonExecutor>>,
+    web_fetcher: Option<Arc<dyn openlet_core::tools::builtins::web_fetch::WebFetcher>>,
     memory: Arc<dyn openlet_core::adapters::memory_store::MemoryStore>,
     task_registry: Arc<openlet_core::runtime::subagent::TaskRegistry>,
     spawner: Arc<dyn openlet_core::tools::builtins::subagent_task::SubagentSpawner>,
 ) -> anyhow::Result<InstalledPlugins> {
-    let plugins =
-        openlet_plugin_registry::all_plugins(shell, python, memory, task_registry, spawner);
+    let plugins = openlet_plugin_registry::all_plugins(
+        shell,
+        python,
+        web_fetcher,
+        memory,
+        task_registry,
+        spawner,
+    );
     let configs = std::collections::HashMap::new();
     install_all(plugins, &configs, core_api)
         .await

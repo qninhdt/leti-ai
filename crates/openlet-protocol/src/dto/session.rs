@@ -112,6 +112,52 @@ pub struct BackgroundTaskAckDto {
     pub status: String,
 }
 
+/// Durable public projection of one subagent execution. The child session is
+/// the reusable agent transcript; `task_id` identifies this particular run.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SubagentExecutionDto {
+    pub task_id: Uuid,
+    pub child_session_id: Uuid,
+    pub parent_session_id: Uuid,
+    pub agent_slug: String,
+    pub objective: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<String>,
+}
+
+impl From<openlet_core::runtime::subagent::SubagentExecution> for SubagentExecutionDto {
+    fn from(value: openlet_core::runtime::subagent::SubagentExecution) -> Self {
+        Self {
+            task_id: value.task_id.0,
+            child_session_id: value.child_session_id.as_uuid(),
+            parent_session_id: value.parent_session_id.as_uuid(),
+            agent_slug: value.agent_slug,
+            objective: value.objective,
+            status: value.status.label().into(),
+            terminal_reason: value.terminal_reason,
+            cost_usd: value.cost_usd,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SubagentControlAckDto {
+    pub task_id: Uuid,
+    pub status: String,
+}
+
+/// Request a fresh execution using an existing child session transcript.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContinueSubagentDto {
+    pub child_session_id: Uuid,
+    pub objective: String,
+    #[serde(default)]
+    pub background: bool,
+}
+
 /// `POST /v1/session/:id/compact` ack. `compacted` is false when there was
 /// nothing to compact (conversation at/under the preserved-recent floor).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

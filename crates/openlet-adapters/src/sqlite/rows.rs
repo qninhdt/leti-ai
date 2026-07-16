@@ -7,6 +7,7 @@
 use sqlx::Row;
 
 use openlet_core::error::MemoryError;
+use openlet_core::runtime::subagent::{SubagentExecution, SubagentExecutionStatus, TaskId};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::session::{SessionCapabilities, SessionId, SessionMeta};
@@ -65,5 +66,39 @@ pub(crate) fn row_to_message(row: sqlx::sqlite::SqliteRow) -> Result<Message, Me
         session_id: SessionId(parse_uuid(&session_str)?),
         role: parse_role(&role)?,
         created_at: from_ms(created_at),
+    })
+}
+
+pub(crate) fn row_to_subagent_execution(
+    row: sqlx::sqlite::SqliteRow,
+) -> Result<SubagentExecution, MemoryError> {
+    let task_id: String = row.try_get("task_id").map_err(map_io)?;
+    let root_session_id: String = row.try_get("root_session_id").map_err(map_io)?;
+    let parent_session_id: String = row.try_get("parent_session_id").map_err(map_io)?;
+    let child_session_id: String = row.try_get("child_session_id").map_err(map_io)?;
+    let status: String = row.try_get("status").map_err(map_io)?;
+    let status = SubagentExecutionStatus::parse(&status)
+        .ok_or_else(|| MemoryError::Io(format!("unknown subagent execution status: {status}")))?;
+    let version: i64 = row.try_get("version").map_err(map_io)?;
+    Ok(SubagentExecution {
+        task_id: TaskId(parse_uuid(&task_id)?),
+        root_session_id: SessionId(parse_uuid(&root_session_id)?),
+        parent_session_id: SessionId(parse_uuid(&parent_session_id)?),
+        child_session_id: SessionId(parse_uuid(&child_session_id)?),
+        agent_slug: row.try_get("agent_slug").map_err(map_io)?,
+        objective: row.try_get("objective").map_err(map_io)?,
+        scope: row.try_get("scope").map_err(map_io)?,
+        background: row.try_get::<i64, _>("background").map_err(map_io)? != 0,
+        status,
+        terminal_reason: row.try_get("terminal_reason").map_err(map_io)?,
+        output: row.try_get("output").map_err(map_io)?,
+        cost_usd: row.try_get("cost_usd").map_err(map_io)?,
+        created_at: from_ms(row.try_get("created_at").map_err(map_io)?),
+        updated_at: from_ms(row.try_get("updated_at").map_err(map_io)?),
+        finished_at: row
+            .try_get::<Option<i64>, _>("finished_at")
+            .map_err(map_io)?
+            .map(from_ms),
+        version: u64::try_from(version.max(0)).unwrap_or(u64::MAX),
     })
 }

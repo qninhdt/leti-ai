@@ -26,6 +26,7 @@ use openlet_plugin_api::dispatch::HookChains;
 use openlet_plugin_registry::PluginHandles;
 
 use crate::app_state::{AgentResources, AppState, TurnHandle};
+use openlet_core::tools::ToolScheduler;
 
 /// Errors surfaced when `AppStateBuilder::build` is called with missing
 /// required fields.
@@ -229,7 +230,7 @@ impl AppStateBuilder {
                 .unwrap_or_else(|| Arc::new(DashMap::new())),
             events,
             permission,
-            config,
+            config: config.clone(),
             plugin_registry: self
                 .plugin_registry
                 .unwrap_or_else(|| Arc::new(PluginHandles::new())),
@@ -254,6 +255,7 @@ impl AppStateBuilder {
             task_registry: self
                 .task_registry
                 .unwrap_or_else(|| Arc::new(TaskRegistry::from_env())),
+            tool_scheduler: Arc::new(ToolScheduler::new(config.tool_scheduler)),
         })
     }
 }

@@ -66,6 +66,11 @@ All config is environment-driven. See [`docs/deployment.md`](docs/deployment.md)
 
 > **Security note (MVP):** the server binds loopback-only. LAN exposure requires auth, which is post-MVP. Cost cap is plugin-only — see `crates/openlet-plugins/test-quota-stub/` for a reference implementation.
 
+`web_fetch` is the runtime's opt-in outbound-network tool. The reference
+server enables it, but every request prompts for permission by default; grant
+per-host rules only for hosts you trust. It accepts only public `http`/`https`
+destinations and returns size-capped Markdown (default) or raw HTML.
+
 ## Architecture
 
 ```

@@ -24,8 +24,8 @@ pub use scoped_permissions::ScopedPermissionManager;
 pub use task_registry::{BackgroundTransition, TaskRegistry};
 pub use task_types::{
     DEFAULT_MAX_DEPTH, DEFAULT_MAX_LIFETIME_SPAWNS, DEFAULT_MAX_PER_SESSION, DeliveryOwnership,
-    HandleName, InboxMessage, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, TaskHandle, TaskId,
-    TaskSnapshot, TaskStatus,
+    HandleName, InboxMessage, MAX_OUTPUT_BYTES, RosterEntry, SpawnError, SubagentExecution,
+    SubagentExecutionStatus, TaskHandle, TaskId, TaskSnapshot, TaskStatus,
 };
 
 use std::sync::Arc;
@@ -179,6 +179,79 @@ pub fn plan_subagent_spawn(
         task_id,
         child,
         parent_meta: parent.clone(),
+        agent_slug: slug,
+        child_perm,
+        child_cancel,
+        handle,
+        handle_name,
+        roster_gen,
+    })
+}
+
+/// Admit another execution against an existing child session. This is the
+/// continuation primitive: the child session remains the agent identity and
+/// transcript, while the new task id represents a fresh, independently
+/// cancellable run.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_subagent_continuation(
+    child: &SessionMeta,
+    subagent_slug: &str,
+    agents: &AgentRegistry,
+    parent_perm: Arc<dyn PermissionManager>,
+    parent_cancel: &CancellationToken,
+    registry: &TaskRegistry,
+    root_session_id: SessionId,
+    max_depth: u8,
+) -> Result<SpawnPlan, SpawnError> {
+    if child.depth == 0 || child.depth > max_depth {
+        return Err(SpawnError::SubagentDepthExceeded {
+            requested: child.depth,
+            max: max_depth,
+        });
+    }
+    let task_id = registry.admit(root_session_id)?;
+    let slug = AgentSlug::new(subagent_slug.to_string()).map_err(|_| {
+        registry.release_quota(root_session_id);
+        SpawnError::SubagentTypeNotFound(subagent_slug.to_string())
+    })?;
+    let Some(child_def) = agents.get(&slug).cloned() else {
+        registry.release_quota(root_session_id);
+        return Err(SpawnError::SubagentTypeNotFound(subagent_slug.to_string()));
+    };
+    let parent_session_id = child.parent_session_id.unwrap_or(root_session_id);
+    let child_perm: Arc<dyn PermissionManager> = Arc::new(ScopedPermissionManager::new(
+        parent_perm,
+        child_def.tool_allowlist.clone(),
+    ));
+    let child_cancel = parent_cancel.child_token();
+    let handle = TaskHandle {
+        status: Arc::new(RwLock::new(TaskStatus::Running)),
+        output: Arc::new(RwLock::new(String::new())),
+        cost_usd: Arc::new(RwLock::new(Decimal::ZERO)),
+        cancel: child_cancel.clone(),
+        finished: Arc::new(Notify::new()),
+        root_session_id,
+        parent_session_id,
+        delivery: Arc::new(std::sync::atomic::AtomicU8::new(
+            DeliveryOwnership::ForegroundWaiting.as_u8(),
+        )),
+        settled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        inbox: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        inbox_notify: Arc::new(Notify::new()),
+    };
+    registry.insert(task_id, handle.clone());
+    registry.link_child(task_id, child.id);
+    let (handle_name, roster_gen) = registry.register_name(
+        root_session_id,
+        subagent_slug,
+        task_id,
+        parent_session_id,
+        child_def.tool_allowlist.clone().into(),
+    );
+    Ok(SpawnPlan {
+        task_id,
+        child: child.clone(),
+        parent_meta: child.clone(),
         agent_slug: slug,
         child_perm,
         child_cancel,

@@ -3,7 +3,7 @@
 // The todo tool replaces the whole list each call; args shape is
 // `{ todos: [{ content, status, priority }] }`.
 
-export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TodoStatus = "pending" | "in_progress" | "completed";
 
 export interface TodoItem {
   content: string;
@@ -15,7 +15,6 @@ const STATUSES: ReadonlySet<string> = new Set([
   "pending",
   "in_progress",
   "completed",
-  "cancelled",
 ]);
 
 /// Extract a well-formed todo list from raw tool args. Tolerant: a missing or

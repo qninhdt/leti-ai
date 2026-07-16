@@ -111,12 +111,17 @@ fine; declaring less is a fatal install error.
 | `ctx.register_provider(provider)` | Register a `ModelProvider`. First-wins across plugins; needs `Capability::Provider`. |
 | `ctx.on_<hook>(priority, func)` | Register a typed hook handler. Needs `Capability::Hook(<kind>)`. |
 
-The eight built-in tools (`read`, `list`, `glob`, `grep`, `write`,
-`edit`, `bash`, `todo`) ship through this surface — see
+The built-in core tools (including `read`, `list`, `glob`, `grep`, `write`,
+`edit`, `bash`, `todo`, and optional `web_fetch`) ship through this surface — see
 `crates/openlet-plugins/core-tools/src/lib.rs` for the canonical
 `register_tool` example. If MVP can dogfood its own tools through the
 plugin API, downstream integrators can register custom tools the same
 way without forking core.
+
+`web_fetch` is registered only when the host supplies a `WebFetcher`; this
+keeps network-free embeddings free of outbound-network capability. Hosts that
+enable it should preserve an Ask-by-default permission policy and grant
+trusted destinations with narrowly scoped rules.
 
 Hooks are pushed in registration order; the host calls `chains.sort_all()`
 once after every plugin's `install` completes. Sort key:

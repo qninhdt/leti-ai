@@ -40,6 +40,17 @@ impl LocalFilesystem {
 
 #[async_trait]
 impl Filesystem for LocalFilesystem {
+    fn scheduling_key(&self, path: &Path) -> String {
+        let joined = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root.join(path)
+        };
+        // `canonicalize` also collapses symlink aliases for existing files.
+        // For a new target use the lexical path beneath the canonical root.
+        let key = std::fs::canonicalize(&joined).unwrap_or_else(|_| joined);
+        format!("local:{}", key.display())
+    }
     async fn read(&self, path: &Path, range: Option<ByteRange>) -> Result<Bytes, FsError> {
         operations::read(&self.root, path, range).await
     }

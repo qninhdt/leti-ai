@@ -35,6 +35,7 @@ const KIND_FROM_NAME: Record<EventName, EventDto["kind"]> = {
   "error": "error",
   "heartbeat": "heartbeat",
   "plugin.error": "plugin_error",
+  "todo.updated": "todo_updated",
   "subagent.spawned": "subagent_spawned",
   "subagent.progress": "subagent_progress",
   "subagent.settled": "subagent_settled",

@@ -20,6 +20,7 @@ use openlet_core::runtime::ConversationRuntime;
 use openlet_core::runtime::question_registry::QuestionRegistry;
 use openlet_core::runtime::subagent::TaskRegistry;
 use openlet_core::tools::ReadHistory;
+use openlet_core::tools::ToolScheduler;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::registry::ToolRegistry;
 use openlet_core::types::agent::{AgentId, AgentSpec};
@@ -184,6 +185,7 @@ pub struct AppState {
     /// In-process subagent task registry. Bounded by
     /// `OPENLET_SUBAGENT_MAX_PER_SESSION` (default 32) per ROOT session.
     pub task_registry: Arc<TaskRegistry>,
+    pub tool_scheduler: Arc<ToolScheduler>,
 }
 
 impl AppState {

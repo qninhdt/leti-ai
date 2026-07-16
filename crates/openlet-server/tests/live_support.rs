@@ -272,6 +272,7 @@ impl LiveServer {
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
             cloud_fs: None,
+            tool_scheduler: Default::default(),
         };
 
         let runtime = Arc::new(ConversationRuntime::new(
@@ -310,6 +311,7 @@ impl LiveServer {
         let plugins = openlet_plugin_registry::all_plugins(
             shell.clone(),
             Some(python),
+            None,
             memory.clone(),
             task_registry.clone(),
             spawner,

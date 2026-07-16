@@ -344,6 +344,32 @@ fn notification_emitted_converts() {
 }
 
 #[test]
+fn todo_updated_converts() {
+    let ev = AgentEvent::TodoUpdated {
+        session_id: sid(),
+        items: vec![
+            openlet_core::types::event::TodoEventItem {
+                content: "write tests".into(),
+                status: "in_progress".into(),
+                priority: "high".into(),
+            },
+            openlet_core::types::event::TodoEventItem {
+                content: "ship it".into(),
+                status: "pending".into(),
+                priority: "low".into(),
+            },
+        ],
+    };
+    let dto: EventDto = ev.into();
+    let json = serde_json::to_value(&dto).unwrap();
+    // Serde tag is snake_case (`todo_updated`), distinct from the dotted
+    // SSE event name `AgentEvent::kind()` returns (`todo.updated`).
+    assert_eq!(json["kind"], "todo_updated");
+    assert_eq!(json["items"][0]["status"], "in_progress");
+    assert_eq!(json["items"][1]["priority"], "low");
+}
+
+#[test]
 fn heartbeat_converts() {
     let ev = AgentEvent::Heartbeat;
     let _dto: EventDto = ev.into();

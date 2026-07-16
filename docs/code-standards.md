@@ -13,8 +13,9 @@ Standards the openlet-ai codebase actually follows. Derived from the code +
   a port trait implemented in `openlet-adapters`. Core never depends on a
   concrete backend or on `openlet-server`.
 - **Seams over forks.** Extension happens through traits + the plugin API, not
-  by editing core. Even the eight built-in tools ship as the `core-tools`
-  plugin — proof the public surface is sufficient.
+  by editing core. Built-in tools ship as the `core-tools` plugin — proof the
+  public surface is sufficient. Tool-specific injection seams such as
+  `WebFetcher` do not widen the six core adapter traits.
 
 ## Rust conventions
 

@@ -15,7 +15,7 @@ use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::types::permission::PermissionRequest;
 
-use super::{PromptPolicy, Tool};
+use super::{CancellationPolicy, PromptPolicy, Tool, ToolConcurrency};
 
 /// Object-safe shadow of `Tool`. Stored as `Arc<dyn ErasedTool>` in the
 /// registry. Errors from JSON (de)serialization map to
@@ -26,8 +26,22 @@ pub trait ErasedTool: Send + Sync + 'static {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn parallel_safe(&self) -> bool;
+    /// Parse input and classify it before admission. This is deliberately
+    /// separate from `run_json`: malformed input is terminal and never takes
+    /// a permit or a resource lock.
+    fn concurrency(&self, _input: &Value) -> Result<ToolConcurrency, ToolError> {
+        #[allow(deprecated)]
+        Ok(if self.parallel_safe() {
+            ToolConcurrency::concurrent()
+        } else {
+            ToolConcurrency::exclusive()
+        })
+    }
     fn prompt_policy(&self) -> PromptPolicy {
         PromptPolicy::Interactive
+    }
+    fn cancellation_policy(&self) -> CancellationPolicy {
+        CancellationPolicy::AbortSafe
     }
 
     /// JSON Schema for the tool's input (`schemars`-generated). Returned
@@ -55,10 +69,19 @@ where
         Tool::description(self)
     }
     fn parallel_safe(&self) -> bool {
+        #[allow(deprecated)]
         Tool::parallel_safe(self)
+    }
+    fn concurrency(&self, input: &Value) -> Result<ToolConcurrency, ToolError> {
+        let typed: T::Input = serde_json::from_value(input.clone())
+            .map_err(|e| ToolError::InvalidInput(e.to_string()))?;
+        Ok(Tool::concurrency(self, &typed))
     }
     fn prompt_policy(&self) -> PromptPolicy {
         Tool::prompt_policy(self)
+    }
+    fn cancellation_policy(&self) -> CancellationPolicy {
+        Tool::cancellation_policy(self)
     }
 
     fn input_schema(&self) -> Value {

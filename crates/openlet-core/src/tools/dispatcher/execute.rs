@@ -102,7 +102,7 @@ pub(super) async fn run_one(
                                     },
                                     Persistence::Durable,
                                 ).await;
-                                return Err(ToolError::PermissionDenied("cancelled".into()));
+                                return Err(ToolError::Cancelled);
                             }
                             // A concurrent reply consumed the ask first. Its
                             // sender owns the single authoritative decision;

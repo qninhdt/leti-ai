@@ -11,12 +11,27 @@ pub mod dispatcher;
 pub mod erased;
 pub mod read_history;
 pub mod registry;
+pub mod scheduler;
 
 pub use diff::{DiffHunk, DiffLine, DiffLineKind, FileDiff, compute_line_diff};
-pub use dispatcher::{ToolDispatchResult, ToolInvocation, dispatch_batch};
+pub use dispatcher::{
+    ToolDispatchResult, ToolInvocation, dispatch_batch, dispatch_batch_with_scheduler,
+};
 pub use erased::ErasedTool;
 pub use read_history::ReadHistory;
 pub use registry::{ToolRegistry, ToolRegistryBuilder};
+pub use scheduler::{
+    ResourceAccess, ResourceClaim, ResourceKey, SchedulingMode, ToolConcurrency, ToolScheduler,
+    ToolSchedulerConfig,
+};
+
+/// How the dispatcher treats an in-flight tool after its turn is cancelled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CancellationPolicy {
+    #[default]
+    AbortSafe,
+    WaitForCleanup,
+}
 
 use std::sync::Arc;
 
@@ -58,8 +73,24 @@ pub trait Tool: Send + Sync + 'static {
 
     /// Whether this tool is safe to run in parallel with other safe
     /// tools in the same assistant turn. Defaults to `false` (serial).
+    #[deprecated(note = "use concurrency instead")]
     fn parallel_safe(&self) -> bool {
         false
+    }
+
+    /// Scheduling policy for one typed invocation. Existing tools which only
+    /// implement `parallel_safe` keep their old behaviour through this shim.
+    fn concurrency(&self, _input: &Self::Input) -> ToolConcurrency {
+        #[allow(deprecated)]
+        if self.parallel_safe() {
+            ToolConcurrency::concurrent()
+        } else {
+            ToolConcurrency::exclusive()
+        }
+    }
+
+    fn cancellation_policy(&self) -> CancellationPolicy {
+        CancellationPolicy::AbortSafe
     }
 
     /// Whether an `Ask` decision should wait for a human response. Tools that

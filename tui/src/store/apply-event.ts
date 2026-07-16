@@ -185,6 +185,12 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
       return { planMode: next };
     }
 
+    case "todo_updated":
+      // Full-overwrite semantics: the event's list is authoritative after
+      // the server atomically persists `todos.json`. Preserve an empty array
+      // so a model can deliberately clear the live checklist.
+      return { todos: { ...s.todos, [ev.session_id]: ev.items } };
+
     case "error": {
       // Surface the server-side turn failure. Previously this frame was
       // dropped (return {}), so a turn that errored left the session in
@@ -293,6 +299,6 @@ export function applyEvent(s: State, ev: EventDto): Partial<State> {
 /// A settled frame flips a running task to finished; a task already marked
 /// cancelled/failed by a status frame keeps that terminal state.
 function normalizeSettledStatus(status: string): SubagentView["status"] {
-  if (status === "cancelled" || status === "failed") return status;
+  if (status === "cancelled" || status === "failed" || status === "interrupted") return status;
   return "finished";
 }

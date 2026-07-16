@@ -102,6 +102,11 @@ dirs = "5.0"
 # HTTP client (provider streaming, phase 3; S3 presigned GET for cloud fs)
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
 blake3 = "1.5"
+# URL parsing + validation for the web_fetch tool (scheme/credential/host checks).
+url = "2.5"
+# HTML→markdown converter for the web_fetch tool. turndown.js-inspired,
+# Apache-2.0. Single new dep for markdown output; `Html` format needs none.
+htmd = "0.5"
 
 # gRPC client for the cloud Filesystem impl (Phase 6). openlet-ai is a CLIENT
 # of openlet file-service; the .proto is vendored under

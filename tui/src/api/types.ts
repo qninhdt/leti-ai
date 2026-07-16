@@ -181,6 +181,15 @@ export interface AskOptionDto {
   description?: string | null;
 }
 
+// Mirrors `openlet_protocol::dto::TodoItemDto`. `todo_updated` carries the
+// authoritative full-overwrite snapshot after the server confirms its atomic
+// artifact persist, so the sidebar can update before message hydration lands.
+export interface TodoItemDto {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  priority: "high" | "medium" | "low";
+}
+
 // Body for POST /v1/session/:id/question/answer. `selected` carries the picked
 // option indices — exactly one for single-select, zero-or-more for multi.
 export interface QuestionAnswerDto {
@@ -266,6 +275,7 @@ export type EventDto =
   | { kind: "plugin_error"; plugin_id: string; code: string; message: string }
   | { kind: "plan_mode_entered"; session_id: string; at: string }
   | { kind: "plan_mode_exited"; session_id: string; plan: string; at: string }
+  | { kind: "todo_updated"; session_id: string; items: TodoItemDto[] }
   // Subagent frames (Phases 2-4). Names match the Phase-2 rename
   // (spawned/progress/settled), plus message/roster
   // (Phase 4). `parent_session_id` routes each to the parent's per-session
@@ -322,6 +332,7 @@ export type EventName =
   | "error"
   | "heartbeat"
   | "plugin.error"
+  | "todo.updated"
   | "subagent.spawned"
   | "subagent.progress"
   | "subagent.settled"

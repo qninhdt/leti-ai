@@ -17,6 +17,7 @@ dirs.workspace = true
 futures.workspace = true
 globset.workspace = true
 hex.workspace = true
+htmd.workspace = true
 ignore.workspace = true
 monty.workspace = true
 openlet-core.workspace = true
@@ -41,6 +42,7 @@ tonic.workspace = true
 tracing.workspace = true
 tree-sitter.workspace = true
 tree-sitter-bash.workspace = true
+url.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 

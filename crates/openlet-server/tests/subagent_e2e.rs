@@ -155,6 +155,7 @@ impl Harness {
             log_format: LogFormat::Pretty,
             plugins: PluginsConfig::default(),
             cloud_fs: None,
+            tool_scheduler: Default::default(),
         };
         let runtime = Arc::new(ConversationRuntime::new(
             provider.clone(),
@@ -324,6 +325,63 @@ async fn real_spawner_runs_child_to_completion_with_output_and_cost() {
     .expect("await did not hang")
     .expect("await ok");
     assert_eq!(status2, TaskStatus::Finished);
+}
+
+#[tokio::test]
+async fn completed_child_can_be_continued_with_its_existing_session() {
+    let h = Harness::build(vec![
+        text_turn_with_usage("initial investigation"),
+        text_turn_with_usage("continued investigation"),
+    ])
+    .await;
+    let ctx = h.parent_ctx(CancellationToken::new()).await;
+
+    let first = h
+        .spawner
+        .spawn(&ctx, "general", "investigate the issue", None, false)
+        .await
+        .expect("initial spawn");
+    let (_initial_output, _cost, initial_status) = h
+        .spawner
+        .await_completion(first.task_id)
+        .await
+        .expect("initial child settles");
+    assert_eq!(initial_status, TaskStatus::Finished);
+
+    let resumed = h
+        .spawner
+        .continue_subagent(
+            &ctx,
+            first.child_session_id,
+            "continue and report the remaining evidence",
+            false,
+        )
+        .await
+        .expect("continuation admits");
+    assert_eq!(resumed.child_session_id, first.child_session_id);
+    assert_ne!(resumed.task_id, first.task_id);
+
+    let (output, _cost, status) = tokio::time::timeout(
+        Duration::from_secs(10),
+        h.spawner.await_completion(resumed.task_id),
+    )
+    .await
+    .expect("continuation await did not hang")
+    .expect("continuation settles");
+    assert_eq!(status, TaskStatus::Finished);
+    assert!(output.contains("continued investigation"), "got {output:?}");
+
+    let executions = h
+        .memory
+        .list_subagent_executions(ctx.session_id, true)
+        .await
+        .expect("durable executions");
+    assert_eq!(executions.len(), 2);
+    assert!(
+        executions
+            .iter()
+            .all(|execution| execution.child_session_id == first.child_session_id)
+    );
 }
 
 #[tokio::test]

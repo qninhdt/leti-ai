@@ -69,7 +69,8 @@ When a cloud need shows the current shape blocks it:
 ## Plugin extension over core edits
 
 - Tools, agents, and the 14 hook kinds register through `PluginContext`. The
-  eight built-in tools ship as `core-tools` to prove the surface suffices.
+  built-in core tools ship as `core-tools` to prove the surface suffices;
+  outbound `web_fetch` remains opt-in through a host-injected fetcher.
 - Hooks are panic/timeout isolated at every dispatch site; a fault synthesizes
   a `Denied{fault}` and publishes a durable `PluginError` event.
 

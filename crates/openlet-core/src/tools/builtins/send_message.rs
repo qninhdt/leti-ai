@@ -24,6 +24,7 @@ use async_trait::async_trait;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::adapters::memory_store::SubagentInboxMessage;
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
 use crate::runtime::subagent::{HandleName, TaskRegistry};
@@ -169,8 +170,19 @@ impl Tool for SendMessageTool {
         // untrusted-data framing renders it as `from=...` so a malicious
         // body can't spoof a trusted sender identity.
         let from = format!("session:{}", ctx.session_id);
+        let message_id = uuid::Uuid::new_v4().to_string();
+        ctx.memory
+            .enqueue_subagent_inbox_message(SubagentInboxMessage {
+                id: message_id.clone(),
+                task_id: entry.task_id,
+                root_session_id: root,
+                from: from.clone(),
+                body: input.body.clone(),
+            })
+            .await
+            .map_err(|e| ToolError::Io(format!("send_message: durable enqueue: {e}")))?;
         self.registry
-            .push_message(entry.task_id, &from, &input.body)
+            .push_message_with_id(entry.task_id, Some(message_id), &from, &input.body)
             .map_err(|e| ToolError::InvalidInput(format!("{}: {}", e.code(), e)))?;
 
         // Emit the `subagent.message` activity frame (metadata only — the body

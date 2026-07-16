@@ -147,6 +147,12 @@ export function ToolSubagentBlock(props: ToolSubagentBlockProps) {
           failed
         </text>
       </Show>
+
+      <Show when={status() === "interrupted"}>
+        <text paddingLeft={3} fg={oc.warning}>
+          interrupted — continue this child from its session
+        </text>
+      </Show>
     </box>
   );
 }

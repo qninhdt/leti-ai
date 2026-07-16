@@ -9,9 +9,11 @@ use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
 
 use openlet_core::adapters::memory_store::{
-    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore,
+    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore, SubagentExecutionPatch,
+    SubagentInboxMessage,
 };
 use openlet_core::error::MemoryError;
+use openlet_core::runtime::subagent::{SubagentExecution, SubagentExecutionStatus, TaskId};
 use openlet_core::types::agent::AgentId;
 use openlet_core::types::message::{Message, MessageId};
 use openlet_core::types::pagination::{Page, PageResult};
@@ -23,7 +25,7 @@ use super::codec::{
     decode_json, encode_json, map_io, mode_str, now_ms, part_kind, role_str, status_str,
 };
 use super::memory_queries::session_filter_clause;
-use super::rows::{row_to_message, row_to_session};
+use super::rows::{row_to_message, row_to_session, row_to_subagent_execution};
 
 #[derive(Debug, Clone)]
 pub struct SqliteMemoryStore {
@@ -44,6 +46,262 @@ impl SqliteMemoryStore {
 
 #[async_trait]
 impl MemoryStore for SqliteMemoryStore {
+    async fn create_subagent_session_and_execution(
+        &self,
+        child: SessionMeta,
+        execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        let extensions = encode_json(&child.extensions, "extensions json")?;
+        let capabilities = encode_json(&child.capabilities, "capabilities json")?;
+        let mut tx = self.pool.begin().await.map_err(map_io)?;
+        sqlx::query(
+            r#"INSERT INTO sessions
+                (id, agent_id, parent_session_id, status, permission_mode,
+                 version, created_at, updated_at, deleted_at, extensions,
+                 capabilities, current_agent_slug, previous_agent_slug, depth, model)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(child.id.to_string())
+        .bind(child.agent_id.to_string())
+        .bind(child.parent_session_id.map(|p| p.to_string()))
+        .bind(status_str(child.status))
+        .bind(mode_str(child.permission_mode))
+        .bind(child.version)
+        .bind(child.created_at.timestamp_millis())
+        .bind(child.updated_at.timestamp_millis())
+        .bind(child.deleted_at.map(|v| v.timestamp_millis()))
+        .bind(extensions)
+        .bind(capabilities)
+        .bind(child.current_agent_slug)
+        .bind(child.previous_agent_slug)
+        .bind(i64::from(child.depth))
+        .bind(child.model)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        sqlx::query(
+            r#"INSERT INTO subagent_executions
+               (task_id, root_session_id, parent_session_id, child_session_id, agent_slug,
+                objective, scope, background, status, terminal_reason, output, cost_usd,
+                created_at, updated_at, finished_at, version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(execution.task_id.to_string())
+        .bind(execution.root_session_id.to_string())
+        .bind(execution.parent_session_id.to_string())
+        .bind(execution.child_session_id.to_string())
+        .bind(execution.agent_slug)
+        .bind(execution.objective)
+        .bind(execution.scope)
+        .bind(i64::from(execution.background))
+        .bind(execution.status.label())
+        .bind(execution.terminal_reason)
+        .bind(execution.output)
+        .bind(execution.cost_usd)
+        .bind(execution.created_at.timestamp_millis())
+        .bind(execution.updated_at.timestamp_millis())
+        .bind(execution.finished_at.map(|v| v.timestamp_millis()))
+        .bind(i64::try_from(execution.version).unwrap_or(i64::MAX))
+        .execute(&mut *tx)
+        .await
+        .map_err(map_io)?;
+        tx.commit().await.map_err(map_io)
+    }
+
+    async fn create_subagent_execution(
+        &self,
+        execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        sqlx::query(
+            r#"INSERT INTO subagent_executions
+               (task_id, root_session_id, parent_session_id, child_session_id, agent_slug,
+                objective, scope, background, status, terminal_reason, output, cost_usd,
+                created_at, updated_at, finished_at, version)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+        )
+        .bind(execution.task_id.to_string())
+        .bind(execution.root_session_id.to_string())
+        .bind(execution.parent_session_id.to_string())
+        .bind(execution.child_session_id.to_string())
+        .bind(execution.agent_slug)
+        .bind(execution.objective)
+        .bind(execution.scope)
+        .bind(i64::from(execution.background))
+        .bind(execution.status.label())
+        .bind(execution.terminal_reason)
+        .bind(execution.output)
+        .bind(execution.cost_usd)
+        .bind(execution.created_at.timestamp_millis())
+        .bind(execution.updated_at.timestamp_millis())
+        .bind(execution.finished_at.map(|v| v.timestamp_millis()))
+        .bind(i64::try_from(execution.version).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        Ok(())
+    }
+
+    async fn get_subagent_execution(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        sqlx::query("SELECT * FROM subagent_executions WHERE task_id = ?")
+            .bind(task_id.to_string())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_io)?
+            .map(row_to_subagent_execution)
+            .transpose()
+    }
+
+    async fn list_subagent_executions(
+        &self,
+        root_session_id: SessionId,
+        include_terminal: bool,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        let sql = if include_terminal {
+            "SELECT * FROM subagent_executions WHERE root_session_id = ? ORDER BY created_at ASC"
+        } else {
+            "SELECT * FROM subagent_executions WHERE root_session_id = ? AND status IN ('pending', 'running') ORDER BY created_at ASC"
+        };
+        sqlx::query(sql)
+            .bind(root_session_id.to_string())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_io)?
+            .into_iter()
+            .map(row_to_subagent_execution)
+            .collect()
+    }
+
+    async fn patch_subagent_execution(
+        &self,
+        task_id: TaskId,
+        patch: SubagentExecutionPatch,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        let now = now_ms();
+        let terminal = patch.status.is_terminal();
+        let changed = sqlx::query(
+            r#"UPDATE subagent_executions
+               SET status = ?, terminal_reason = ?, output = COALESCE(?, output),
+                   cost_usd = COALESCE(?, cost_usd), updated_at = ?,
+                   finished_at = CASE WHEN ? THEN ? ELSE finished_at END,
+                   version = version + 1
+               WHERE task_id = ? AND version = ?"#,
+        )
+        .bind(patch.status.label())
+        .bind(patch.terminal_reason)
+        .bind(patch.output)
+        .bind(patch.cost_usd)
+        .bind(now)
+        .bind(i64::from(terminal))
+        .bind(now)
+        .bind(task_id.to_string())
+        .bind(i64::try_from(patch.expected_version).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        if changed.rows_affected() == 0 {
+            return Ok(None);
+        }
+        self.get_subagent_execution(task_id).await
+    }
+
+    async fn interrupt_live_subagent_executions(
+        &self,
+        reason: &str,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT * FROM subagent_executions WHERE status IN ('pending', 'running') ORDER BY created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
+        let mut interrupted = Vec::with_capacity(rows.len());
+        for row in rows {
+            let execution = row_to_subagent_execution(row)?;
+            if let Some(updated) = self
+                .patch_subagent_execution(
+                    execution.task_id,
+                    SubagentExecutionPatch {
+                        expected_version: execution.version,
+                        status: SubagentExecutionStatus::Interrupted,
+                        terminal_reason: Some(reason.to_string()),
+                        output: None,
+                        cost_usd: None,
+                    },
+                )
+                .await?
+            {
+                interrupted.push(updated);
+            }
+        }
+        Ok(interrupted)
+    }
+
+    async fn enqueue_subagent_inbox_message(
+        &self,
+        message: SubagentInboxMessage,
+    ) -> Result<(), MemoryError> {
+        sqlx::query(
+            "INSERT INTO subagent_inbox_messages (id, task_id, root_session_id, sender, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(message.id)
+        .bind(message.task_id.to_string())
+        .bind(message.root_session_id.to_string())
+        .bind(message.from)
+        .bind(message.body)
+        .bind(now_ms())
+        .execute(&self.pool)
+        .await
+        .map_err(map_io)?;
+        Ok(())
+    }
+
+    async fn list_pending_subagent_inbox_messages(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<SubagentInboxMessage>, MemoryError> {
+        let rows = sqlx::query(
+            "SELECT id, task_id, root_session_id, sender, body FROM subagent_inbox_messages WHERE task_id = ? AND delivered_at IS NULL ORDER BY created_at, id",
+        )
+        .bind(task_id.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_io)?;
+        rows.into_iter()
+            .map(|row| {
+                let raw_task: String = row.try_get("task_id").map_err(map_io)?;
+                let raw_root: String = row.try_get("root_session_id").map_err(map_io)?;
+                Ok(SubagentInboxMessage {
+                    id: row.try_get("id").map_err(map_io)?,
+                    task_id: TaskId(
+                        uuid::Uuid::parse_str(&raw_task)
+                            .map_err(|e| MemoryError::Io(e.to_string()))?,
+                    ),
+                    root_session_id: SessionId(
+                        uuid::Uuid::parse_str(&raw_root)
+                            .map_err(|e| MemoryError::Io(e.to_string()))?,
+                    ),
+                    from: row.try_get("sender").map_err(map_io)?,
+                    body: row.try_get("body").map_err(map_io)?,
+                })
+            })
+            .collect()
+    }
+
+    async fn acknowledge_subagent_inbox_messages(
+        &self,
+        task_id: TaskId,
+        ids: &[String],
+    ) -> Result<(), MemoryError> {
+        for id in ids {
+            sqlx::query("UPDATE subagent_inbox_messages SET delivered_at = COALESCE(delivered_at, ?) WHERE id = ? AND task_id = ?")
+                .bind(now_ms()).bind(id).bind(task_id.to_string())
+                .execute(&self.pool).await.map_err(map_io)?;
+        }
+        Ok(())
+    }
     async fn create_session(
         &self,
         agent_id: AgentId,

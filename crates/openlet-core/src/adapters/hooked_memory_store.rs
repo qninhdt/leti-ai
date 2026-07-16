@@ -16,11 +16,13 @@ use async_trait::async_trait;
 
 use crate::adapters::event_sink::EventSink;
 use crate::adapters::memory_store::{
-    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore,
+    BackgroundTaskSettlement, ClaimedBackgroundTaskSettlement, MemoryStore, SubagentExecutionPatch,
+    SubagentInboxMessage,
 };
 use crate::dispatch::{HookChains, dispatch, publish_fault_if_any};
 use crate::error::MemoryError;
 use crate::hooks::io::{OnMessageCtx, OnSessionStatusCtx};
+use crate::runtime::subagent::{SubagentExecution, TaskId};
 use crate::types::agent::AgentId;
 use crate::types::message::{Message, MessageId};
 use crate::types::part::{Part, PartId};
@@ -73,6 +75,81 @@ impl MemoryStore for HookedMemoryStore {
 
     async fn create_session_with_meta(&self, meta: SessionMeta) -> Result<SessionId, MemoryError> {
         self.inner.create_session_with_meta(meta).await
+    }
+
+    async fn create_subagent_session_and_execution(
+        &self,
+        child: SessionMeta,
+        execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        self.inner
+            .create_subagent_session_and_execution(child, execution)
+            .await
+    }
+
+    async fn create_subagent_execution(
+        &self,
+        execution: SubagentExecution,
+    ) -> Result<(), MemoryError> {
+        self.inner.create_subagent_execution(execution).await
+    }
+
+    async fn get_subagent_execution(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        self.inner.get_subagent_execution(task_id).await
+    }
+
+    async fn list_subagent_executions(
+        &self,
+        root_session_id: SessionId,
+        include_terminal: bool,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        self.inner
+            .list_subagent_executions(root_session_id, include_terminal)
+            .await
+    }
+
+    async fn patch_subagent_execution(
+        &self,
+        task_id: TaskId,
+        patch: SubagentExecutionPatch,
+    ) -> Result<Option<SubagentExecution>, MemoryError> {
+        self.inner.patch_subagent_execution(task_id, patch).await
+    }
+
+    async fn interrupt_live_subagent_executions(
+        &self,
+        reason: &str,
+    ) -> Result<Vec<SubagentExecution>, MemoryError> {
+        self.inner.interrupt_live_subagent_executions(reason).await
+    }
+
+    async fn enqueue_subagent_inbox_message(
+        &self,
+        message: SubagentInboxMessage,
+    ) -> Result<(), MemoryError> {
+        self.inner.enqueue_subagent_inbox_message(message).await
+    }
+
+    async fn list_pending_subagent_inbox_messages(
+        &self,
+        task_id: TaskId,
+    ) -> Result<Vec<SubagentInboxMessage>, MemoryError> {
+        self.inner
+            .list_pending_subagent_inbox_messages(task_id)
+            .await
+    }
+
+    async fn acknowledge_subagent_inbox_messages(
+        &self,
+        task_id: TaskId,
+        ids: &[String],
+    ) -> Result<(), MemoryError> {
+        self.inner
+            .acknowledge_subagent_inbox_messages(task_id, ids)
+            .await
     }
 
     async fn get_session(&self, session: SessionId) -> Result<Option<SessionMeta>, MemoryError> {

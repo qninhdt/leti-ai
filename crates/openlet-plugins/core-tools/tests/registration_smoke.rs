@@ -67,6 +67,27 @@ impl PythonExecutor for StubPython {
     }
 }
 
+/// Web fetcher stub — never invoked; only needs to type-check so we can
+/// prove `.with_web_fetcher()` registers the `web_fetch` tool.
+struct StubFetcher;
+
+#[async_trait]
+impl openlet_core::tools::builtins::web_fetch::WebFetcher for StubFetcher {
+    async fn fetch(
+        &self,
+        _req: openlet_core::tools::builtins::web_fetch::FetchRequest,
+    ) -> Result<
+        openlet_core::tools::builtins::web_fetch::FetchedPage,
+        openlet_core::tools::builtins::web_fetch::FetchError,
+    > {
+        Err(
+            openlet_core::tools::builtins::web_fetch::FetchError::Network(
+                "stub fetcher".to_string(),
+            ),
+        )
+    }
+}
+
 /// Subagent spawner stub — install doesn't spawn, so both methods are dead
 /// paths that only need to type-check.
 struct StubSpawner;
@@ -215,7 +236,7 @@ fn build_plugin() -> CoreToolsPlugin {
 }
 
 #[tokio::test]
-async fn installs_all_fourteen_tools_without_collision() {
+async fn installs_all_eighteen_tools_without_collision() {
     let plugin = build_plugin();
     let mut ctx = PluginContext::new(
         plugin.manifest().clone(),
@@ -236,8 +257,8 @@ async fn installs_all_fourteen_tools_without_collision() {
 
     assert_eq!(
         names.len(),
-        14,
-        "core-tools must register exactly 14 tools, got {names:?}"
+        18,
+        "core-tools must register exactly 18 tools, got {names:?}"
     );
 
     // No id collisions — dedup the names and compare counts.
@@ -262,6 +283,10 @@ async fn installs_all_fourteen_tools_without_collision() {
         "bash",
         "todo",
         "subagent_task",
+        "subagent_list",
+        "subagent_cancel",
+        "subagent_interrupt",
+        "subagent_continue",
         "task_status",
         "send_message",
     ] {
@@ -280,10 +305,45 @@ async fn installs_all_fourteen_tools_without_collision() {
         !names.contains(&"python"),
         "python must be absent unless `.with_python()` is wired; got {names:?}"
     );
+    // `web_fetch` is opt-in too — absent without a wired fetcher.
+    assert!(
+        !names.contains(&"web_fetch"),
+        "web_fetch must be absent unless `.with_web_fetcher()` is wired; got {names:?}"
+    );
+}
+
+/// Wiring a `WebFetcher` via `.with_web_fetcher()` adds exactly one tool —
+/// `web_fetch` — on top of the default 18, mirroring the `python` opt-in.
+#[tokio::test]
+async fn with_web_fetcher_registers_the_web_fetch_tool() {
+    let plugin = build_plugin().with_web_fetcher(Arc::new(StubFetcher));
+    let mut ctx = PluginContext::new(
+        plugin.manifest().clone(),
+        serde_json::Value::Null,
+        Arc::new(NoopCoreApi),
+    );
+
+    plugin
+        .install(&mut ctx)
+        .await
+        .expect("core-tools install must succeed with web_fetcher wired");
+
+    let regs = ctx.into_registrations();
+    let names: Vec<&str> = regs.tools.iter().map(|t| t.name()).collect();
+
+    assert_eq!(
+        names.len(),
+        19,
+        "wiring web_fetcher must register exactly 19 tools, got {names:?}"
+    );
+    assert!(
+        names.contains(&"web_fetch"),
+        "web_fetch tool must be registered when `.with_web_fetcher()` is set; got {names:?}"
+    );
 }
 
 /// Wiring a `PythonExecutor` via `.with_python()` adds exactly one tool —
-/// `python` — on top of the default 14, and nothing else shifts. Locks the
+/// `python` — on top of the default 18, and nothing else shifts. Locks the
 /// opt-in registration branch that the four-arg `new` leaves dormant.
 #[tokio::test]
 async fn with_python_registers_the_python_tool() {
@@ -304,8 +364,8 @@ async fn with_python_registers_the_python_tool() {
 
     assert_eq!(
         names.len(),
-        15,
-        "wiring python must register exactly 15 tools, got {names:?}"
+        19,
+        "wiring python must register exactly 19 tools, got {names:?}"
     );
     assert!(
         names.contains(&"python"),

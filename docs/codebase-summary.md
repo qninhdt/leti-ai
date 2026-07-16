@@ -9,12 +9,12 @@ A map of the workspace: what each crate owns and where to look.
 | Crate | Role |
 |---|---|
 | `openlet-core` | IO-free domain types, port traits, the conversation runtime (turn loop, compaction, subagents, cost, dispatch), tool definitions. Depends on no backend. |
-| `openlet-adapters` | Local port implementations: sqlite memory store, localfs artifact store + filesystem, localshell executor, broadcast-bus event sink, OpenAI + OpenRouter providers. |
+| `openlet-adapters` | Local port implementations: sqlite memory store, localfs artifact store + filesystem, localshell executor, broadcast-bus event sink, OpenAI + OpenRouter providers, and the IP-pinned `ReqwestWebFetcher`. |
 | `openlet-protocol` | Wire DTOs (`dto/*`) for the HTTP API + SSE events. The TUI's contract source. |
 | `openlet-server` | axum composition: routes, auth + workspace-routing middleware, AppState/builder, metrics, evidence scrubber, the runtime subagent spawner + driver, the binary. |
 | `openlet-plugin-api` | The plugin trait + `PluginContext` + hook IO types + `CoreApi` back-channel. |
 | `openlet-plugin-registry` | `install_all` — drains plugin registrations into sorted hook chains + tools + agents + an optional provider. |
-| `openlet-plugins/core-tools` | The eight built-in tools (read/list/glob/grep/write/edit/bash/todo) as a plugin. |
+| `openlet-plugins/core-tools` | Built-in tools as a plugin. `web_fetch` is registered only when the host injects a fetcher, preserving network-free embeddings. |
 | `openlet-plugins/core-agents` | Built-in agent definitions (general, indexer, plan). |
 | `openlet-plugins/test-quota-stub` | Reference quota plugin: the cost-tick cancel pattern the cloud team forks. |
 | `openlet-test-mock-provider` | In-process HTTP mock OpenAI service for keyless tests (captures wire requests). |

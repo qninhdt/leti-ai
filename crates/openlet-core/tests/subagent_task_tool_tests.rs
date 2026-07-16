@@ -112,6 +112,7 @@ fn input(background: bool, task_id: Option<String>) -> SubagentTaskInput {
         scope: None,
         background,
         task_id,
+        child_session_id: None,
     }
 }
 

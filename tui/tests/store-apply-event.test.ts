@@ -159,6 +159,27 @@ describe("store applyEvent", () => {
     expect(useStore.getState().clientError).toBe("Agent error: timeout");
   });
 
+  it("todo_updated replaces the authoritative live checklist, including an empty clear", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "todo_updated",
+      session_id: "sid-todo",
+      items: [
+        { content: "implement", status: "in_progress", priority: "high" },
+        { content: "verify", status: "pending", priority: "medium" },
+      ],
+    });
+    expect(useStore.getState().todos["sid-todo"]).toEqual([
+      { content: "implement", status: "in_progress", priority: "high" },
+      { content: "verify", status: "pending", priority: "medium" },
+    ]);
+
+    // Full-overwrite semantics: an empty list is a real update, not a
+    // missing snapshot that should fall back to historical tool args.
+    s.applyEvent({ kind: "todo_updated", session_id: "sid-todo", items: [] });
+    expect(useStore.getState().todos["sid-todo"]).toEqual([]);
+  });
+
   it("addUserMessage reconciles an SSE placeholder that arrived first (no dup, role=user, badges kept)", () => {
     const s = useStore.getState();
     const sid = "sid-opt";

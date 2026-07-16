@@ -97,6 +97,11 @@ pub struct AdapterStack {
     /// security-by-construction story as `shell`: no subprocess, no host env,
     /// every file op routed through `ctx.fs`.
     pub python: Arc<dyn openlet_core::tools::builtins::python::PythonExecutor>,
+    /// Outbound web fetcher (`reqwest` + SSRF guard) for the `web_fetch`
+    /// tool. This is the runtime's ONLY outbound-network capability; egress
+    /// is gated by the `web_fetch:**` Ask permission seed AND the IP-pinned
+    /// SSRF guard inside the fetcher.
+    pub web_fetcher: Arc<dyn openlet_core::tools::builtins::web_fetch::WebFetcher>,
 }
 
 /// Configuration for building the adapter stack.
@@ -203,6 +208,8 @@ impl AdapterStack {
         };
         let python: Arc<dyn openlet_core::tools::builtins::python::PythonExecutor> =
             Arc::new(MontyExecutor::new());
+        let web_fetcher: Arc<dyn openlet_core::tools::builtins::web_fetch::WebFetcher> =
+            Arc::new(openlet_adapters::webfetch::ReqwestWebFetcher::new());
 
         Ok(Self {
             artifacts,
@@ -213,6 +220,7 @@ impl AdapterStack {
             fs,
             shell,
             python,
+            web_fetcher,
         })
     }
 }

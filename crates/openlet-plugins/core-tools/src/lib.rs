@@ -1,6 +1,6 @@
 //! `core-tools` plugin — registers the built-in tools (read, list,
 //! glob, grep, write, edit, bash, todo, ask_user, enter_plan_mode,
-//! exit_plan_mode, subagent_task, task_status) through the public
+//! exit_plan_mode, subagent_task, subagent lifecycle controls, task_status) through the public
 //! `register_tool` extension point. This is the dogfood
 //! test: if MVP can't ship its own tools through the plugin API, the
 //! API is wrong.
@@ -21,10 +21,12 @@ use openlet_core::tools::Tool;
 use openlet_core::tools::builtins::bash::ShellExecutor;
 use openlet_core::tools::builtins::python::PythonExecutor;
 use openlet_core::tools::builtins::subagent_task::SubagentSpawner;
+use openlet_core::tools::builtins::web_fetch::WebFetcher;
 use openlet_core::tools::builtins::{
     AskUserTool, BashTool, EditTool, EnterPlanModeTool, ExitPlanModeTool, GlobTool, GrepTool,
-    ListTool, PythonTool, ReadTool, SendMessageTool, SubagentTaskTool, TaskStatusTool, TodoTool,
-    WriteTool,
+    ListTool, PythonTool, ReadTool, SendMessageTool, SubagentCancelTool, SubagentContinueTool,
+    SubagentInterruptTool, SubagentListTool, SubagentTaskTool, TaskStatusTool, TodoTool,
+    WebFetchTool, WriteTool,
 };
 use openlet_plugin_api::manifest::Capability;
 use openlet_plugin_api::{Plugin, PluginContext, PluginError, PluginManifest};
@@ -48,6 +50,10 @@ pub struct CoreToolsPlugin {
     /// `PythonExecutor` keep exactly today's tool set, so adding this
     /// parameter is not a breaking change for them.
     python: Option<Arc<dyn PythonExecutor>>,
+    /// Optional outbound web fetcher. `None` (the default) means the
+    /// `web_fetch` tool is not registered — network-free integrators keep
+    /// exactly today's tool set, mirroring `python`.
+    web_fetcher: Option<Arc<dyn WebFetcher>>,
     memory: Arc<dyn MemoryStore>,
     task_registry: Arc<TaskRegistry>,
     spawner: Arc<dyn SubagentSpawner>,
@@ -57,8 +63,8 @@ impl CoreToolsPlugin {
     /// `shell` is the bash executor the `bash` tool forwards into.
     /// `memory` is the session store that `enter_plan_mode` /
     /// `exit_plan_mode` mutate to flip the active agent profile.
-    /// `task_registry` + `spawner` are required by `subagent_task` /
-    /// `task_status`. The host (server crate) builds them once at boot
+    /// `task_registry` + `spawner` are required by `subagent_task` and
+    /// lifecycle controls. The host (server crate) builds them once at boot
     /// and threads the same instances into both `AppState` and this
     /// plugin so tool-side bookkeeping matches route-side cancellation.
     /// All are passed in so production wiring (server crate) decides
@@ -77,7 +83,8 @@ impl CoreToolsPlugin {
                 .description(
                     "Ships the core built-in tools (read, list, glob, grep, write, edit, \
                      bash, todo, ask_user, enter_plan_mode, exit_plan_mode, subagent_task, \
-                     task_status) through the plugin extension surface.",
+                     subagent lifecycle controls, task_status, and the optional web_fetch) through the plugin extension \
+                     surface.",
                 )
                 .author("Openlet")
                 .capabilities(vec![Capability::Tool])
@@ -85,6 +92,7 @@ impl CoreToolsPlugin {
                 .build(),
             shell,
             python: None,
+            web_fetcher: None,
             memory,
             task_registry,
             spawner,
@@ -98,6 +106,17 @@ impl CoreToolsPlugin {
     #[must_use]
     pub fn with_python(mut self, python: Arc<dyn PythonExecutor>) -> Self {
         self.python = Some(python);
+        self
+    }
+
+    /// Enable the `web_fetch` tool by wiring a [`WebFetcher`] (production:
+    /// `openlet_adapters::webfetch::ReqwestWebFetcher`). Builder-style,
+    /// mirroring [`Self::with_python`] — integrators that don't opt in keep
+    /// today's network-free tool set. Egress is additionally gated by the
+    /// `web_fetch:**` Ask permission seed (see `permission_seed.rs`).
+    #[must_use]
+    pub fn with_web_fetcher(mut self, web_fetcher: Arc<dyn WebFetcher>) -> Self {
+        self.web_fetcher = Some(web_fetcher);
         self
     }
 }
@@ -129,8 +148,28 @@ impl Plugin for CoreToolsPlugin {
         ctx.register_tool(erase(EnterPlanModeTool::new(self.memory.clone())))?;
         ctx.register_tool(erase(ExitPlanModeTool::new(self.memory.clone())))?;
         ctx.register_tool(erase(SubagentTaskTool::new(self.spawner.clone())))?;
-        ctx.register_tool(erase(TaskStatusTool::new(self.task_registry.clone())))?;
+        ctx.register_tool(erase(SubagentListTool::new(self.memory.clone())))?;
+        ctx.register_tool(erase(SubagentCancelTool::new(
+            self.memory.clone(),
+            self.task_registry.clone(),
+        )))?;
+        ctx.register_tool(erase(SubagentInterruptTool::new(
+            self.memory.clone(),
+            self.task_registry.clone(),
+        )))?;
+        ctx.register_tool(erase(SubagentContinueTool::new(self.spawner.clone())))?;
+        ctx.register_tool(erase(TaskStatusTool::with_memory(
+            self.task_registry.clone(),
+            self.memory.clone(),
+        )))?;
         ctx.register_tool(erase(SendMessageTool::new(self.task_registry.clone())))?;
+        // `web_fetch` registers only when the host wired a fetcher — absent
+        // otherwise, so network-free integrators keep today's tool set. This
+        // is the runtime's only outbound-network capability; egress is gated
+        // by the `web_fetch:**` Ask permission seed.
+        if let Some(web_fetcher) = &self.web_fetcher {
+            ctx.register_tool(erase(WebFetchTool::with_fetcher(web_fetcher.clone())))?;
+        }
         Ok(())
     }
 }

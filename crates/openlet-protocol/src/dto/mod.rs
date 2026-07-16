@@ -25,5 +25,6 @@ pub use part::PartDto;
 pub use permission::{PermissionReplyDto, PermissionReplyKind, PermissionRequestDto};
 pub use question::QuestionAnswerDto;
 pub use session::{
-    AbortAckDto, BackgroundTaskAckDto, CompactAckDto, CreateSessionDto, SessionDto, SetModeDto,
+    AbortAckDto, BackgroundTaskAckDto, CompactAckDto, ContinueSubagentDto, CreateSessionDto,
+    SessionDto, SetModeDto, SubagentControlAckDto, SubagentExecutionDto,
 };

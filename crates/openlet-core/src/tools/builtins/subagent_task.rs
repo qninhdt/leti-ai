@@ -66,6 +66,21 @@ pub trait SubagentSpawner: Send + Sync + 'static {
     ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
         self.await_completion(task_id).await
     }
+
+    /// Start a fresh execution on an existing child transcript. Default keeps
+    /// third-party spawners source-compatible until they opt into durable
+    /// continuation support.
+    async fn continue_subagent(
+        &self,
+        _ctx: &ToolCtx,
+        _child_session_id: SessionId,
+        _objective: &str,
+        _background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError> {
+        Err(SpawnError::Internal(
+            "subagent continuation is not implemented by this host".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +112,10 @@ pub struct SubagentTaskInput {
     /// fresh spawn is attempted.
     #[serde(default)]
     pub task_id: Option<String>,
+    /// Existing child session to continue. When present, `objective` is
+    /// appended to that child's transcript and a new task id is created.
+    #[serde(default)]
+    pub child_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -157,6 +176,40 @@ impl Tool for SubagentTaskTool {
     }
 
     async fn run(&self, ctx: ToolCtx, input: Self::Input) -> Result<Self::Output, ToolError> {
+        if let Some(raw_child_session_id) = input.child_session_id.as_deref() {
+            let child_session_id = raw_child_session_id
+                .parse::<uuid::Uuid>()
+                .map(SessionId)
+                .map_err(|_| {
+                    ToolError::InvalidInput("subagent_task: child_session_id must be UUIDv4".into())
+                })?;
+            let spawned = self
+                .spawner
+                .continue_subagent(&ctx, child_session_id, &input.objective, input.background)
+                .await
+                .map_err(map_spawn_err)?;
+            if input.background {
+                return Ok(SubagentTaskOutput {
+                    task_id: spawned.task_id.to_string(),
+                    child_session_id: Some(spawned.child_session_id.to_string()),
+                    status: "running".into(),
+                    output: None,
+                    cost_usd: None,
+                });
+            }
+            let (output, cost_usd, status) = self
+                .spawner
+                .await_foreground_completion(spawned.task_id)
+                .await
+                .map_err(map_spawn_err)?;
+            return Ok(SubagentTaskOutput {
+                task_id: spawned.task_id.to_string(),
+                child_session_id: Some(spawned.child_session_id.to_string()),
+                status: status.label().into(),
+                output: Some(output),
+                cost_usd,
+            });
+        }
         // Resume path — caller provided an existing task_id. Skip spawn,
         // jump straight to await/poll.
         if let Some(existing) = input.task_id.as_deref()

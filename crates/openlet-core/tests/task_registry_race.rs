@@ -1,5 +1,5 @@
 //! `TaskRegistry::admit` quota under concurrent admits +
-//! explicit-finalize coverage + an `#[ignore]`'d panic-leak regression.
+//! explicit-finalize coverage + a low-level panic-safety demonstration.
 //!
 //! The registry uses `AtomicUsize::fetch_add(AcqRel)` to claim a quota
 //! slot. With quota = 4 and 8 concurrent admits, exactly 4 must
@@ -218,22 +218,14 @@ async fn await_completion_returns_output_when_finalize_races_set_status() {
     }
 }
 
-/// Regression test documenting the panic-leak gap.
-///
-/// `subagent_spawner.rs:132,177,350` calls `finalize` EXPLICITLY on
-/// success/error paths — there is NO `impl Drop` on the spawner driver
-/// or the handle. If the driver task panics BEFORE reaching its
-/// `finalize` call, the quota counter is not decremented, which
-/// prevents future spawns within the same root session.
-///
-/// This test asserts the current (broken) behaviour so future spawner
-/// rewrites that move finalize into a Drop guard will visibly
-/// regress this test, at which point we delete the `#[ignore]` and
-/// remove the leak documentation.
-///
-/// The fix lives in production code, not the test. Tracked separately.
+/// The raw registry deliberately has explicit ownership: a caller that admits
+/// and then abandons a task without installing/finalizing its handle leaks its
+/// own quota. Production `RuntimeSubagentSpawner` wraps the entire driver in
+/// `catch_unwind` and finalizes the task on every exceptional exit; this
+/// ignored demonstration protects that API boundary from being confused with
+/// an automatic RAII guard.
 #[tokio::test]
-#[ignore = "documents subagent_spawner panic-leak gap; production fix tracked separately"]
+#[ignore = "documents raw TaskRegistry ownership; RuntimeSubagentSpawner catches driver panics"]
 async fn panic_between_admit_and_finalize_leaks_quota_slot() {
     let registry = Arc::new(TaskRegistry::new(1));
     let root = SessionId::new();

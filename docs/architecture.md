@@ -38,6 +38,14 @@ Tool execution is not an adapter trait. Tools implement the `Tool` /
 (bash, file ops, grep, glob) reach the workspace through the per-agent
 `Filesystem` handle (`AgentResources.fs`).
 
+`web_fetch` is deliberately also outside the six-trait adapter surface. Its
+tool-local `WebFetcher` seam is optionally injected by the host; the reference
+server wires `ReqwestWebFetcher`, while network-free integrators can omit it
+and do not register the tool. The production implementation permits only
+public `http`/`https` destinations, pins each DNS-resolved IP before connecting
+and rechecks redirects, and size-caps output. Its `web_fetch:**` permission
+rule defaults to Ask so model-controlled URLs cannot silently exfiltrate data.
+
 A new deployment swaps adapters wholesale (e.g. cloud impl for `MemoryStore`)
 without touching `openlet-core` or routes.
 
@@ -93,6 +101,16 @@ as `delivered` only after that parent turn succeeds; a turn error releases its
 matching token back to `pending`, while a crash leaves the lease to expire.
 Startup and the periodic reconciler claim both pending and expired-lease rows,
 so a stale worker cannot acknowledge, release, or renew a later attempt.
+
+Subagent executions are independently durable. Each child transcript is
+reusable while every invocation receives a distinct execution id and lifecycle
+row (`pending → running → terminal`). Boot marks live rows `interrupted` with
+`process_restart`; it never blindly replays provider work. A user or tool can
+explicitly continue the child, preserving its transcript but creating a new
+execution. `subagent_list`, `task_status`, cancel, interrupt and continue all
+read that durable source when the in-process registry is unavailable. Sibling
+messages are also persisted before wake-up and acknowledged only after their
+untrusted payload is appended to the receiving child transcript.
 
 Compaction persists a typed request boundary. The request wording is injected
 only for the compaction provider call; the generated assistant text remains a

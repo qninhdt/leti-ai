@@ -102,7 +102,7 @@ These are the types integrators import. Everything else is internal.
 | Quota / billing | Integrator | Subscribe to `EventSink` or use `before_turn` hook (phase 3) + `cancel_session` (phase 5) |
 | Audit logging | Integrator | `EventSink::subscribe(EventFilter::all)` |
 | Permission policy | Integrator | Supply own `Arc<dyn PermissionManager>` |
-| Custom tools / agents / providers | Integrator | Plugin via `PluginContext::register_*`. Even the eight built-in tools (`read`, `list`, `glob`, `grep`, `write`, `edit`, `bash`, `todo`) ship through the `core-tools` plugin — proof the surface is sufficient |
+| Custom tools / agents / providers | Integrator | Plugin via `PluginContext::register_*`. Core tools, including `read`, `list`, `glob`, `grep`, `write`, `edit`, `bash`, `todo`, and opt-in `web_fetch`, ship through the `core-tools` plugin — proof the surface is sufficient. `web_fetch` needs a host-injected `WebFetcher` and should remain Ask-by-default. |
 | Conversation loop, tool dispatch, projection | Core | Don't fork; extend via plugins |
 | Cancellation cascade | Core | `POST /v1/session/:id/abort` cancels the live turn |
 | Cost calc, persistence, SSE | Core | Adapter-swappable but algorithm stays in core |
@@ -161,11 +161,11 @@ bumps the major when the extension API breaks. Pin your plugin's
   integrators bind `user_id` without forking core types.
 - Phase 5 adds `CoreApi::cancel_session` so plugins can stop a session
   mid-flight from any hook.
-- Phase 6 ships the `core-tools` plugin: the 8 built-in tools register
+- Phase 6 ships the `core-tools` plugin: the original 8 built-in tools register
   through `PluginContext::register_tool` like any custom tool, proving
   the public surface is sufficient.
 - Phase 7 ships the `tests/integration_smoke.rs` regression gate that
-  asserts (a) `install_all` drains all 8 built-in tools + the `general`
+  asserts (a) `install_all` drains the original 8 built-in tools + the `general`
   agent through the public surface, (b) the `test-quota-stub` plugin
   installs its hook chain cleanly, and (c) `extensions["user_id"]`
   round-trips through SQLite. Clone it as a starting reference for

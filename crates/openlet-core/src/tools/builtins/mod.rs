@@ -1,7 +1,7 @@
-//! Eight built-in tools (`read`, `list`, `glob`, `grep`, `write`, `edit`,
-//! `bash`, `todo`) plus the interactive `ask_user` prompt tool implementing
-//! the typed `Tool` trait. Each tool is a single small file under this
-//! module.
+//! Built-in tools (`read`, `list`, `glob`, `grep`, `write`, `edit`,
+//! `bash`, `todo`, and the `Option`-injected `web_fetch`) plus the
+//! interactive `ask_user` prompt tool implementing the typed `Tool` trait.
+//! Each tool is a single small file under this module.
 //!
 //! Production wiring registers these through the `core-tools` plugin
 //! (`crates/openlet-plugins/core-tools/src/lib.rs`), which is the
@@ -35,9 +35,11 @@ pub mod plan_mode;
 pub mod python;
 pub mod read;
 pub mod send_message;
+pub mod subagent_control;
 pub mod subagent_task;
 pub mod task_status;
 pub mod todo;
+pub mod web_fetch;
 pub mod write;
 
 pub use ask_user::AskUserTool;
@@ -50,7 +52,11 @@ pub use plan_mode::{EnterPlanModeTool, ExitPlanModeTool};
 pub use python::{PythonExecutor, PythonOutput, PythonTool};
 pub use read::ReadTool;
 pub use send_message::SendMessageTool;
+pub use subagent_control::{
+    SubagentCancelTool, SubagentContinueTool, SubagentInterruptTool, SubagentListTool,
+};
 pub use subagent_task::{SubagentSpawner, SubagentTaskTool};
 pub use task_status::TaskStatusTool;
 pub use todo::TodoTool;
+pub use web_fetch::{FetchError, FetchFormat, FetchRequest, FetchedPage, WebFetchTool, WebFetcher};
 pub use write::WriteTool;

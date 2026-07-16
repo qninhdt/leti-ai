@@ -292,7 +292,7 @@ async fn edit_blocked_until_read() {
     let res = EditTool
         .run(
             c.clone(),
-            EditInput {
+            EditInput::Flat {
                 path: "a.md".into(),
                 find: "world".into(),
                 replace: "rust".into(),
@@ -317,7 +317,7 @@ async fn edit_blocked_until_read() {
     let ok = EditTool
         .run(
             c,
-            EditInput {
+            EditInput::Flat {
                 path: "a.md".into(),
                 find: "world".into(),
                 replace: "rust".into(),
@@ -376,7 +376,7 @@ async fn edit_rejects_ambiguous_match() {
     let res = EditTool
         .run(
             c,
-            EditInput {
+            EditInput::Flat {
                 path: "dup.txt".into(),
                 find: "foo".into(),
                 replace: "bar".into(),
@@ -385,4 +385,93 @@ async fn edit_rejects_ambiguous_match() {
         )
         .await;
     assert!(matches!(res, Err(ToolError::InvalidInput(_))));
+}
+
+#[tokio::test]
+async fn edit_batch_applies_ops_in_order_single_write() {
+    use openlet_core::tools::builtins::edit::{EditOp, EditsInput};
+
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("b.txt");
+    tokio::fs::write(&target, b"alpha beta").await.unwrap();
+    let c = ctx(dir.path(), PermissionMode::Danger, ReadHistory::new());
+
+    let ok = EditTool
+        .run(
+            c,
+            EditInput::Batch {
+                path: "b.txt".into(),
+                edits: EditsInput::Many(vec![
+                    EditOp {
+                        find: "alpha".into(),
+                        replace: "gamma".into(),
+                        replace_all: false,
+                    },
+                    EditOp {
+                        find: "beta".into(),
+                        replace: "delta".into(),
+                        replace_all: false,
+                    },
+                ]),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(ok.replacements, 2);
+    let after = tokio::fs::read_to_string(&target).await.unwrap();
+    assert_eq!(after, "gamma delta");
+}
+
+#[tokio::test]
+async fn edit_batch_mid_batch_failure_leaves_file_untouched() {
+    use openlet_core::tools::builtins::edit::{EditOp, EditsInput};
+
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("atomic.txt");
+    tokio::fs::write(&target, b"one two two").await.unwrap();
+    let c = ctx(dir.path(), PermissionMode::Danger, ReadHistory::new());
+
+    // op1 is valid; op2 is ambiguous (>1 match) → whole call aborts, no write.
+    let res = EditTool
+        .run(
+            c,
+            EditInput::Batch {
+                path: "atomic.txt".into(),
+                edits: EditsInput::Many(vec![
+                    EditOp {
+                        find: "one".into(),
+                        replace: "ONE".into(),
+                        replace_all: false,
+                    },
+                    EditOp {
+                        find: "two".into(),
+                        replace: "TWO".into(),
+                        replace_all: false,
+                    },
+                ]),
+            },
+        )
+        .await;
+    assert!(matches!(res, Err(ToolError::InvalidInput(_))));
+    // File on disk is unchanged — op1's ONE was never written.
+    let after = tokio::fs::read_to_string(&target).await.unwrap();
+    assert_eq!(after, "one two two");
+}
+
+#[tokio::test]
+async fn edit_batch_single_object_via_json() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("j.txt");
+    tokio::fs::write(&target, b"foo foo").await.unwrap();
+    let c = ctx(dir.path(), PermissionMode::Danger, ReadHistory::new());
+
+    let input: EditInput = serde_json::from_value(serde_json::json!({
+        "path": "j.txt",
+        "edits": { "find": "foo", "replace": "bar", "replace_all": true }
+    }))
+    .unwrap();
+    let ok = EditTool.run(c, input).await.unwrap();
+    assert_eq!(ok.replacements, 2);
+    let after = tokio::fs::read_to_string(&target).await.unwrap();
+    assert_eq!(after, "bar bar");
 }

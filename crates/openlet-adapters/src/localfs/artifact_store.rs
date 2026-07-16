@@ -69,7 +69,31 @@ impl ArtifactStore for LocalFsArtifactStore {
         let dir = self.session_dir(session);
         tokio::fs::create_dir_all(&dir).await.map_err(map_io)?;
         let path = self.key_path(session, key);
-        tokio::fs::write(&path, &bytes).await.map_err(map_io)?;
+        // Crash-safe atomic write: stage into a tempfile in the same dir,
+        // sync it, then rename(2) over the target and sync the parent
+        // directory. A process crash or power loss cannot leave a torn
+        // `todos.json` (or another artifact) on disk.
+        // tempfile is sync, so offload to the blocking pool.
+        let path_clone = path.clone();
+        let dir_clone = dir.clone();
+        let body = bytes.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), std::io::Error> {
+            use std::io::Write as _;
+
+            let mut tmp = tempfile::NamedTempFile::new_in(&dir_clone)?;
+            tmp.write_all(&body)?;
+            tmp.as_file().sync_all()?;
+            tmp.persist(&path_clone).map_err(|e| e.error)?;
+            // POSIX directory fsync makes the rename durable. Windows does
+            // not support syncing directory handles in the same way, while
+            // `sync_all` above still flushes the replacement file.
+            #[cfg(unix)]
+            std::fs::File::open(&dir_clone)?.sync_all()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| ArtifactError::Io(format!("atomic artifact write join: {e}")))?
+        .map_err(map_io)?;
 
         let size = bytes.len() as i64;
         let rel: PathBuf =

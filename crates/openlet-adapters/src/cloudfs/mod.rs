@@ -156,6 +156,13 @@ impl CloudFilesystem {
 
 #[async_trait]
 impl Filesystem for CloudFilesystem {
+    fn scheduling_key(&self, path: &Path) -> String {
+        format!(
+            "cloud:{}:{}",
+            self.workspace_id,
+            normalize_rel(path).unwrap_or_else(|_| path.to_string_lossy().into_owned())
+        )
+    }
     async fn read(&self, path: &Path, range: Option<ByteRange>) -> Result<Bytes, FsError> {
         let file_id = self.resolve_file_id(path).await?;
         let info = self

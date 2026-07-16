@@ -4,7 +4,8 @@
 //! fails CI before it reaches downstream integrators.
 //!
 //! Covers:
-//! - `core-tools` plugin registers all 8 built-ins through `register_tool`.
+//! - `core-tools` plugin registers its built-ins through `register_tool`
+//!   (web_fetch is Option-injected, so absent here where no fetcher is wired).
 //! - `core-agents` plugin registers `general` + `indexer` through
 //!   `register_agent`.
 //! - `test-quota-stub` plugin installs its `before_turn` + `on_cost_tick`
@@ -47,6 +48,7 @@ async fn canonical_plugin_set_drains_tools_and_agents() {
     let plugins = all_plugins(
         shell,
         None,
+        None,
         stub_memory(),
         stub_task_registry(),
         stub_spawner(),
@@ -58,7 +60,8 @@ async fn canonical_plugin_set_drains_tools_and_agents() {
         .await
         .expect("install canonical plugin set");
 
-    // 10 built-ins from core-tools (8 originals + subagent_task + task_status).
+    // core-tools built-ins registered through the plugin surface. web_fetch
+    // is Option-injected (like python) and absent here — no fetcher wired.
     let tool_names: Vec<&'static str> = installed.tools.iter().map(|t| t.name()).collect();
     for expected in [
         "read",
@@ -120,6 +123,7 @@ async fn quota_stub_installs_with_default_config() {
         all_plugins(
             stub_shell(),
             None,
+            None,
             stub_memory(),
             stub_task_registry(),
             stub_spawner(),
@@ -133,6 +137,7 @@ async fn quota_stub_installs_with_default_config() {
     // With the quota stub appended.
     let mut plugins = all_plugins(
         stub_shell(),
+        None,
         None,
         stub_memory(),
         stub_task_registry(),

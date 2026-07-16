@@ -78,7 +78,9 @@ tool registry + agent definitions + an optional provider. 14 hook kinds
 cost tick, step finish, compaction, …). Every dispatch site is panic/timeout
 isolated: a fault synthesizes `Denied{fault}` and publishes a durable
 `PluginError`. Quota/cost-cap is the cost-tick seam (`test-quota-stub`), not a
-trait. The eight built-in tools ship as `core-tools`.
+trait. The built-in core tool set ships as `core-tools`; `web_fetch` is
+registered only when the host injects its outbound-network fetcher and is
+permission-gated to Ask by default.
 
 ## Subagents
 
@@ -88,6 +90,12 @@ seeds the objective, and drives a nested `run_loop` in `subagent_driver`. Child
 cost rolls up to the parent's ledger; the parent's cancel token is the child's
 parent (`child_token`), so cancellation cascades. Terminal snapshots are cached
 so a lost finalize race can't strand `await_completion`.
+
+The SQLite execution ledger is the restart-safe lifecycle authority. A boot
+converts live entries to `interrupted(process_restart)` and requires explicit
+continue rather than repeating potentially side-effecting provider/tool work.
+Sibling inbox records persist before notification and are acknowledged only
+after being written as untrusted child-transcript input.
 
 ## Error flow
 
@@ -105,7 +113,7 @@ per-workspace label on the open scrape).
 
 ## Persistence
 
-SQLite via sqlx, migrations `0001`–`0008`. `SessionMeta` = explicit columns +
+SQLite via sqlx, migrations `0001`–`0016`. `SessionMeta` = explicit columns +
 JSON blobs (`extensions`, `capabilities`). Durable event ids assigned/persisted/
 broadcast under one lock (ordering guarantee), seeded from `MAX(id)` across
 restart. Artifacts on localfs, sha256-keyed, metadata in sqlite. The

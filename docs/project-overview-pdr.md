@@ -67,8 +67,9 @@ runtime. `openlet-adapters` holds the local implementations (sqlite, localfs,
 localshell, broadcast bus, OpenAI/OpenRouter providers). `openlet-server`
 composes them into an axum HTTP/SSE surface with auth + workspace-routing
 middleware. `openlet-protocol` is the wire DTO set. Plugins
-(`openlet-plugin-*`) register tools/agents/hooks through a stable API; even
-the eight built-in tools ship as the `core-tools` plugin. The TUI (`tui/`) is
+(`openlet-plugin-*`) register tools/agents/hooks through a stable API; the
+built-in core tools ship as the `core-tools` plugin, with outbound `web_fetch`
+opt-in at host wiring. The TUI (`tui/`) is
 a separate TypeScript client.
 
 See `docs/system-architecture.md` for the full picture.

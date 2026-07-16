@@ -85,6 +85,12 @@ impl RouterBuilder {
             .routes(routes!(session::get_one, session::delete))
             .routes(routes!(session::set_mode))
             .routes(routes!(session::background_task))
+            .routes(routes!(session::list_subagents))
+            .routes(routes!(
+                session::cancel_subagent,
+                session::interrupt_subagent
+            ))
+            .routes(routes!(session::continue_subagent))
             .routes(routes!(cancel::abort));
         self
     }

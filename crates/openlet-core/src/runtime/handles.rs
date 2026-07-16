@@ -16,6 +16,7 @@ use crate::agent::AgentRegistry;
 use crate::dispatch::HookChains;
 use crate::runtime::question_registry::QuestionRegistry;
 use crate::runtime::subagent::TaskRegistry;
+use crate::tools::ToolScheduler;
 use crate::tools::registry::ToolRegistry;
 
 /// Shared adapter handles passed through the turn loop into every tool
@@ -35,4 +36,5 @@ pub struct RuntimeHandles {
     pub questions: Arc<QuestionRegistry>,
     pub task_registry: Arc<TaskRegistry>,
     pub agent_registry: Arc<AgentRegistry>,
+    pub tool_scheduler: Arc<ToolScheduler>,
 }

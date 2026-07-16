@@ -83,6 +83,19 @@ describe("store subagents slice", () => {
     expect(row?.current_activity).toBe("in-progress tail");
   });
 
+  it("preserves interrupted as a resumable terminal state", () => {
+    const s = useStore.getState();
+    s.applyEvent({
+      kind: "subagent_settled",
+      task_id: "task-interrupted",
+      child_session_id: "child-3",
+      parent_session_id: "parent-1",
+      status: "interrupted",
+      cost_usd: null,
+    });
+    expect(useStore.getState().subagents["task-interrupted"]?.status).toBe("interrupted");
+  });
+
   it("ignores subagent_message / subagent_roster in the core slice (Phase 6 owns them)", () => {
     const s = useStore.getState();
     s.applyEvent({

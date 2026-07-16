@@ -8,10 +8,13 @@
 use std::sync::Arc;
 
 use openlet_core::adapters::event_sink::Persistence;
+use openlet_core::adapters::memory_store::SubagentExecutionPatch;
 use openlet_core::error::CoreError;
 use openlet_core::projection::ProjectionCaps;
 use openlet_core::runtime::LoopContext;
-use openlet_core::runtime::subagent::{DeliveryOwnership, TaskId, TaskStatus};
+use openlet_core::runtime::subagent::{
+    DeliveryOwnership, SubagentExecutionStatus, TaskId, TaskStatus,
+};
 use openlet_core::types::event::AgentEvent;
 use openlet_core::types::part::Part;
 use openlet_core::types::session::SessionId;
@@ -38,6 +41,38 @@ pub(crate) async fn drive_subagent(
     handle_name: openlet_core::runtime::subagent::HandleName,
 ) -> Result<(), CoreError> {
     let registry = state.task_registry.clone();
+
+    // The durable row is the lifecycle source of truth. Mark it running
+    // before provider/tool work begins so boot recovery can safely classify
+    // a process crash at any later point.
+    let execution = state
+        .memory
+        .get_subagent_execution(task_id)
+        .await?
+        .ok_or_else(|| {
+            CoreError::Memory(openlet_core::error::MemoryError::Io(
+                "subagent execution missing".into(),
+            ))
+        })?;
+    let execution_version = state
+        .memory
+        .patch_subagent_execution(
+            task_id,
+            SubagentExecutionPatch {
+                expected_version: execution.version,
+                status: SubagentExecutionStatus::Running,
+                terminal_reason: None,
+                output: None,
+                cost_usd: None,
+            },
+        )
+        .await?
+        .ok_or_else(|| {
+            CoreError::Memory(openlet_core::error::MemoryError::Io(
+                "subagent execution state conflict".into(),
+            ))
+        })?
+        .version;
 
     let tools = crate::turn_driver::tool_specs(&state);
 
@@ -86,6 +121,43 @@ pub(crate) async fn drive_subagent(
         child_model.clone(),
         system_prompt.clone(),
     );
+
+    // Recover messages accepted before a process exit (or while this child
+    // was interrupted). Acknowledge only after each wrapped part is durable,
+    // so an error leaves the message available to a later explicit resume.
+    let recovered_inbox = state
+        .memory
+        .list_pending_subagent_inbox_messages(task_id)
+        .await?;
+    if !recovered_inbox.is_empty() {
+        let mut acknowledged = Vec::new();
+        for message in recovered_inbox {
+            let wrapped = crate::injected_turn::wrap_untrusted(
+                &crate::app_state::TurnOrigin::SiblingMessage { from: message.from },
+                &message.body,
+            );
+            seed_child_message(&state, child_session_id, wrapped).await?;
+            acknowledged.push(message.id);
+        }
+        state
+            .memory
+            .acknowledge_subagent_inbox_messages(task_id, &acknowledged)
+            .await?;
+        let messages = openlet_core::runtime::prepare_session_messages(
+            &loop_ctx.handles,
+            child_session_id,
+            ProjectionCaps::default(),
+            openlet_core::runtime::ReminderRequestContext::default(),
+        )
+        .await?;
+        input = crate::turn_driver::build_turn_input(
+            child_session_id,
+            messages,
+            crate::turn_driver::tool_specs(&state),
+            child_model.clone(),
+            system_prompt.clone(),
+        );
+    }
 
     let memory = crate::turn_driver::memory_arc(&state);
 
@@ -150,6 +222,9 @@ pub(crate) async fn drive_subagent(
 
         final_status = match &outcome {
             Ok(_) => TaskStatus::Finished,
+            Err(_) if child_cancel.is_cancelled() && registry.was_interrupted(task_id) => {
+                TaskStatus::Interrupted
+            }
             Err(_) if child_cancel.is_cancelled() => TaskStatus::Cancelled,
             Err(e) => TaskStatus::Failed(e.to_string()),
         };
@@ -172,6 +247,7 @@ pub(crate) async fn drive_subagent(
         // turn in the child's OWN session, then rebuild the projection so
         // the next `run_loop` sees them.
         let msgs = registry.drain_inbox(task_id);
+        let mut acknowledged = Vec::new();
         for m in &msgs {
             let wrapped = crate::injected_turn::wrap_untrusted(
                 &crate::app_state::TurnOrigin::SiblingMessage {
@@ -185,6 +261,18 @@ pub(crate) async fn drive_subagent(
             {
                 break;
             }
+            if let Some(id) = &m.id {
+                acknowledged.push(id.clone());
+            }
+        }
+        if !acknowledged.is_empty()
+            && state
+                .memory
+                .acknowledge_subagent_inbox_messages(task_id, &acknowledged)
+                .await
+                .is_err()
+        {
+            break;
         }
         // Re-project the child session so the drained messages enter the
         // next objective's input.
@@ -223,6 +311,36 @@ pub(crate) async fn drive_subagent(
     } else {
         Some(format!("{total_cost:.4}"))
     };
+    let execution_status = match &final_status {
+        TaskStatus::Finished => SubagentExecutionStatus::Finished,
+        TaskStatus::Cancelled => SubagentExecutionStatus::Cancelled,
+        TaskStatus::Interrupted => SubagentExecutionStatus::Interrupted,
+        TaskStatus::Failed(_) => SubagentExecutionStatus::Failed,
+        TaskStatus::Running => SubagentExecutionStatus::Interrupted,
+    };
+    let terminal_reason = match &final_status {
+        TaskStatus::Failed(error) => Some(error.clone()),
+        TaskStatus::Cancelled => Some("cancelled".to_string()),
+        TaskStatus::Interrupted => Some("interrupted".to_string()),
+        _ => None,
+    };
+    if state
+        .memory
+        .patch_subagent_execution(
+            task_id,
+            SubagentExecutionPatch {
+                expected_version: execution_version,
+                status: execution_status,
+                terminal_reason,
+                output: Some(snap.clone()),
+                cost_usd: cost_str.clone(),
+            },
+        )
+        .await?
+        .is_none()
+    {
+        tracing::warn!(%task_id, execution_version, "subagent terminal execution state conflicted");
+    }
     // Guard the terminal side-effect behind the one-shot `settled` slot so
     // a task cannot both inject AND publish-with-output. Claiming BEFORE
     // `finalize` (which removes the handle) ensures the slot is present.

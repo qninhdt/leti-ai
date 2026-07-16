@@ -35,6 +35,16 @@ use crate::error::FsError;
 /// Object-safe trait the runtime injects via `ToolCtx::fs`.
 #[async_trait]
 pub trait Filesystem: Send + Sync + 'static {
+    /// Stable lock namespace for a workspace-relative path. Adapters with a
+    /// real workspace identity should override this; the default is safe for
+    /// custom adapters because it includes the concrete adapter type.
+    fn scheduling_key(&self, path: &Path) -> String {
+        format!(
+            "{}:{}",
+            std::any::type_name::<Self>(),
+            crate::tools::scheduler::normalize_path(path).display()
+        )
+    }
     /// Read a file in full or a `(start, len)` byte range. Returns
     /// `FsError::Binary` if the impl deems the content non-text and
     /// the caller did not opt in via `ReadOpts::allow_binary` (handled

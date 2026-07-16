@@ -31,6 +31,7 @@ fn test_config() -> Config {
         log_format: LogFormat::Pretty,
         plugins: PluginsConfig::default(),
         cloud_fs: None,
+        tool_scheduler: Default::default(),
     }
 }
 

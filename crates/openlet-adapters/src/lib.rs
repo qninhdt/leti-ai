@@ -16,3 +16,6 @@ pub mod openrouter;
 pub mod pyexec;
 pub mod sqlite;
 pub(crate) mod util;
+pub mod webfetch;
+
+pub use webfetch::ReqwestWebFetcher;

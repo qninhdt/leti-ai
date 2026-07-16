@@ -408,6 +408,7 @@ fn variant_exhaustiveness_compile_gate() {
             | ToolError::NotFound(_)
             | ToolError::InvalidInput(_)
             | ToolError::Timeout
+            | ToolError::Cancelled
             | ToolError::Io(_)
             | ToolError::NotAllowedInAgent { .. }
             | ToolError::Unimplemented => e.into(),

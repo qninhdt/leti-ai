@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use crate::adapters::tool_executor::ToolCtx;
 use crate::error::ToolError;
-use crate::tools::Tool;
+use crate::tools::{CancellationPolicy, Tool};
 use crate::types::permission::PermissionRequest;
 
 /// Object-safe trait the runtime injects into `PythonTool`. Implemented in
@@ -78,6 +78,9 @@ impl Tool for PythonTool {
     }
     fn parallel_safe(&self) -> bool {
         false
+    }
+    fn cancellation_policy(&self) -> CancellationPolicy {
+        CancellationPolicy::WaitForCleanup
     }
 
     fn permission(&self, input: &Self::Input) -> PermissionRequest {

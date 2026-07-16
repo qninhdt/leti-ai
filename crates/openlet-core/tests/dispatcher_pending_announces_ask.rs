@@ -193,9 +193,9 @@ async fn cancelling_pending_permission_drains_ask_and_publishes_resolution() {
     assert!(
         matches!(
             results[0].outcome,
-            Err(openlet_core::error::ToolError::PermissionDenied(_))
+            Err(openlet_core::error::ToolError::Cancelled)
         ),
-        "cancelled pending tool must be denied: {:?}",
+        "cancelled pending tool must be terminal: {:?}",
         results[0].outcome
     );
     assert_eq!(

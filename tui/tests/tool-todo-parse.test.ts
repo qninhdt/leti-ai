@@ -41,4 +41,13 @@ describe("parseTodos", () => {
     const items = parseTodos({ todos: [{ content: "x" }] });
     expect(items[0]!.status).toBe("pending");
   });
+
+  it("coerces a legacy persisted 'cancelled' status to pending (enum shrank 4→3)", () => {
+    // `cancelled` was dropped from TodoStatus; an old todos.json holding it
+    // must still render rather than break — the unknown-status fallback coerces
+    // it to pending.
+    const items = parseTodos({ todos: [{ content: "old", status: "cancelled" }] });
+    expect(items).toHaveLength(1);
+    expect(items[0]!.status).toBe("pending");
+  });
 });

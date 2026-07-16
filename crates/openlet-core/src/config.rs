@@ -11,6 +11,7 @@ use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
+use crate::tools::ToolSchedulerConfig;
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -29,6 +30,7 @@ pub struct Config {
     /// file-service ships migration 000016 + the `GrepFiles` RPC. Enabling it
     /// against an older backend makes `grep` return gRPC `Unimplemented`.
     pub cloud_fs: Option<CloudFsConfig>,
+    pub tool_scheduler: ToolSchedulerConfig,
 }
 
 /// Connection parameters for the cloud `Filesystem` (file-service gRPC).
@@ -119,6 +121,20 @@ impl Config {
                 })
             }
         };
+        let parse_limit = |name: &str, default: usize| -> Result<usize, ConfigError> {
+            match env::var(name) {
+                Ok(raw) => raw.parse::<usize>().ok().filter(|v| *v > 0).ok_or_else(|| {
+                    ConfigError::Invalid(format!("{name} must be a positive integer"))
+                }),
+                Err(_) => Ok(default),
+            }
+        };
+        let tool_scheduler = ToolSchedulerConfig {
+            max_per_turn: parse_limit("OPENLET_TOOL_MAX_PER_TURN", 8)?,
+            max_global: parse_limit("OPENLET_TOOL_MAX_GLOBAL", 64)?,
+        }
+        .validate()
+        .map_err(ConfigError::Invalid)?;
 
         Ok(Self {
             bind_addr,
@@ -129,6 +145,7 @@ impl Config {
             log_format,
             plugins: PluginsConfig::default(),
             cloud_fs,
+            tool_scheduler,
         })
     }
 }

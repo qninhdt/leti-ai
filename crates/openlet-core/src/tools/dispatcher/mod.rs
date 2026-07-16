@@ -21,7 +21,10 @@ use crate::adapters::tool_executor::ToolCtx;
 use crate::dispatch::{DispatchOutcome, HookChains, dispatch, publish_fault_if_any};
 use crate::error::ToolError;
 use crate::hooks::io::{AfterToolCallCtx, BeforeToolCallCtx};
-use crate::tools::ToolRegistry;
+use crate::tools::{
+    ResourceAccess, ResourceClaim, ResourceKey, SchedulingMode, ToolConcurrency, ToolRegistry,
+    ToolScheduler, ToolSchedulerConfig,
+};
 use crate::types::permission::PermissionCtx;
 use crate::types::session::SessionId;
 
@@ -76,32 +79,87 @@ pub async fn dispatch_batch(
     perm_ctx: PermissionCtx,
     invocations: Vec<ToolInvocation>,
 ) -> Vec<ToolDispatchResult> {
+    dispatch_batch_with_scheduler(
+        registry,
+        permission,
+        hook_chains,
+        events,
+        session_id,
+        ctx_for,
+        perm_ctx,
+        invocations,
+        Arc::new(ToolScheduler::new(ToolSchedulerConfig::default())),
+    )
+    .await
+}
+
+/// Scheduler-backed variant used by the server runtime. The supplied
+/// scheduler is process-wide, while this invocation creates one per-turn cap.
+#[allow(clippy::too_many_arguments)]
+pub async fn dispatch_batch_with_scheduler(
+    registry: &Arc<ToolRegistry>,
+    permission: &Arc<dyn PermissionManager>,
+    hook_chains: &Arc<HookChains>,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
+    ctx_for: impl Fn(&ToolInvocation) -> ToolCtx,
+    perm_ctx: PermissionCtx,
+    invocations: Vec<ToolInvocation>,
+    scheduler: Arc<ToolScheduler>,
+) -> Vec<ToolDispatchResult> {
     let len = invocations.len();
-    let mut indexed: Vec<(usize, ToolInvocation, bool)> = Vec::with_capacity(len);
+    let mut indexed: Vec<(usize, ToolInvocation, ToolConcurrency, Option<ToolError>)> =
+        Vec::with_capacity(len);
+    // Hooks must precede parsing/classification so an argument replacement
+    // locks the resource it actually requests.
     for (i, inv) in invocations.into_iter().enumerate() {
-        let parallel_safe = registry.get(&inv.name).is_some_and(|t| t.parallel_safe());
-        indexed.push((i, inv, parallel_safe));
+        match before_hooks(hook_chains, events, session_id, &inv).await {
+            Ok(inv) => {
+                let policy = registry
+                    .get(&inv.name)
+                    .ok_or_else(|| ToolError::NotFound(inv.name.clone()))
+                    .and_then(|t| {
+                        Ok(builtin_concurrency(&inv, session_id)
+                            .unwrap_or(t.concurrency(&inv.args)?))
+                    });
+                match policy {
+                    Ok(policy) => indexed.push((i, inv, policy, None)),
+                    Err(e) => indexed.push((i, inv, ToolConcurrency::exclusive(), Some(e))),
+                }
+            }
+            Err(e) => indexed.push((i, inv, ToolConcurrency::exclusive(), Some(e))),
+        }
     }
 
     let mut out: Vec<Option<ToolDispatchResult>> = (0..len).map(|_| None).collect();
 
+    let turn = scheduler.turn_semaphore();
     let mut cursor = 0;
     while cursor < indexed.len() {
-        if indexed[cursor].2 {
+        if indexed[cursor].2.mode == SchedulingMode::Concurrent && indexed[cursor].3.is_none() {
             let wave_start = cursor;
-            while cursor < indexed.len() && indexed[cursor].2 {
+            let mut claims = indexed[cursor].2.claims.clone();
+            cursor += 1;
+            while cursor < indexed.len()
+                && indexed[cursor].2.mode == SchedulingMode::Concurrent
+                && indexed[cursor].3.is_none()
+                && !claims_conflict(&claims, &indexed[cursor].2.claims)
+            {
+                claims.extend(indexed[cursor].2.claims.clone());
                 cursor += 1;
             }
             let mut futs = FuturesUnordered::new();
-            for (idx, inv, _) in indexed[wave_start..cursor].iter().cloned() {
+            for (idx, inv, policy, _) in indexed[wave_start..cursor].iter().cloned() {
                 let registry = Arc::clone(registry);
                 let permission = Arc::clone(permission);
                 let hooks = Arc::clone(hook_chains);
                 let events = Arc::clone(events);
                 let ctx = ctx_for(&inv);
                 let pctx = perm_ctx.clone();
+                let scheduler = scheduler.clone();
+                let turn = turn.clone();
                 futs.push(async move {
-                    let result = run_one_with_hooks(
+                    let result = run_prepared(
                         &registry,
                         &permission,
                         &hooks,
@@ -110,6 +168,9 @@ pub async fn dispatch_batch(
                         ctx,
                         pctx,
                         &inv,
+                        policy,
+                        scheduler,
+                        turn,
                     )
                     .await;
                     (idx, inv, result)
@@ -126,20 +187,28 @@ pub async fn dispatch_batch(
             continue;
         }
 
-        let (idx, inv, _) = indexed[cursor].clone();
+        let (idx, inv, policy, pre_error) = indexed[cursor].clone();
         cursor += 1;
         let ctx = ctx_for(&inv);
-        let result = run_one_with_hooks(
-            registry,
-            permission,
-            hook_chains,
-            events,
-            session_id,
-            ctx,
-            perm_ctx.clone(),
-            &inv,
-        )
-        .await;
+        let result = match pre_error {
+            Some(e) => Err(e),
+            None => {
+                run_prepared(
+                    registry,
+                    permission,
+                    hook_chains,
+                    events,
+                    session_id,
+                    ctx,
+                    perm_ctx.clone(),
+                    &inv,
+                    policy,
+                    scheduler.clone(),
+                    turn.clone(),
+                )
+                .await
+            }
+        };
         record_tool_metric(&result, &inv.name);
         out[idx] = Some(ToolDispatchResult {
             call_id: inv.call_id,
@@ -160,58 +229,158 @@ pub async fn dispatch_batch(
         .collect()
 }
 
+fn claims_conflict(a: &[ResourceClaim], b: &[ResourceClaim]) -> bool {
+    a.iter().any(|x| {
+        b.iter().any(|y| {
+            x.key == y.key
+                && (x.access == ResourceAccess::Write || y.access == ResourceAccess::Write)
+        })
+    })
+}
+
+fn builtin_concurrency(inv: &ToolInvocation, session: SessionId) -> Option<ToolConcurrency> {
+    let workspace_read =
+        || ToolConcurrency::concurrent().with_claim(ResourceKey::Workspace, ResourceAccess::Read);
+    let workspace_write =
+        || ToolConcurrency::exclusive().with_claim(ResourceKey::Workspace, ResourceAccess::Write);
+    let path = |access| {
+        inv.args
+            .get("path")
+            .and_then(Value::as_str)
+            .map(|p| workspace_read().with_claim(ResourceKey::WorkspacePath(p.into()), access))
+    };
+    match inv.name.as_str() {
+        "read" => path(ResourceAccess::Read),
+        "write" | "edit" => path(ResourceAccess::Write),
+        "list" | "glob" | "grep" => Some(workspace_read()),
+        "bash" | "python" => Some(workspace_write()),
+        "todo" => Some(ToolConcurrency::concurrent().with_claim(
+            ResourceKey::Session(format!("{session}:todos")),
+            ResourceAccess::Write,
+        )),
+        "ask_user" => Some(ToolConcurrency::exclusive().with_claim(
+            ResourceKey::Session(format!("{session}:interaction")),
+            ResourceAccess::Write,
+        )),
+        "enter_plan_mode" | "exit_plan_mode" => Some(ToolConcurrency::exclusive().with_claim(
+            ResourceKey::Session(format!("{session}:agent-profile")),
+            ResourceAccess::Write,
+        )),
+        "web_fetch" | "subagent_task" | "send_message" => Some(ToolConcurrency::concurrent()),
+        "task_status" => inv.args.get("task_id").and_then(Value::as_str).map(|id| {
+            ToolConcurrency::concurrent()
+                .with_claim(ResourceKey::Task(id.into()), ResourceAccess::Read)
+        }),
+        _ => None,
+    }
+}
+
+async fn before_hooks(
+    hooks: &Arc<HookChains>,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
+    inv: &ToolInvocation,
+) -> Result<ToolInvocation, ToolError> {
+    if hooks.before_tool_call.is_empty() {
+        return Ok(inv.clone());
+    }
+    let outcome = dispatch(
+        &hooks.before_tool_call,
+        BeforeToolCallCtx {
+            session_id: Some(session_id),
+            invocation: Some(inv.clone()),
+        },
+    )
+    .await;
+    publish_fault_if_any(events, Some(session_id), &outcome).await;
+    match outcome {
+        DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => {
+            Ok(c.invocation.unwrap_or_else(|| inv.clone()))
+        }
+        DispatchOutcome::Denied {
+            reason, feedback, ..
+        } => Err(ToolError::PermissionDenied(format!(
+            "{reason}{}",
+            feedback.map(|f| format!(": {f}")).unwrap_or_default()
+        ))),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(
-    skip_all,
-    fields(session_id = %session_id, tool = %inv.name, call_id = %inv.call_id)
-)]
-async fn run_one_with_hooks(
+async fn run_prepared(
     registry: &Arc<ToolRegistry>,
     permission: &Arc<dyn PermissionManager>,
-    hook_chains: &Arc<HookChains>,
+    hooks: &Arc<HookChains>,
     events: &Arc<dyn EventSink>,
     session_id: SessionId,
     ctx: ToolCtx,
     perm_ctx: PermissionCtx,
     inv: &ToolInvocation,
+    mut policy: ToolConcurrency,
+    scheduler: Arc<ToolScheduler>,
+    turn: Arc<tokio::sync::Semaphore>,
 ) -> Result<Value, ToolError> {
-    // BeforeToolCall — Replace mutates args; Deny short-circuits to a
-    // synthetic error result fed back to the model. Skip ctx clone
-    // entirely when no plugin registered the chain (O(1) empty path).
-    let mutated = if hook_chains.before_tool_call.is_empty() {
-        inv.clone()
-    } else {
-        let before_ctx = BeforeToolCallCtx {
-            session_id: Some(session_id),
-            invocation: Some(inv.clone()),
-        };
-        let outcome = dispatch(&hook_chains.before_tool_call, before_ctx).await;
-        publish_fault_if_any(events, Some(session_id), &outcome).await;
-        match outcome {
-            DispatchOutcome::Completed(c) | DispatchOutcome::Stopped(c) => {
-                c.invocation.unwrap_or_else(|| inv.clone())
-            }
-            DispatchOutcome::Denied {
-                reason, feedback, ..
-            } => {
-                return Err(ToolError::PermissionDenied(format!(
-                    "{reason}{}",
-                    feedback.map(|f| format!(": {f}")).unwrap_or_default()
-                )));
-            }
-        }
-    };
+    policy.claims = resolve_claims(policy.claims, &ctx);
+    let started = std::time::Instant::now();
+    let child = ctx.cancel.child_token();
+    let admission = scheduler
+        .acquire(turn, policy.claims, &child)
+        .await
+        .map_err(|_| ToolError::Cancelled)?;
+    metrics::histogram!("openlet_tool_queue_wait_seconds", "stage" => "admission")
+        .record(started.elapsed().as_secs_f64());
+    // Permission waits race cancellation inside `run_one`, which also cleans
+    // up a pending ask before returning. Tool implementations receive the
+    // child token in `ToolCtx` and are expected to observe it while running.
+    let outcome = run_one(registry, permission, ctx, perm_ctx, inv).await;
+    drop(admission);
+    after_hooks(hooks, events, session_id, inv, outcome).await
+}
 
-    let outcome = run_one(registry, permission, ctx, perm_ctx, &mutated).await;
+fn resolve_claims(claims: Vec<ResourceClaim>, ctx: &ToolCtx) -> Vec<ResourceClaim> {
+    claims
+        .into_iter()
+        .map(|mut c| {
+            match c.key {
+                ResourceKey::Workspace => {
+                    c.key = ResourceKey::Custom {
+                        namespace: "filesystem".into(),
+                        key: ctx.fs.scheduling_key(std::path::Path::new(".")),
+                    }
+                }
+                ResourceKey::WorkspacePath(ref p) => {
+                    c.key = ResourceKey::Custom {
+                        namespace: "filesystem".into(),
+                        key: ctx.fs.scheduling_key(p),
+                    }
+                }
+                _ => {}
+            };
+            c
+        })
+        .collect()
+}
 
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(
+    skip_all,
+    fields(session_id = %session_id, tool = %inv.name, call_id = %inv.call_id)
+)]
+async fn after_hooks(
+    hook_chains: &Arc<HookChains>,
+    events: &Arc<dyn EventSink>,
+    session_id: SessionId,
+    inv: &ToolInvocation,
+    outcome: Result<Value, ToolError>,
+) -> Result<Value, ToolError> {
     // AfterToolCall — Replace swaps the result; Stop/Deny preserve the
     // original outcome. Same O(1) empty-chain skip as above.
     if hook_chains.after_tool_call.is_empty() {
         return outcome;
     }
     let result_for_hook = ToolDispatchResult {
-        call_id: mutated.call_id.clone(),
-        name: mutated.name.clone(),
+        call_id: inv.call_id.clone(),
+        name: inv.name.clone(),
         outcome: match &outcome {
             Ok(v) => Ok(v.clone()),
             Err(e) => Err(e.clone()),
@@ -219,7 +388,7 @@ async fn run_one_with_hooks(
     };
     let after_ctx = AfterToolCallCtx {
         session_id: Some(session_id),
-        invocation: Some(mutated),
+        invocation: Some(inv.clone()),
         result: Some(result_for_hook),
     };
     let after_outcome = dispatch(&hook_chains.after_tool_call, after_ctx).await;

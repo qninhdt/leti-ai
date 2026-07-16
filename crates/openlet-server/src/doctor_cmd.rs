@@ -102,6 +102,7 @@ async fn build_doctor_state(config: &Config) -> anyhow::Result<openlet_server::A
         core_api,
         stack.shell.clone(),
         Some(stack.python.clone()),
+        Some(stack.web_fetcher.clone()),
         stack.memory.clone(),
         task_registry.clone(),
         spawner_dyn,

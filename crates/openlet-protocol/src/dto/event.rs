@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use openlet_core::types::event::{
-    AgentEvent, AskOption, AttachmentKind, DeltaKind, NotificationLevel, Usage,
+    AgentEvent, AskOption, AttachmentKind, DeltaKind, NotificationLevel, TodoEventItem, Usage,
 };
 use openlet_core::types::session::SessionStatus;
 
@@ -149,6 +149,10 @@ pub enum EventDto {
         body: String,
         plugin_id: String,
     },
+    TodoUpdated {
+        session_id: Uuid,
+        items: Vec<TodoItemDto>,
+    },
     Heartbeat,
 }
 
@@ -159,6 +163,25 @@ pub struct RosterEntryDto {
     pub name: String,
     pub task_id: Uuid,
     pub generation: u64,
+}
+
+/// Wire shape for a `todo.updated` item. Mirrors
+/// `openlet_core::types::event::TodoEventItem` 1:1 (string fields).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TodoItemDto {
+    pub content: String,
+    pub status: String,
+    pub priority: String,
+}
+
+impl From<TodoEventItem> for TodoItemDto {
+    fn from(i: TodoEventItem) -> Self {
+        Self {
+            content: i.content,
+            status: i.status,
+            priority: i.priority,
+        }
+    }
 }
 
 /// Wire shape for `AttachmentKind`. Mirrors the domain enum 1:1.
@@ -549,6 +572,10 @@ impl From<AgentEvent> for EventDto {
                 title,
                 body,
                 plugin_id,
+            },
+            AgentEvent::TodoUpdated { session_id, items } => Self::TodoUpdated {
+                session_id: session_id.as_uuid(),
+                items: items.into_iter().map(TodoItemDto::from).collect(),
             },
             AgentEvent::Heartbeat => Self::Heartbeat,
         }

@@ -46,6 +46,10 @@ fn saturating_dec(counter: &AtomicUsize) {
 #[derive(Clone)]
 pub struct TaskRegistry {
     tasks: Arc<DashMap<TaskId, TaskHandle>>,
+    /// Cancellation intent is separate from the token: both cancel and
+    /// interrupt trip the same token, but callers need a stable terminal
+    /// distinction so an interrupted child can be explicitly continued.
+    interrupted: Arc<DashMap<TaskId, ()>>,
     /// Quota counter per ROOT session. Every started task increments
     /// `session_descendants[root]`; completion / cancellation decrements.
     session_descendants: Arc<DashMap<SessionId, AtomicUsize>>,
@@ -154,6 +158,7 @@ impl TaskRegistry {
     pub fn with_limits(max_per_session: usize, max_lifetime_spawns: usize) -> Self {
         Self {
             tasks: Arc::new(DashMap::new()),
+            interrupted: Arc::new(DashMap::new()),
             session_descendants: Arc::new(DashMap::new()),
             lifetime_spawns: Arc::new(DashMap::new()),
             terminal: Arc::new(Mutex::new(TerminalCache::default())),
@@ -290,6 +295,7 @@ impl TaskRegistry {
     /// double-call harmless; the leak risk is a missing call, tracked by
     /// the `panic_between_admit_and_finalize_leaks_quota_slot` regression.
     pub fn finalize(&self, id: TaskId) {
+        self.interrupted.remove(&id);
         if let Some((_, handle)) = self.tasks.remove(&id)
             && let Some(c) = self.session_descendants.get(&handle.root_session_id)
         {
@@ -394,9 +400,25 @@ impl TaskRegistry {
 
     /// Trip the cancellation token for `id`. Idempotent.
     pub fn cancel(&self, id: TaskId) {
+        self.interrupted.remove(&id);
         if let Some(handle) = self.tasks.get(&id) {
             handle.cancel.cancel();
         }
+    }
+
+    /// Interrupt the current execution but preserve the child session for an
+    /// explicit continuation. Idempotent and intentionally uses the same
+    /// cancellation token as a terminal cancel.
+    pub fn interrupt(&self, id: TaskId) {
+        if let Some(handle) = self.tasks.get(&id) {
+            self.interrupted.insert(id, ());
+            handle.cancel.cancel();
+        }
+    }
+
+    #[must_use]
+    pub fn was_interrupted(&self, id: TaskId) -> bool {
+        self.interrupted.contains_key(&id)
     }
 
     /// Cascade cancel: every task whose root matches `root` is cancelled.
@@ -648,6 +670,19 @@ impl TaskRegistry {
     /// the task's re-arm `inbox_notify` is woken so a parked driver drains
     /// it (Phase 2).
     pub fn push_message(&self, id: TaskId, from: &str, body: &str) -> Result<(), SpawnError> {
+        self.push_message_with_id(id, None, from, body)
+    }
+
+    /// Same as [`Self::push_message`] but preserves a durable inbox row id so
+    /// the driver can acknowledge it only after it reaches the child
+    /// transcript.
+    pub fn push_message_with_id(
+        &self,
+        id: TaskId,
+        message_id: Option<String>,
+        from: &str,
+        body: &str,
+    ) -> Result<(), SpawnError> {
         if body.len() > self.max_message_bytes {
             return Err(SpawnError::MessageRejected(format!(
                 "message body {} bytes exceeds cap {}",
@@ -669,6 +704,7 @@ impl TaskRegistry {
                 )));
             }
             inbox.push_back(super::task_types::InboxMessage {
+                id: message_id,
                 from: from.to_string(),
                 body: body.to_string(),
             });

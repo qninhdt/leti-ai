@@ -160,6 +160,8 @@ pub enum ToolError {
     InvalidInput(String),
     #[error("tool execution timed out")]
     Timeout,
+    #[error("tool execution cancelled")]
+    Cancelled,
     #[error("tool io: {0}")]
     Io(String),
     /// Tool name not present in the active agent's `tool_allowlist`.
@@ -229,6 +231,7 @@ impl ToolError {
             Self::NotFound(_) => FailureClass::ToolNotFound,
             Self::InvalidInput(_) => FailureClass::ToolInvalidInput,
             Self::Timeout => FailureClass::ToolTimeout,
+            Self::Cancelled => FailureClass::ToolCancelled,
             Self::Io(_) => FailureClass::ToolIo,
             Self::NotAllowedInAgent { .. } => FailureClass::ToolNotAllowedInAgent,
             Self::Unimplemented => FailureClass::ToolUnimplemented,

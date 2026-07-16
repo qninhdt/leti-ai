@@ -197,6 +197,15 @@ pub enum AgentEvent {
         body: String,
         plugin_id: String,
     },
+    /// `todo.updated` — durable. Emitted by the `todo` tool after a
+    /// confirmed (atomic) persist of the session's checklist. Carries the
+    /// full item list so the TUI re-renders the checklist live without
+    /// re-reading the artifact. The full-overwrite semantics of `todo`
+    /// mean each event is the authoritative current list.
+    TodoUpdated {
+        session_id: SessionId,
+        items: Vec<TodoEventItem>,
+    },
     /// `heartbeat` — TRANSIENT.
     Heartbeat,
 }
@@ -228,6 +237,7 @@ impl AgentEvent {
             Self::SubagentMessage { .. } => "subagent.message",
             Self::SubagentRoster { .. } => "subagent.roster",
             Self::NotificationEmitted { .. } => "notification.emitted",
+            Self::TodoUpdated { .. } => "todo.updated",
             Self::Heartbeat => "heartbeat",
         }
     }
@@ -250,7 +260,8 @@ impl AgentEvent {
             | Self::QuestionRequested { session_id, .. }
             | Self::PlanModeEntered { session_id, .. }
             | Self::PlanModeExited { session_id, .. }
-            | Self::AttachmentAccepted { session_id, .. } => Some(*session_id),
+            | Self::AttachmentAccepted { session_id, .. }
+            | Self::TodoUpdated { session_id, .. } => Some(*session_id),
             Self::Error { session_id, .. }
             | Self::PluginError { session_id, .. }
             | Self::NotificationEmitted { session_id, .. } => *session_id,
@@ -272,6 +283,19 @@ impl AgentEvent {
             Self::Heartbeat => None,
         }
     }
+}
+
+/// One checklist item carried on a `todo.updated` event. Kept as a
+/// self-contained struct with string fields (rather than referencing the
+/// `todo` tool's enums) so the IO-free `types/` layer does not depend on
+/// the `tools/` layer. `status` / `priority` carry the same snake_case
+/// wire strings the tool itself emits (`pending` / `in_progress` /
+/// `completed`, `high` / `medium` / `low`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TodoEventItem {
+    pub content: String,
+    pub status: String,
+    pub priority: String,
 }
 
 /// One live sibling in a `subagent.roster` frame. Carries only what the

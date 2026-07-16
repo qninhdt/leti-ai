@@ -24,7 +24,7 @@ use crate::runtime::agent_allowlist::{
 };
 use crate::runtime::doom_guard::{self, DoomVerdict, TurnSummary as DoomTurnSummary};
 use crate::runtime::handles::RuntimeHandles;
-use crate::tools::{ReadHistory, ToolInvocation, dispatch_batch};
+use crate::tools::{ReadHistory, ToolInvocation, dispatch_batch_with_scheduler};
 use crate::types::agent::AgentId;
 use crate::types::event::AgentEvent;
 use crate::types::message::MessageId;
@@ -355,7 +355,7 @@ impl ConversationRuntime {
             let dispatched_results = if allowed.is_empty() {
                 Vec::new()
             } else {
-                dispatch_batch(
+                dispatch_batch_with_scheduler(
                     &loop_ctx.handles.registry,
                     &loop_ctx.handles.permission,
                     &loop_ctx.handles.hook_chains,
@@ -364,6 +364,7 @@ impl ConversationRuntime {
                     ctx_for,
                     perm_ctx,
                     allowed,
+                    loop_ctx.handles.tool_scheduler.clone(),
                 )
                 .await
             };

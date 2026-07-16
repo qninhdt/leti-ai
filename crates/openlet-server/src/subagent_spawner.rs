@@ -16,10 +16,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::FutureExt;
 use openlet_core::adapters::event_sink::Persistence;
 use openlet_core::adapters::tool_executor::ToolCtx;
 use openlet_core::runtime::subagent::{
-    BackgroundTransition, DeliveryOwnership, SpawnError, TaskId, TaskStatus, plan_subagent_spawn,
+    BackgroundTransition, DeliveryOwnership, SpawnError, SubagentExecution,
+    SubagentExecutionStatus, TaskId, TaskStatus, plan_subagent_continuation, plan_subagent_spawn,
 };
 use openlet_core::tools::builtins::subagent_task::{SpawnedSubagent, SubagentSpawner};
 use openlet_core::types::event::AgentEvent;
@@ -103,6 +105,35 @@ impl RuntimeSubagentSpawner {
         // Depth cap reached (corrupt/cyclic parent chain) — bounded fallback.
         Ok(current)
     }
+
+    async fn durable_completion(
+        &self,
+        task_id: TaskId,
+    ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
+        let state = self.state()?;
+        let execution = state
+            .memory
+            .get_subagent_execution(task_id)
+            .await
+            .map_err(|e| SpawnError::Internal(format!("load task execution: {e}")))?
+            .ok_or_else(|| SpawnError::Internal("task vanished before completion".into()))?;
+        let status = match execution.status {
+            SubagentExecutionStatus::Finished => TaskStatus::Finished,
+            SubagentExecutionStatus::Cancelled => TaskStatus::Cancelled,
+            SubagentExecutionStatus::Interrupted => TaskStatus::Interrupted,
+            SubagentExecutionStatus::Failed => TaskStatus::Failed(
+                execution
+                    .terminal_reason
+                    .unwrap_or_else(|| "task failed".into()),
+            ),
+            SubagentExecutionStatus::Pending | SubagentExecutionStatus::Running => {
+                return Err(SpawnError::Internal(
+                    "task is still running but has no live handle".into(),
+                ));
+            }
+        };
+        Ok((execution.output, execution.cost_usd, status))
+    }
 }
 
 #[async_trait]
@@ -151,17 +182,31 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
             ));
         }
 
-        // Persist the child session synchronously so SSE consumers see
-        // the row before SubagentSpawned fires. We MUST persist
-        // `plan.child` verbatim (via create_session_with_meta) rather than
-        // calling create_session: the planner pre-allocated `plan.child.id`
-        // — the id every seeded message/part and the driver loop are keyed
-        // on — and set the correct `depth` for the grandchild depth guard.
-        // create_session would mint a *fresh* id and reset depth to 0,
-        // orphaning the seed messages under FK enforcement.
+        // Persist child identity and execution together. This prevents a
+        // restart from observing an addressable child session with no task
+        // lifecycle record (or vice versa).
+        let now = Utc::now();
+        let execution = SubagentExecution {
+            task_id: plan.task_id,
+            root_session_id: root,
+            parent_session_id: parent_meta.id,
+            child_session_id: plan.child.id,
+            agent_slug: plan.agent_slug.as_str().to_string(),
+            objective: objective.to_string(),
+            scope: scope.map(str::to_string),
+            background,
+            status: SubagentExecutionStatus::Pending,
+            terminal_reason: None,
+            output: String::new(),
+            cost_usd: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+            version: 0,
+        };
         if let Err(e) = state
             .memory
-            .create_session_with_meta(plan.child.clone())
+            .create_subagent_session_and_execution(plan.child.clone(), execution)
             .await
         {
             state.task_registry.finalize(plan.task_id);
@@ -238,25 +283,49 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         publish_roster(state, driver_root).await;
 
         tokio::spawn(async move {
-            if let Err(error) = crate::subagent_driver::drive_subagent(
-                driver_state.clone(),
-                task_id,
-                parent_id,
-                child_session_id,
-                agent_slug,
-                child_perm,
-                child_cancel,
-                agent_resources,
-                driver_root,
-                handle_name,
-            )
-            .await
-            {
+            let failure =
+                match std::panic::AssertUnwindSafe(crate::subagent_driver::drive_subagent(
+                    driver_state.clone(),
+                    task_id,
+                    parent_id,
+                    child_session_id,
+                    agent_slug,
+                    child_perm,
+                    child_cancel,
+                    agent_resources,
+                    driver_root,
+                    handle_name,
+                ))
+                .catch_unwind()
+                .await
+                {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(error.to_string()),
+                    Err(_) => Some("subagent driver panicked".to_string()),
+                };
+            if let Some(error) = failure {
                 // Every admitted task must settle even if setup fails before
                 // the driver's normal terminal path. This fallback owns only
                 // the exceptional path; a normally settled driver returns
                 // Ok and has already published/finalized itself.
-                let status = TaskStatus::Failed(error.to_string());
+                let status = TaskStatus::Failed(error.clone());
+                if let Ok(Some(execution)) =
+                    driver_state.memory.get_subagent_execution(task_id).await
+                {
+                    let _ = driver_state
+                        .memory
+                        .patch_subagent_execution(
+                            task_id,
+                            openlet_core::adapters::memory_store::SubagentExecutionPatch {
+                                expected_version: execution.version,
+                                status: SubagentExecutionStatus::Failed,
+                                terminal_reason: Some(error.clone()),
+                                output: Some(error.clone()),
+                                cost_usd: None,
+                            },
+                        )
+                        .await;
+                }
                 let delivery = driver_state
                     .task_registry
                     .settle_delivery(task_id)
@@ -275,7 +344,7 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
                                     task_id: task_id.0.to_string(),
                                     child_session_id,
                                     status: status.label().to_string(),
-                                    output: error.to_string(),
+                                    output: error.clone(),
                                     cost_usd: None,
                                 },
                             )
@@ -328,14 +397,10 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         task_id: TaskId,
     ) -> Result<(String, Option<String>, TaskStatus), SpawnError> {
         let state = self.state()?;
-        let snap =
-            state
-                .task_registry
-                .await_completion(task_id)
-                .await
-                .ok_or(SpawnError::Internal(
-                    "task vanished before completion".into(),
-                ))?;
+        let snap = state.task_registry.await_completion(task_id).await;
+        let Some(snap) = snap else {
+            return self.durable_completion(task_id).await;
+        };
         let cost = if snap.cost_usd.is_zero() {
             None
         } else {
@@ -352,15 +417,213 @@ impl SubagentSpawner for RuntimeSubagentSpawner {
         let snap = state
             .task_registry
             .await_foreground_completion(task_id)
-            .await
-            .ok_or(SpawnError::Internal(
-                "task vanished before foreground completion".into(),
-            ))?;
+            .await;
+        let Some(snap) = snap else {
+            return self.durable_completion(task_id).await;
+        };
         let cost = if snap.cost_usd.is_zero() {
             None
         } else {
             Some(format!("{:.4}", snap.cost_usd))
         };
         Ok((snap.output, cost, snap.status))
+    }
+
+    async fn continue_subagent(
+        &self,
+        ctx: &ToolCtx,
+        child_session_id: SessionId,
+        objective: &str,
+        background: bool,
+    ) -> Result<SpawnedSubagent, SpawnError> {
+        let state = self.state()?;
+        let child = state
+            .memory
+            .get_session(child_session_id)
+            .await
+            .map_err(|e| SpawnError::Internal(format!("load child session: {e}")))?
+            .ok_or_else(|| SpawnError::Internal("child session missing".into()))?;
+        let root = self.root_session_of(ctx.session_id).await?;
+        if self.root_session_of(child_session_id).await? != root {
+            return Err(SpawnError::Internal(
+                "child session belongs to another root".into(),
+            ));
+        }
+        if state
+            .memory
+            .list_subagent_executions(root, false)
+            .await
+            .map_err(|e| SpawnError::Internal(format!("list live subagents: {e}")))?
+            .iter()
+            .any(|execution| execution.child_session_id == child_session_id)
+        {
+            return Err(SpawnError::Internal(
+                "child session already has a live execution".into(),
+            ));
+        }
+        let slug = child
+            .current_agent_slug
+            .clone()
+            .unwrap_or_else(|| "general".into());
+        let plan = plan_subagent_continuation(
+            &child,
+            &slug,
+            &state.agent_registry,
+            ctx.permission.clone(),
+            &ctx.cancel,
+            &state.task_registry,
+            root,
+            self.max_depth,
+        )?;
+        if background
+            && !matches!(
+                state
+                    .task_registry
+                    .background_task(plan.task_id, child.parent_session_id.unwrap_or(root)),
+                BackgroundTransition::Backgrounded | BackgroundTransition::AlreadyBackground
+            )
+        {
+            state.task_registry.finalize(plan.task_id);
+            return Err(SpawnError::Internal(
+                "background task ownership could not be initialized".into(),
+            ));
+        }
+        let now = Utc::now();
+        let execution = SubagentExecution {
+            task_id: plan.task_id,
+            root_session_id: root,
+            parent_session_id: child.parent_session_id.unwrap_or(root),
+            child_session_id,
+            agent_slug: slug.clone(),
+            objective: objective.to_string(),
+            scope: None,
+            background,
+            status: SubagentExecutionStatus::Pending,
+            terminal_reason: None,
+            output: String::new(),
+            cost_usd: None,
+            created_at: now,
+            updated_at: now,
+            finished_at: None,
+            version: 0,
+        };
+        if let Err(error) = state.memory.create_subagent_execution(execution).await {
+            state.task_registry.finalize(plan.task_id);
+            return Err(SpawnError::Internal(format!(
+                "persist continued execution: {error}"
+            )));
+        }
+        let message = Message {
+            id: MessageId::new(),
+            session_id: child_session_id,
+            role: Role::User,
+            created_at: now,
+        };
+        let message_id = match state.memory.append_message(child_session_id, message).await {
+            Ok(id) => id,
+            Err(error) => {
+                state.task_registry.finalize(plan.task_id);
+                return Err(SpawnError::Internal(format!(
+                    "seed continuation message: {error}"
+                )));
+            }
+        };
+        if let Err(error) = state
+            .memory
+            .append_part(
+                message_id,
+                Part::Text {
+                    id: openlet_core::types::part::PartId::new(),
+                    text: objective.to_string(),
+                },
+            )
+            .await
+        {
+            state.task_registry.finalize(plan.task_id);
+            return Err(SpawnError::Internal(format!(
+                "seed continuation part: {error}"
+            )));
+        }
+        let resources = state.agents.get(&child.agent_id).cloned().ok_or_else(|| {
+            state.task_registry.finalize(plan.task_id);
+            SpawnError::Internal("child agent resources missing".into())
+        })?;
+        let _ = state
+            .events
+            .publish(
+                AgentEvent::SubagentSpawned {
+                    task_id: plan.task_id.0,
+                    tool_call_id: ctx.call_id.clone(),
+                    child_session_id,
+                    parent_session_id: child.parent_session_id.unwrap_or(root),
+                    subagent_type: slug,
+                    objective: objective.to_string(),
+                    description: Some("continuation".into()),
+                    background,
+                },
+                Persistence::Durable,
+            )
+            .await;
+        let driver_state = state.clone();
+        let task_id = plan.task_id;
+        let parent_id = child.parent_session_id.unwrap_or(root);
+        let handle_name = plan.handle_name.clone();
+        let agent_slug = plan.agent_slug.clone();
+        let child_perm = plan.child_perm.clone();
+        let child_cancel = plan.child_cancel.clone();
+        publish_roster(&state, root).await;
+        tokio::spawn(async move {
+            let result = std::panic::AssertUnwindSafe(crate::subagent_driver::drive_subagent(
+                driver_state.clone(),
+                task_id,
+                parent_id,
+                child_session_id,
+                agent_slug,
+                child_perm,
+                child_cancel,
+                resources,
+                root,
+                handle_name,
+            ))
+            .catch_unwind()
+            .await;
+            if !matches!(result, Ok(Ok(()))) {
+                let reason = match result {
+                    Ok(Err(error)) => error.to_string(),
+                    Err(_) => "subagent continuation driver panicked".into(),
+                    Ok(Ok(())) => unreachable!(),
+                };
+                if let Ok(Some(execution)) =
+                    driver_state.memory.get_subagent_execution(task_id).await
+                {
+                    let _ = driver_state
+                        .memory
+                        .patch_subagent_execution(
+                            task_id,
+                            openlet_core::adapters::memory_store::SubagentExecutionPatch {
+                                expected_version: execution.version,
+                                status: SubagentExecutionStatus::Failed,
+                                terminal_reason: Some(reason.clone()),
+                                output: Some(reason),
+                                cost_usd: None,
+                            },
+                        )
+                        .await;
+                }
+                driver_state
+                    .task_registry
+                    .set_status(
+                        task_id,
+                        TaskStatus::Failed("continuation driver failed".into()),
+                    )
+                    .await;
+                driver_state.task_registry.finalize(task_id);
+                publish_roster(&driver_state, root).await;
+            }
+        });
+        Ok(SpawnedSubagent {
+            task_id: plan.task_id,
+            child_session_id,
+        })
     }
 }
