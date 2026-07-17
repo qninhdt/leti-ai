@@ -74,7 +74,7 @@ jobs:
       # cleanly otherwise so the default workflow stays green.
       - name: Log in to registry
         if: ${{ env.REGISTRY != '' && env.REGISTRY_TOKEN != '' }}
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ vars.REGISTRY }}
           username: ${{ vars.REGISTRY_USER }}
