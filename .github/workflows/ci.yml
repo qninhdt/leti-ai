@@ -38,6 +38,9 @@ jobs:
       - name: Test (workspace; mock-backed e2e only — no key)
         run: cargo test --workspace
 
+      - name: Core purity guard
+        run: cargo test -p leti-core --test core_purity
+
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
@@ -85,16 +88,16 @@ jobs:
       # past the 60s poll → curl never connected). The boot step then reuses
       # the built artifact and serves within a second.
       - name: Build server binary
-        run: cargo build -p openlet-server --bin openlet-server
+        run: cargo build -p leti-server --bin leti-server
 
       # Boot the server (mock provider, ephemeral) and dump its OpenAPI doc,
       # then regenerate the TS schema and fail if it diverges from the
       # committed copy — prevents the TUI contract-mismatch class of bug.
       - name: Boot server + capture OpenAPI
         run: |
-          OPENLET_BIND=127.0.0.1:8787 \
-          OPENLET_DATA_DIR="$(mktemp -d)" \
-            cargo run -p openlet-server --bin openlet-server -- serve &
+          LETI_BIND=127.0.0.1:8787 \
+          LETI_DATA_DIR="$(mktemp -d)" \
+            cargo run -p leti-server --bin leti-server -- serve &
           SERVER_PID=$!
           for i in $(seq 1 60); do
             curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1 && break

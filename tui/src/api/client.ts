@@ -1,4 +1,4 @@
-// Thin hand-rolled REST client over the openlet-server surface. The DTOs it
+// Thin hand-rolled REST client over the leti-server surface. The DTOs it
 // speaks live in `types.ts`; `npm run codegen` regenerates `schema.d.ts` as
 // the contract-drift reference snapshot only (see types.ts / schema.d.ts
 // headers). This fetcher is the intended client — it is NOT slated for an
@@ -40,7 +40,7 @@ export class ApiError extends Error {
   }
 }
 
-export interface OpenletClient {
+export interface LetiClient {
   health(): Promise<{ ok: boolean }>;
   listAgents(): Promise<AgentDto[]>;
   listSessions(): Promise<SessionDto[]>;
@@ -59,7 +59,7 @@ export interface OpenletClient {
   getFileContent(path: string): Promise<FileContentDto>;
 }
 
-export function createClient(config: ClientConfig): OpenletClient {
+export function createClient(config: ClientConfig): LetiClient {
   const fetcher: FetchFn = config.fetch ?? ((input, init) => fetch(input, init));
   const headers = (): Record<string, string> => {
     const h: Record<string, string> = { "content-type": "application/json" };

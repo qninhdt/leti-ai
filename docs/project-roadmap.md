@@ -3,7 +3,7 @@
 _Last updated: 2026-06-11_
 
 Tracks the production-rehabilitation program (plan
-`plans/20260610-1345-openlet-ai-production-rehabilitation/`) and what remains.
+`plans/20260610-1345-leti-ai-production-rehabilitation/`) and what remains.
 
 ## Status legend
 
@@ -40,10 +40,10 @@ Tracks the production-rehabilitation program (plan
   but `#[ignore]`'d + double-gated; running them needs an OpenRouter key and
   costs money. The keyless prerequisite (evidence scrubber) is done.
 
-## Open questions (owner / openlet team)
+## Open questions (owner / leti team)
 
 1. SA credential scope & issuance: per-workspace token vs one SA + workspace claim.
-2. Cost-ledger ownership: self-contained Postgres vs a future openlet quota service.
+2. Cost-ledger ownership: self-contained Postgres vs a future leti quota service.
 3. Caller set: does it include leti→agent calls? (affects `PrincipalType`).
 4. Presigned-URL timing for agent file tools.
 
@@ -52,4 +52,4 @@ Tracks the production-rehabilitation program (plan
 - Land the TUI Ink→Solid migration, then complete Phase 8/9 + TUI tests.
 - Run the Phase 12 acceptance suite against a live key; record per-run cost.
 - Exercise the CI workflows on a real PR + one manual nightly.
-- Resolve the four open questions with the owner / openlet team.
+- Resolve the four open questions with the owner / leti team.

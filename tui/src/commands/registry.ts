@@ -88,7 +88,7 @@ export const commands: Command[] = [
     name: "quit",
     aliases: ["exit", "q"],
     category: "Session",
-    summary: "Quit openlet TUI",
+    summary: "Quit leti TUI",
     run: (ctx) => ctx.exit(),
   },
 ];

@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# Leti one-command local staging launcher.
+#
+# Boots the server (background), waits for health, builds the TUI if
+# needed, and drops you into the live terminal app. On exit it tears the
+# server (and the mock backend, if started) down — no orphaned process
+# holding the bind port.
+#
+#   ./leti-ai            real OpenRouter (needs OPENAI_API_KEY in .env)
+#   ./leti-ai --mock     network-free in-process mock LLM (no key needed)
+#   ./leti-ai --clean     kill stragglers on the bind port + clear run dir
+#   ./leti-ai --rebuild  force a TUI rebuild before launch
+#
+# RELEASE=1 ./leti-ai    build the server in release profile.
+set -euo pipefail
+
+# ── Resolve repo root from this script's own location ─────────────────
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+RUN_DIR="$ROOT/.leti-run"
+SERVER_LOG="$RUN_DIR/server.log"
+MOCK_LOG="$RUN_DIR/mock.log"
+
+MOCK=0
+CLEAN=0
+REBUILD=0
+for arg in "$@"; do
+  case "$arg" in
+    --mock)    MOCK=1 ;;
+    --clean)   CLEAN=1 ;;
+    --rebuild) REBUILD=1 ;;
+    -h|--help)
+      grep '^#' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' | head -n 14
+      exit 0 ;;
+    *) echo "unknown flag: $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+# ── Bind address (the binary loads .env itself; we only need the addr
+#    here for the health poll + port-busy check) ─────────────────────
+BIND="$(grep -E '^LETI_BIND=' .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"'[:space:]' || true)"
+BIND="${BIND:-127.0.0.1:8787}"
+HEALTH="http://$BIND/v1/health"
+
+PROFILE_FLAG=""
+BIN_DIR="$ROOT/target/debug"
+if [ "${RELEASE:-0}" = "1" ]; then
+  PROFILE_FLAG="--release"
+  BIN_DIR="$ROOT/target/release"
+fi
+SERVER_BIN="$BIN_DIR/leti-server"
+MOCK_BIN="$BIN_DIR/mock-openai-service"
+
+# ── --clean: stop any straggler on the bind port, clear the run dir ───
+if [ "$CLEAN" = "1" ]; then
+  if command -v lsof >/dev/null 2>&1; then
+    PORT="${BIND##*:}"
+    PIDS="$(lsof -ti :"$PORT" 2>/dev/null || true)"
+    if [ -n "$PIDS" ]; then
+      echo "killing process(es) on port $PORT: $PIDS"
+      kill $PIDS 2>/dev/null || true
+    fi
+  fi
+  rm -rf "$RUN_DIR"
+  echo "clean done."
+  exit 0
+fi
+
+mkdir -p "$RUN_DIR"
+
+# ── Ensure .env exists (real mode requires the key; --mock skips) ─────
+if [ ! -f .env ]; then
+  cp .env.example .env
+  if [ "$MOCK" = "0" ]; then
+    echo "created .env from .env.example — fill OPENAI_API_KEY, then re-run." >&2
+    echo "(or run network-free: ./leti-ai --mock)" >&2
+    exit 1
+  fi
+fi
+
+# ── Build ─────────────────────────────────────────────────────────────
+echo "building server${PROFILE_FLAG:+ (release)}…"
+cargo build $PROFILE_FLAG -p leti-server
+if [ "$MOCK" = "1" ]; then
+  echo "building mock LLM service…"
+  cargo build $PROFILE_FLAG -p leti-test-mock-provider --bin mock-openai-service
+fi
+
+# ── Process bookkeeping + teardown ────────────────────────────────────
+SERVER_PID=""
+MOCK_PID=""
+cleanup() {
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
+  [ -n "$MOCK_PID" ]   && kill "$MOCK_PID"   2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+# ── Mock mode: start the in-process LLM, point the server at it ───────
+if [ "$MOCK" = "1" ]; then
+  echo "starting mock LLM service…"
+  "$MOCK_BIN" >"$MOCK_LOG" 2>&1 &
+  MOCK_PID=$!
+  # The bin prints `listening at <base_url>` on stderr (→ MOCK_LOG).
+  MOCK_BASE=""
+  for _ in $(seq 1 50); do
+    MOCK_BASE="$(grep -oE 'http://[0-9.]+:[0-9]+/v1' "$MOCK_LOG" 2>/dev/null | head -1 || true)"
+    [ -n "$MOCK_BASE" ] && break
+    sleep 0.1
+  done
+  if [ -z "$MOCK_BASE" ]; then
+    echo "mock service did not report a base URL; log:" >&2
+    cat "$MOCK_LOG" >&2
+    exit 1
+  fi
+  # VERBATIM — the printed URL already ends in /v1. Do NOT append another.
+  export OPENAI_API_BASE_URL="$MOCK_BASE"
+  echo "mock backend: $OPENAI_API_BASE_URL"
+fi
+
+# ── Preflight via the binary's own doctor (single source of truth) ────
+echo "── doctor preflight ─────────────────────────────"
+DOCTOR_OUT="$("$SERVER_BIN" doctor --format text 2>&1 || true)"
+echo "$DOCTOR_OUT"
+echo "─────────────────────────────────────────────────"
+
+# Real mode requires a usable key. doctor reports a missing/empty key as
+# `[WARN] api_key_set` (Degraded, not Failed), and model_reachable is also
+# Degraded when no base URL env is set (the normal OpenRouter case) — so
+# the overall exit code can't distinguish "no key" from "fine". Key off the
+# specific api_key_set line instead.
+if [ "$MOCK" = "0" ]; then
+  if ! echo "$DOCTOR_OUT" | grep -qE '^\[OK\] api_key_set'; then
+    echo "" >&2
+    echo "OPENAI_API_KEY is missing or empty — set it in .env (see .env.example)," >&2
+    echo "or run network-free with: ./leti-ai --mock" >&2
+    exit 1
+  fi
+fi
+
+# ── Port-busy guard: don't poll a foreign server's health ─────────────
+if curl -sf "$HEALTH" >/dev/null 2>&1; then
+  echo "port $BIND already answering /v1/health — another server is running." >&2
+  echo "run ./leti-ai --clean (or kill that process), then retry." >&2
+  exit 1
+fi
+
+# ── Start the server (background; logs to file so the TUI owns the TTY) ─
+echo "starting server on $BIND…"
+"$SERVER_BIN" serve >"$SERVER_LOG" 2>&1 &
+SERVER_PID=$!
+
+# ── Readiness: poll health (not a fixed sleep) ────────────────────────
+READY=0
+for _ in $(seq 1 60); do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "server exited during startup; log:" >&2
+    tail -n 30 "$SERVER_LOG" >&2
+    exit 1
+  fi
+  if curl -sf "$HEALTH" >/dev/null 2>&1; then READY=1; break; fi
+  sleep 0.5
+done
+if [ "$READY" = "0" ]; then
+  echo "server did not become healthy within ~30s; log:" >&2
+  tail -n 30 "$SERVER_LOG" >&2
+  exit 1
+fi
+echo "server healthy at $HEALTH"
+
+# ── TUI build: presence-based (no mtime heuristic); --rebuild forces ──
+if [ "$REBUILD" = "1" ] || [ ! -f tui/dist/cli.mjs ]; then
+  echo "building TUI…"
+  ( cd tui && { [ -d node_modules ] || npm install; } && npm run build )
+fi
+
+# ── Hand the terminal to the TUI ──────────────────────────────────────
+# The TUI's @opentui/core engine needs an FFI-capable runtime; it loads
+# native struct bindings that plain Node lacks (node:ffi is unavailable),
+# so the TUI is run under Bun. Run it in the FOREGROUND (not `exec`) so the
+# bash EXIT trap survives to tear down the background server/mock when the
+# TUI quits. `exec` would replace this shell, discarding the trap and
+# orphaning the server on the bind port — the exact failure this launcher
+# must avoid. The child still inherits the TTY (stdin/out/err) for full
+# interactivity, and Ctrl-C reaches it via the shared foreground group.
+if ! command -v bun >/dev/null 2>&1; then
+  echo "error: 'bun' is required to run the TUI (@opentui/core needs Bun FFI)." >&2
+  echo "install it from https://bun.sh, then retry." >&2
+  exit 1
+fi
+echo "launching TUI (Ctrl-C to exit; server will be torn down)…"
+export LETI_BASE_URL="${LETI_BASE_URL:-http://$BIND}"
+bun tui/dist/cli.mjs

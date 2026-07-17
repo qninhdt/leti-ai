@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-23
 **Branch:** `main`
-**Plan:** [phase-02-storage-and-message-model.md](../../plans/20260523-1414-openlet-agent-core-mvp/phase-02-storage-and-message-model.md)
+**Plan:** [phase-02-storage-and-message-model.md](../../plans/20260523-1414-leti-agent-core-mvp/phase-02-storage-and-message-model.md)
 
 ## What shipped
 
@@ -12,7 +12,7 @@ The persistent layer is live. Sessions, messages, and parts survive a restart, J
 - **Migration `0001_init.sql`** — 7 tables: `sessions`, `messages`, `parts`, `artifacts`, `events`, `permission_decisions`, `session_reads` (§F). All `CREATE TABLE IF NOT EXISTS`, idempotent re-run.
 - **LocalFsArtifactStore** — bytes under `<root>/<session>/<sha256(key).hex>`, metadata mirrored in SQLite. Keys with `..`, leading `/`, or empty are rejected before touching the filesystem.
 - **SessionLogger** — per-session JSONL append, regex redaction (`Bearer <jwt-ish>`, `sk-...`) plus a recursive key-allowlist walker (`api_key`, `Authorization`, `password`, etc.). Rotates at 64MB.
-- **`project_for_llm`** — pure function, lives in `openlet-core::projection`. Reasoning parts drop unless caps say replay is supported; tool-call/tool-result pairing is by `call_id`. Tests assert append-only-prefix invariance.
+- **`project_for_llm`** — pure function, lives in `leti-core::projection`. Reasoning parts drop unless caps say replay is supported; tool-call/tool-result pairing is by `call_id`. Tests assert append-only-prefix invariance.
 - **Event repo + permission repo** — append-only event log with autoincrement IDs (Phase 5 SSE Last-Event-ID), and `permission_decisions` writer for "always allow" choices.
 
 ## Decisions worth remembering

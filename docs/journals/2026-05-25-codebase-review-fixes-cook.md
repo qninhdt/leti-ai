@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-25 15:49
 **Severity**: High (security + correctness)
-**Component**: openlet-core, openlet-server, openlet-adapters, openlet-protocol
+**Component**: leti-core, leti-server, leti-adapters, leti-protocol
 **Status**: Resolved (13/13 phases shipped, 191/191 tests green at every commit boundary)
 
 ## What Happened
@@ -25,7 +25,7 @@ sitting in `Config`, `RuntimeConfig`, and `AgentDefinition` since phase-3 — wi
 serialized, surfaced in env. Decorative the entire time. The substrate (`OnCostTick` +
 `cancel_session` + `session_cost`) was sound; the cap never enforced. User decision
 2026-05-25: cost cap is cloud-only via quota plugin. Phase 7 ripped the field out and
-turned `OPENLET_MAX_COST_USD` into a warn-and-ignore.
+turned `LETI_MAX_COST_USD` into a warn-and-ignore.
 
 ## Technical Details — Phase Highlights
 
@@ -42,7 +42,7 @@ turned `OPENLET_MAX_COST_USD` into a warn-and-ignore.
 | 9 | Plugin shutdown via `futures::future::join_all` + single 5s timeout (parallel, not sequential) | M1, FMA-F5 |
 | 10 | `pending_tool_calls` cap = 64 | ISSUE-A11 |
 | 11 | Audit redactor v2: AWS / GCP / GitHub / JWT / Slack / Stripe + whole-name match for sensitive keys | HIGH-F2, SA-F5 |
-| 12 | Swagger UI gated by `OPENLET_ENABLE_DOCS` | — |
+| 12 | Swagger UI gated by `LETI_ENABLE_DOCS` | — |
 | 13 | README env table refreshed | — |
 
 ## Decisions Worth Remembering
@@ -55,8 +55,8 @@ turned `OPENLET_MAX_COST_USD` into a warn-and-ignore.
   pattern can be substituted between peek and write. Atomic write at the resolver closes it.
 - **`ChatRequest.headers: BTreeMap<String, String>`**, not `HashMap<HeaderName, SecretString>`.
   Original AD-F11 wanted `HeaderName` for type safety; modified-accept lands at strings to
-  keep `openlet-core` free of `reqwest`/`http` types. Adapter validates at the boundary.
-- **Dropped `OPENLET_CORS_PERMISSIVE_LOOPBACK_OK`.** Red team correctly flagged it as
+  keep `leti-core` free of `reqwest`/`http` types. Adapter validates at the boundary.
+- **Dropped `LETI_CORS_PERMISSIVE_LOOPBACK_OK`.** Red team correctly flagged it as
   defeating VULN-F6 entirely. No escape hatch.
 - **`Notify::notify_waiters` at exit point was rejected.** It has no permit storage, so
   the listener side races: notify fires before the listener subscribes → permanent hang.

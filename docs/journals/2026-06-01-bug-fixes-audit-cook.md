@@ -2,7 +2,7 @@
 
 **Date**: 2026-06-01 05:28
 **Severity**: Critical (concurrency + correctness)
-**Component**: openlet-core, openlet-adapters, openlet-server, core-agents
+**Component**: leti-core, leti-adapters, leti-server, core-agents
 **Status**: Resolved (14/14 fixes shipped, 528/528 tests green, clippy clean)
 **Plan**: `plans/20260601-0346-bug-fixes-audit/`
 

@@ -1,5 +1,5 @@
 // Home route — shown when no session is active. Centered column with the
-// openlet logo + the prompt, vertically centered. Mirrors OpenCode's home
+// leti logo + the prompt, vertically centered. Mirrors OpenCode's home
 // layout. contentWidth caps the prompt at maxWidth=75.
 
 import { FooterArea } from "../components/footer-area.js";

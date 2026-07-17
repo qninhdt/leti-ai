@@ -1,28 +1,48 @@
 # Architecture
 
-A snapshot of the openlet-ai runtime as it lands at the end of Phase 8.
+The leti-ai engine is a reusable agent runtime. The reference binary is a
+single-user loopback deployment; a host can embed the same library, replace
+ports at its composition root, merge its own routes and middleware, and add
+plugins.
 
 ## Crate boundaries
 
 ```
-openlet-core         domain types, six adapter traits, runtime, projection
-openlet-protocol     OpenAPI DTOs (utoipa derive)
-openlet-adapters     local impls: openai-compat, sqlite, localfs, localshell, bus, config-perm
-openlet-plugin-api   stable plugin trait + PluginContext (CoreApi facade)
-openlet-plugin-registry   compile-time plugin list
-openlet-plugins/core-agents   built-in agent definitions (general, indexer)
-openlet-server       axum router, AppState, AuthN, audit subcommand
-openlet-test-mock-provider   in-process OpenAI-compat replay (parity tests)
-tui/                 SolidJS (@opentui) TUI client, ships as `openlet` on npm
+leti-core         domain types, six adapter traits, runtime, projection
+leti-protocol     OpenAPI DTOs (utoipa derive)
+leti-adapters     local impls: openai-compat, sqlite, localfs, localshell, bus, config-perm
+leti-plugin-api   stable plugin trait + PluginContext (CoreApi facade)
+leti-plugin-registry   compile-time plugin list
+leti-plugins/core-agents   built-in agent definitions (general, indexer)
+leti-server       axum router, AppState, AuthN, audit subcommand
+leti-test-mock-provider   in-process OpenAI-compat replay (parity tests)
+tui/                 SolidJS (@opentui) TUI client, ships as `leti` on npm
 ```
 
-The runtime is split top-down: `openlet-core` knows nothing about HTTP or
-filesystems. `openlet-server` wires concrete adapters into the runtime
-and exposes the result as REST + SSE.
+The runtime is split top-down: `leti-core` knows nothing about HTTP,
+authentication, tenants, principals, or cloud services. It defines ports and
+the loop. `leti-server` supplies the reference HTTP/SSE composition and local
+adapters. A host owns authentication and authorization middleware and wires
+cloud implementations at its own composition root.
+
+The core-purity rule is enforced by an integration test: `leti-core` may not
+depend on filesystem, network, database, cloud, or identity implementations.
+Host-owned per-turn data uses `TurnExtensions`; the engine transports it from
+the loop to permission checks, tools, and subagents but never interprets,
+persists, serializes, or logs it.
+
+## Composition root versus plugins
+
+Use the composition root for infrastructure and policy-bearing ports:
+`ModelProvider`, `MemoryStore`, `ArtifactStore`, `EventSink`, `Filesystem`,
+and `PermissionManager`. Use plugins for agent definitions, tools, hooks, and
+provider-independent behavior. A cloud host should merge its auth, ownership,
+and business routes around `RouterBuilder`; it should not add those concerns
+to `leti-core`.
 
 ## Six adapter traits
 
-`openlet-core::adapters` defines the entire surface the runtime depends on:
+`leti-core::adapters` defines the entire surface the runtime depends on:
 
 | Trait | Live impl | Purpose |
 |---|---|---|
@@ -47,7 +67,7 @@ and rechecks redirects, and size-caps output. Its `web_fetch:**` permission
 rule defaults to Ask so model-controlled URLs cannot silently exfiltrate data.
 
 A new deployment swaps adapters wholesale (e.g. cloud impl for `MemoryStore`)
-without touching `openlet-core` or routes.
+without touching `leti-core` or routes.
 
 ## Data flow — single turn
 
@@ -74,7 +94,21 @@ disconnected client can `GET /v1/event?session=<uuid>` with a `Last-Event-ID`
 header to catch up. Replay pages to a captured high-water mark; a client that
 receives the synthetic `lagged` frame reconnects with the same durable cursor.
 
-## Runtime controls and subagents
+## Interaction modes and subagents
+
+Sessions are `Interactive` by default. A session may explicitly opt into
+`Detached { on_ask: Allow|Deny }` through the session API or the reference
+server's `--detached --on-ask allow|deny` defaults. Detached mode resolves
+ordinary Ask outcomes without waiting for a client, while explicit Deny rules
+still win. `web_fetch` and destructive shell subjects are not blanket-upgraded
+by `on_ask=allow`; they require an explicit allow rule. Untrusted injected
+turns remain fail-closed. Every detached permission check emits a durable
+authorization event, including direct Danger-mode allows.
+
+Top-level detached turn replay after a process restart is intentionally not
+implemented yet. Existing boot recovery handles durable background-delivery
+leases and marks other live execution records interrupted; it does not
+re-drive an interrupted top-level turn.
 
 Before every provider request, the shared request-preparation boundary reloads
 the durable transcript, collects typed runtime reminders, persists any new
@@ -122,7 +156,7 @@ suppressed from both normal projection and the human timeline.
 ## Error flow
 
 A typed error in any adapter (`ProviderError`, `MemoryError`, …) carries a
-closed-set `FailureClass`. `openlet-server::AppError` maps each variant to
+closed-set `FailureClass`. `leti-server::AppError` maps each variant to
 a stable HTTP status + slug, logs the class via `tracing` (in
 `IntoResponse`), and returns an `ErrorDto`. No free-form `Other(String)`
 escape hatch — adding a class requires editing the enum.
@@ -131,16 +165,16 @@ escape hatch — adding a class requires editing the enum.
 
 The `LocalfsSessionLogger` writes a JSONL mirror of every event under
 `<data_dir>/sessions/<id>.jsonl`, redacting on the way in (key allowlist
-+ regex for bearer / `sk-…` tokens). The `openlet-server audit`
++ regex for bearer / `sk-…` tokens). The `leti-server audit`
 subcommand reads it back, applies the same redactor a second time
 (defense-in-depth), and pretty-prints or dumps JSON.
 
 ## Testing
 
 - Unit tests live next to the code they cover.
-- Adapter integration tests in `crates/openlet-adapters/tests/`.
+- Adapter integration tests in `crates/leti-adapters/tests/`.
 - Parity tests drive the real `OpenAiCompatProvider` against
-  `openlet-test-mock-provider` — no network, no API key, byte-exact
+  `leti-test-mock-provider` — no network, no API key, byte-exact
   control over chunking and headers.
 - Background settlement coverage uses the real SQLite outbox: prove atomic
   claims, token-guarded acknowledgement/release/renewal, retry after a failed

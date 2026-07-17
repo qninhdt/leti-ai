@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { embedMentions } from "../src/services/attachment-embedder.js";
 
-import type { OpenletClient } from "../src/api/client.js";
+import type { LetiClient } from "../src/api/client.js";
 import type { FileContentDto } from "../src/api/types.js";
 
 // Minimal fake client: only getFileContent is exercised by the embedder.
-function fakeClient(map: Record<string, FileContentDto | Error>): OpenletClient {
+function fakeClient(map: Record<string, FileContentDto | Error>): LetiClient {
   return {
     getFileContent: async (path: string) => {
       const entry = map[path];
@@ -14,7 +14,7 @@ function fakeClient(map: Record<string, FileContentDto | Error>): OpenletClient 
       if (!entry) throw new Error("file not found");
       return entry;
     },
-  } as unknown as OpenletClient;
+  } as unknown as LetiClient;
 }
 
 describe("attachment-embedder", () => {
@@ -61,7 +61,7 @@ describe("attachment-embedder", () => {
         calls++;
         return { path, type: "text", content: "x" } as FileContentDto;
       },
-    } as unknown as OpenletClient;
+    } as unknown as LetiClient;
     const { badges } = await embedMentions("@src/a.ts and again @src/a.ts", client);
     expect(calls).toBe(1);
     expect(badges).toHaveLength(1);

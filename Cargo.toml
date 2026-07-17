@@ -1,16 +1,16 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/openlet-core",
-    "crates/openlet-adapters",
-    "crates/openlet-protocol",
-    "crates/openlet-plugin-api",
-    "crates/openlet-plugin-registry",
-    "crates/openlet-plugins/core-agents",
-    "crates/openlet-plugins/core-tools",
-    "crates/openlet-plugins/test-quota-stub",
-    "crates/openlet-server",
-    "crates/openlet-test-mock-provider",
+    "crates/leti-core",
+    "crates/leti-adapters",
+    "crates/leti-protocol",
+    "crates/leti-plugin-api",
+    "crates/leti-plugin-registry",
+    "crates/leti-plugins/core-agents",
+    "crates/leti-plugins/core-tools",
+    "crates/leti-plugins/test-quota-stub",
+    "crates/leti-server",
+    "crates/leti-test-mock-provider",
 ]
 
 [workspace.package]
@@ -18,8 +18,8 @@ version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
-authors = ["Openlet"]
-repository = "https://github.com/qninhdt/openlet-ai"
+authors = ["Leti"]
+repository = "https://github.com/qninhdt/leti-ai"
 # Monty (Python executor) requires Rust >= 1.95; the workspace toolchain is
 # pinned to latest stable in rust-toolchain.toml. Keep MSRV at Monty's floor.
 rust-version = "1.95"
@@ -108,15 +108,6 @@ url = "2.5"
 # Apache-2.0. Single new dep for markdown output; `Html` format needs none.
 htmd = "0.5"
 
-# gRPC client for the cloud Filesystem impl (Phase 6). openlet-ai is a CLIENT
-# of openlet file-service; the .proto is vendored under
-# openlet-adapters/proto/ and codegen'd by tonic-build at build time. tls
-# via rustls to match the reqwest/sqlx stack (no OpenSSL in the tree).
-tonic = { version = "0.12", default-features = false, features = ["transport", "codegen", "prost", "tls", "tls-roots"] }
-prost = "0.13"
-prost-types = "0.13"
-tonic-build = { version = "0.12", default-features = false, features = ["prost", "transport"] }
-
 # Filesystem (phase 4 tools)
 walkdir = "2.5"
 ignore = "0.4"
@@ -149,14 +140,14 @@ proptest = { version = "1.5", default-features = false, features = ["std"] }
 wiremock = "0.6"
 
 # Internal crates
-openlet-core = { path = "crates/openlet-core" }
-openlet-adapters = { path = "crates/openlet-adapters" }
-openlet-protocol = { path = "crates/openlet-protocol" }
-openlet-plugin-api = { path = "crates/openlet-plugin-api" }
-openlet-plugin-registry = { path = "crates/openlet-plugin-registry" }
-openlet-plugin-core-agents = { path = "crates/openlet-plugins/core-agents" }
-openlet-plugin-core-tools = { path = "crates/openlet-plugins/core-tools" }
-openlet-plugin-test-quota-stub = { path = "crates/openlet-plugins/test-quota-stub" }
+leti-core = { path = "crates/leti-core" }
+leti-adapters = { path = "crates/leti-adapters" }
+leti-protocol = { path = "crates/leti-protocol" }
+leti-plugin-api = { path = "crates/leti-plugin-api" }
+leti-plugin-registry = { path = "crates/leti-plugin-registry" }
+leti-plugin-core-agents = { path = "crates/leti-plugins/core-agents" }
+leti-plugin-core-tools = { path = "crates/leti-plugins/core-tools" }
+leti-plugin-test-quota-stub = { path = "crates/leti-plugins/test-quota-stub" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

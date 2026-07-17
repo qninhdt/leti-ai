@@ -2,7 +2,7 @@
 
 Date: 2026-07-09
 Plan: `plans/260708-1550-emulated-bash-python-executors` — Phase 6
-Scope: CROSS-REPO (openlet-ai Rust + openlet file-service Go). User owns both.
+Scope: CROSS-REPO (leti-ai Rust + leti file-service Go). User owns both.
 
 ## Goal
 
@@ -12,7 +12,7 @@ ONLY in the injected `Filesystem` impl; interpreters are byte-identical.
 
 ## What shipped
 
-### Backend (openlet file-service, Go, branch `dev`)
+### Backend (leti file-service, Go, branch `dev`)
 
 - **Migration `000016_extracted_text_trgm`**: `CREATE EXTENSION pg_trgm` +
   partial GIN index `idx_files_extracted_text_trgm ON files USING GIN
@@ -36,11 +36,11 @@ ONLY in the injected `Filesystem` impl; interpreters are byte-identical.
   ReDoS-input-harmless. Ran green vs real Postgres 16 (docker compose pg,
   container IP DSN). Full repo pgintegration suite + migration harness green.
 
-### openlet-ai (Rust)
+### leti-ai (Rust)
 
 - **New gRPC foundation** (crate had ZERO): added `tonic`/`prost`/`prost-types`
-  + `tonic-build`, vendored proto at `crates/openlet-adapters/proto/`, `build.rs`
-  codegen (client-only). openlet-ai was NOT "a thin gRPC client" as the plan
+  + `tonic-build`, vendored proto at `crates/leti-adapters/proto/`, `build.rs`
+  codegen (client-only). leti-ai was NOT "a thin gRPC client" as the plan
   said — this is from-scratch plumbing.
 - **`cloudfs/literals.rs`** — ReDoS-safe literal extraction. Delegates to
   `regex_syntax` HIR prefix-literal extraction (NOT a hand-rolled scanner).
@@ -62,7 +62,7 @@ ONLY in the injected `Filesystem` impl; interpreters are byte-identical.
   - session-dirty union machinery built (reserved for write/append).
   - bearer JWT in `authorization` metadata; workspace fixed at construction.
 - **Feature flag** (`config.rs`): `cloud_fs: Option<CloudFsConfig>`, env-driven
-  (`OPENLET_CLOUD_FS_ENDPOINT/_WORKSPACE_ID/_BEARER`), OFF by default. Partial
+  (`LETI_CLOUD_FS_ENDPOINT/_WORKSPACE_ID/_BEARER`), OFF by default. Partial
   config = hard `ConfigError::Invalid` (fails loud, no silent local fallback).
   `adapter_stack.rs` selects `CloudFilesystem` vs `LocalFilesystem`.
 - **`FsError::Unsupported`** variant added → maps to `ToolError::Unimplemented`.
@@ -71,7 +71,7 @@ ONLY in the injected `Filesystem` impl; interpreters are byte-identical.
 
 - file-service: 5 grep tests + full pgintegration suite + migration harness
   green vs real Postgres 16.
-- openlet-ai: 788 tests pass (incl 16 new cloudfs unit tests). Workspace build
+- leti-ai: 788 tests pass (incl 16 new cloudfs unit tests). Workspace build
   clean; cloudfs clippy-clean (pre-existing collapsible-if / is_multiple_of
   warnings from the 1.96 toolchain bump are NOT mine, left as-is).
 
@@ -101,7 +101,7 @@ Pass 2 — confirmed C1/H1/H2/H3 RESOLVED; caught ONE new bug:
 
 - Proto is TypeSpec-generated (not hand-editable). Only 1 new RPC (`GrepFiles`);
   remove/rename reuse existing RPCs.
-- openlet-ai needed a full gRPC stack built from scratch (plan assumed one existed).
+- leti-ai needed a full gRPC stack built from scratch (plan assumed one existed).
 - Trait is path-based, backend id-based → path→id resolution via folder-tree walk.
 - write/append stubbed (user decision). Cloud `read` serves indexed
   `extracted_text` (truncated/text-only), not raw S3 bytes — documented constraint.
@@ -109,7 +109,7 @@ Pass 2 — confirmed C1/H1/H2/H3 RESOLVED; caught ONE new bug:
 ## Deploy-ordering contract (MANDATORY, gates Phase 7 cloud e2e)
 
 1. file-service: migration 000016 + `GrepFiles` handler + proto publish → deploy.
-2. openlet-ai: rebuild against new proto.
+2. leti-ai: rebuild against new proto.
 3. Cloud mode `OFF` until 1+2 done; real (non-mock) e2e gate before prod ON.
 Against an older backend, `GrepFiles` → gRPC `Unimplemented` → `FsError::Io`
 with a deploy-skew message.

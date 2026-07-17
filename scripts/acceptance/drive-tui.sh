@@ -23,7 +23,7 @@ set -euo pipefail
 
 _DRV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _DRV_REPO="$(cd "$_DRV_ROOT/../.." && pwd)"
-ACC_TMUX_SESSION="${ACC_TMUX_SESSION:-openlet-acc}"
+ACC_TMUX_SESSION="${ACC_TMUX_SESSION:-leti-acc}"
 ACC_EVIDENCE_DIR="${ACC_EVIDENCE_DIR:-$_DRV_REPO/plans/evidence}"
 mkdir -p "$ACC_EVIDENCE_DIR"
 
@@ -44,8 +44,8 @@ tui_start() {
   tmux has-session -t "$ACC_TMUX_SESSION" 2>/dev/null && tmux kill-session -t "$ACC_TMUX_SESSION"
 
   # Env via -e so the pane actually sees it (see header note).
-  local -a env_flags=( -e "OPENLET_BASE_URL=$base_url" )
-  [ -n "$state_dir" ] && env_flags+=( -e "OPENLET_STATE_DIR=$state_dir" )
+  local -a env_flags=( -e "LETI_BASE_URL=$base_url" )
+  [ -n "$state_dir" ] && env_flags+=( -e "LETI_STATE_DIR=$state_dir" )
 
   tmux new-session -d -s "$ACC_TMUX_SESSION" -x 120 -y 40 "${env_flags[@]}" \
     "bun '$_DRV_REPO/tui/dist/cli.mjs'; echo TUI_EXITED; sleep 5"

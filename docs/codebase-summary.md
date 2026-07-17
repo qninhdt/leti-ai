@@ -1,6 +1,6 @@
 # Codebase Summary
 
-_Last updated: 2026-06-11_
+_Last updated: 2026-07-17_
 
 A map of the workspace: what each crate owns and where to look.
 
@@ -8,19 +8,19 @@ A map of the workspace: what each crate owns and where to look.
 
 | Crate | Role |
 |---|---|
-| `openlet-core` | IO-free domain types, port traits, the conversation runtime (turn loop, compaction, subagents, cost, dispatch), tool definitions. Depends on no backend. |
-| `openlet-adapters` | Local port implementations: sqlite memory store, localfs artifact store + filesystem, localshell executor, broadcast-bus event sink, OpenAI + OpenRouter providers, and the IP-pinned `ReqwestWebFetcher`. |
-| `openlet-protocol` | Wire DTOs (`dto/*`) for the HTTP API + SSE events. The TUI's contract source. |
-| `openlet-server` | axum composition: routes, auth + workspace-routing middleware, AppState/builder, metrics, evidence scrubber, the runtime subagent spawner + driver, the binary. |
-| `openlet-plugin-api` | The plugin trait + `PluginContext` + hook IO types + `CoreApi` back-channel. |
-| `openlet-plugin-registry` | `install_all` — drains plugin registrations into sorted hook chains + tools + agents + an optional provider. |
-| `openlet-plugins/core-tools` | Built-in tools as a plugin. `web_fetch` is registered only when the host injects a fetcher, preserving network-free embeddings. |
-| `openlet-plugins/core-agents` | Built-in agent definitions (general, indexer, plan). |
-| `openlet-plugins/test-quota-stub` | Reference quota plugin: the cost-tick cancel pattern the cloud team forks. |
-| `openlet-test-mock-provider` | In-process HTTP mock OpenAI service for keyless tests (captures wire requests). |
+| `leti-core` | IO-free domain types, port traits, the conversation runtime (turn loop, compaction, subagents, cost, dispatch), tool definitions. Depends on no backend. |
+| `leti-adapters` | Local port implementations: sqlite memory store, localfs artifact store + filesystem, localshell executor, broadcast-bus event sink, OpenAI + OpenRouter providers, and the IP-pinned `ReqwestWebFetcher`. |
+| `leti-protocol` | Wire DTOs (`dto/*`) for the HTTP API + SSE events. The TUI's contract source. |
+| `leti-server` | axum composition: reference auth/workspace middleware, routes, AppState/builder, metrics, evidence scrubber, detached permission policy, subagent spawner + driver, and binary. |
+| `leti-plugin-api` | The plugin trait + `PluginContext` + hook IO types + `CoreApi` back-channel. |
+| `leti-plugin-registry` | `install_all` — drains plugin registrations into sorted hook chains + tools + agents + an optional provider. |
+| `leti-plugins/core-tools` | Built-in tools as a plugin. `web_fetch` is registered only when the host injects a fetcher, preserving network-free embeddings. |
+| `leti-plugins/core-agents` | Built-in agent definitions (general, indexer, plan). |
+| `leti-plugins/test-quota-stub` | Reference quota plugin: the cost-tick cancel pattern the cloud team forks. |
+| `leti-test-mock-provider` | In-process HTTP mock OpenAI service for keyless tests (captures wire requests). |
 | `tui/` | TypeScript terminal client (mid-migration Ink→Solid). |
 
-## openlet-core layout
+## leti-core layout
 
 - `types/` — `session`, `message`, `part`, `event`, `agent`, `permission`,
   `pagination` (Page/PageResult). Plain data, serde + utoipa.
@@ -34,13 +34,13 @@ A map of the workspace: what each crate owns and where to look.
 - `tools/` — registry, dispatcher, erased tool wrapper, `builtins/`.
 - `dispatch.rs` — hook-chain dispatch + fault synthesis (`publish_fault_if_any`).
 
-## openlet-server layout
+## leti-server layout
 
 - `routes/` — `session`, `message` (prompt_async + `GET …/messages`),
   `event` (SSE), `permission`, `question`, `agent`, `model`, `plugin`,
   `diagnostics`, `attachments`, `files`.
-- `auth/` — `principal`, `authenticator` (+ `LocalDevAuthenticator`,
-  `RuntimeProfile`), `credential` (+ `NoopCredentialProvider`), `layer`.
+- `auth/` — reference-server authentication and workspace middleware; cloud
+  hosts own their authentication and tenant authorization.
 - `middleware/workspace_routing.rs`, `workspace_resolver.rs` — tenant routing.
 - `metrics.rs` — Prometheus recorder + `/metrics` (dormant unless bound).
 - `evidence_scrubber.rs` — redaction for real-LLM transcripts.
@@ -62,14 +62,14 @@ A map of the workspace: what each crate owns and where to look.
 
 ## Persistence
 
-SQLite via sqlx, migrations `0001`–`0008` (latest: per-session `model`).
+SQLite via sqlx, migrations `0001`–`0017` (latest: session interaction mode).
 `SessionMeta` uses explicit columns + JSON blob fields (`extensions`,
 `capabilities`). Artifacts on localfs keyed by sha256(key), metadata in sqlite.
 
 ## Where to start for a task
 
-- Change the agent loop → `openlet-core/src/runtime/turn_loop.rs`.
-- Add/modify an HTTP route → `openlet-server/src/routes/` + `router.rs`.
-- Swap a backend → implement the port trait in `openlet-adapters`.
-- Extend behavior → write a plugin against `openlet-plugin-api`.
+- Change the agent loop → `leti-core/src/runtime/turn_loop.rs`.
+- Add/modify an HTTP route → `leti-server/src/routes/` + `router.rs`.
+- Swap a backend → implement the port trait in `leti-adapters`.
+- Extend behavior → write a plugin against `leti-plugin-api`.
 - Cloud integration → `docs/integration-guide.md`.

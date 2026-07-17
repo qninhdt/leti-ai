@@ -12,7 +12,7 @@
 
 import { allMentions } from "../utils/mention-parser.js";
 
-import type { OpenletClient } from "../api/client.js";
+import type { LetiClient } from "../api/client.js";
 import type { FileKindDto } from "../api/types.js";
 
 export interface FileBadge {
@@ -53,7 +53,7 @@ function langForPath(path: string): string {
 
 /// Resolve every mention in `buffer` and build the prompt section + badges.
 /// Mentions resolve in parallel; order in the prompt follows buffer order.
-export async function embedMentions(buffer: string, client: OpenletClient): Promise<EmbedResult> {
+export async function embedMentions(buffer: string, client: LetiClient): Promise<EmbedResult> {
   const mentions = allMentions(buffer);
   if (mentions.length === 0) return { promptSection: "", badges: [] };
 

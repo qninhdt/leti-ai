@@ -2,16 +2,16 @@
 
 _Last updated: 2026-06-11_
 
-Standards the openlet-ai codebase actually follows. Derived from the code +
+Standards the leti-ai codebase actually follows. Derived from the code +
 `.claude/rules/development-rules.md`. Enforced by CI (`.github/workflows/ci.yml`).
 
 ## Principles
 
 - **YAGNI / KISS / DRY.** Widen a trait only when a concrete need demonstrates
   the current shape blocks it; don't design for hypothetical futures.
-- **Hexagonal.** Domain logic in `openlet-core` is IO-free; all IO lives behind
-  a port trait implemented in `openlet-adapters`. Core never depends on a
-  concrete backend or on `openlet-server`.
+- **Hexagonal.** Domain logic in `leti-core` is IO-free; all IO lives behind
+  a port trait implemented in `leti-adapters`. Core never depends on a
+  concrete backend or on `leti-server`.
 - **Seams over forks.** Extension happens through traits + the plugin API, not
   by editing core. Built-in tools ship as the `core-tools` plugin — proof the
   public surface is sufficient. Tool-specific injection seams such as

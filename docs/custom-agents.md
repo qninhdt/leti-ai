@@ -1,7 +1,7 @@
 # Custom agents
 
-openlet-ai is plugin-driven: agents are Rust types that implement
-`openlet-plugin-api::Plugin` and register one or more `AgentDef`s into
+leti-ai is plugin-driven: agents are Rust types that implement
+`leti-plugin-api::Plugin` and register one or more `AgentDefinition`s into
 the runtime's `AgentRegistry` at boot.
 
 ## When to add a custom agent
@@ -20,8 +20,9 @@ prompt override; reach for a plugin once you need code.
 
 ```rust
 use async_trait::async_trait;
-use openlet_plugin_api::{Plugin, PluginContext, PluginManifest, PluginError};
-use openlet_core::agent::AgentDef;
+use leti_plugin_api::{Plugin, PluginContext, PluginManifest, PluginError};
+use std::sync::Arc;
+use leti_core::agent::{AgentDefinition, AgentSlug, PromptSegments};
 
 pub struct ResearchAgentPlugin;
 
@@ -33,48 +34,76 @@ impl Plugin for ResearchAgentPlugin {
     }
 
     async fn install(&self, ctx: &mut PluginContext) -> Result<(), PluginError> {
-        let agent = AgentDef::builder("research")
-            .system_prompt(include_str!("prompts/research.md"))
-            .allow_tools(["read", "glob", "grep", "bash"])
-            .max_tokens(8192)
-            .build();
+        let agent = AgentDefinition {
+            slug: AgentSlug::new("research").expect("static slug"),
+            title: "Research".into(),
+            description: "Read-focused research agent.".into(),
+            prompt_segments: Some(PromptSegments {
+                cacheable: include_str!("prompts/research.md").into(),
+                dynamic: Arc::new(|_| String::new()),
+            }),
+            tool_allowlist: ["read", "glob", "grep", "bash"]
+                .into_iter().map(str::to_owned).collect(),
+            model_id: None,
+            default_temperature: 0.0,
+            context_window: 8192,
+            compaction_threshold: 0.8,
+            compaction_summary_cap_tokens: 2_000,
+            hidden: false,
+        };
+        agent.validate().map_err(PluginError::InvalidConfig)?;
         ctx.register_agent(agent)?;
         Ok(())
     }
 }
 ```
 
-The plugin lives in its own crate under `crates/openlet-plugins/<your-plugin>/`,
-gets added to `openlet-plugin-registry::all_plugins()`, and is installed
+The plugin lives in its own crate under `crates/leti-plugins/<your-plugin>/`,
+gets added to `leti-plugin-registry::all_plugins()`, and is installed
 once during server boot.
 
-See `crates/openlet-plugins/core-agents/` for the shipped reference (a
+See `crates/leti-plugins/core-agents/` for the shipped reference (a
 `general` agent and an `indexer` stub) — start by copying it.
 
 ## What `PluginContext` exposes
 
-- `register_agent(AgentDef)` — primary way to introduce new agent types
+- `register_agent(AgentDefinition)` — primary way to introduce new agent types
 - `register_tool(ToolSpec, impl ToolHandler)` — add a tool the runtime
   will dispatch to
 - `core_api()` — read-only handle to the runtime's adapter facade for
   things like emitting events or reading config
 
-The full surface lives in `openlet-plugin-api/src/context.rs`.
+The full surface lives in `leti-plugin-api/src/context.rs`.
 
 ## Workspace and permissions
 
 Each agent gets its own `AgentSpec` with a workspace root. File tools
 are scoped to that root (the `LocalFilesystem` adapter rejects paths
-outside the workspace; see `crates/openlet-adapters/src/localfs/`).
+outside the workspace; see `crates/leti-adapters/src/localfs/`).
 Permissions are evaluated by `ConfigPermissionMgr` against rulesets
 declared in config — the plugin doesn't need to think about it.
+
+## Host context and interaction mode
+
+The engine has no user, tenant, or principal model. A host that needs request
+metadata creates a typed `leti_core::runtime::TurnExtensions` value and puts
+it on the turn context. The same opaque carrier reaches `ToolCtx` and
+`PermissionCtx`, including child turns. Core never interprets or persists
+those values; host-owned filesystem and permission adapters may downcast their
+own types.
+
+Sessions are `Interactive` by default. A host may explicitly create a
+`Detached { on_ask: Allow|Deny }` session for unattended work. Detached mode
+does not override explicit Deny rules, does not blanket-allow destructive
+shell operations or `web_fetch`, and emits a durable authorization event for
+every detached permission check. Background-injected turns remain fail-closed.
 
 ## Testing your plugin
 
 The runtime ships an integration-test pattern: spawn the
-`openlet-test-mock-provider` server, point a real `OpenAiCompatProvider`
+`leti-test-mock-provider` server, point a real `OpenAiCompatProvider`
 at it, drive a turn, assert events. See
-`crates/openlet-adapters/tests/openai_compat_parity.rs` for the
+`crates/leti-adapters/tests/openai_compat_parity.rs` for the
 canonical example.
 
 ## Cross-checks before shipping a plugin

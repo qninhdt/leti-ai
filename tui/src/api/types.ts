@@ -1,7 +1,7 @@
-// Hand-rolled DTOs mirroring crates/openlet-protocol — the actual types the
+// Hand-rolled DTOs mirroring crates/leti-protocol — the actual types the
 // client + store speak. `npm run codegen` writes `schema.d.ts` as a
 // contract-drift reference snapshot (imported by nothing); it does NOT replace
-// these. Keep these in sync with openlet_protocol::dto::*.
+// these. Keep these in sync with leti_protocol::dto::*.
 
 export type DeltaKind = "text" | "reasoning" | "tool_args";
 
@@ -19,7 +19,7 @@ export interface UsageDto {
 
 export interface AgentDto {
   id: string;
-  // Server emits `display_name` (openlet_protocol::dto::AgentDto), not `name`.
+  // Server emits `display_name` (leti_protocol::dto::AgentDto), not `name`.
   display_name: string;
   description?: string | null;
   // Effective serve model for this agent's turns (config.default_model).
@@ -86,7 +86,7 @@ export interface MessageDto {
 }
 
 // GET /v1/session/:id/messages returns the server's tagged-union parts
-// verbatim (openlet_protocol::dto::PartDto — serde tag="kind"). Unlike the
+// verbatim (leti_protocol::dto::PartDto — serde tag="kind"). Unlike the
 // flat streaming PartDto above, each variant carries only its own fields, so
 // tool_call/tool_result bodies (name/args/result) arrive intact. This is the
 // ONLY path that delivers tool bodies to the UI; the SSE stream carries just
@@ -127,7 +127,7 @@ export interface ServerMessageDto {
   parts: ServerPartDto[];
 }
 
-// Mirrors openlet_protocol::dto::PermissionRequestDto. The server currently
+// Mirrors leti_protocol::dto::PermissionRequestDto. The server currently
 // sends only ask_id + permission (a structured string like "file:write:/path"
 // or "bash:rm*") + optional reason/timeout. tool_name/diff/bash/patterns are
 // NOT emitted yet (the core PermissionRequest carries no such data) — kept
@@ -146,7 +146,7 @@ export interface PermissionRequestDto {
   patterns?: string[];
 }
 
-// Mirrors openlet_protocol::dto::PermissionReplyDto (serde snake_case). The
+// Mirrors leti_protocol::dto::PermissionReplyDto (serde snake_case). The
 // server takes ONLY `decision` + optional `reason`; the rule pattern for an
 // always_* decision is derived server-side from the original ask, never from
 // client input, so no pattern/scope field is sent.
@@ -174,14 +174,14 @@ export interface PromptAckDto {
   message_id: string;
 }
 
-// Mirrors openlet_protocol::dto::AskOptionDto — one selectable answer for an
+// Mirrors leti_protocol::dto::AskOptionDto — one selectable answer for an
 // `ask_user` question. `description` is optional secondary text.
 export interface AskOptionDto {
   label: string;
   description?: string | null;
 }
 
-// Mirrors `openlet_protocol::dto::TodoItemDto`. `todo_updated` carries the
+// Mirrors `leti_protocol::dto::TodoItemDto`. `todo_updated` carries the
 // authoritative full-overwrite snapshot after the server confirms its atomic
 // artifact persist, so the sidebar can update before message hydration lands.
 export interface TodoItemDto {
@@ -218,7 +218,7 @@ export interface PluginInfoDto {
   enabled: boolean;
 }
 
-// File @-mention DTOs — mirror crates/openlet-server/src/routes/files.rs.
+// File @-mention DTOs — mirror crates/leti-server/src/routes/files.rs.
 export type FileKindDto = "text" | "image" | "pdf";
 
 export interface FileEntryDto {
@@ -310,7 +310,7 @@ export type EventDto =
   | { kind: "subagent_roster"; root_session_id: string; entries: RosterEntryDto[] };
 
 // One live sibling in a `subagent_roster` frame (Phase 4). Mirrors
-// openlet_protocol::dto::RosterEntryDto.
+// leti_protocol::dto::RosterEntryDto.
 export interface RosterEntryDto {
   name: string;
   task_id: string;

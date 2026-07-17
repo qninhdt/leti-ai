@@ -4,7 +4,7 @@
 
 import { useStore } from "../store/index.js";
 
-import type { OpenletClient } from "../api/client.js";
+import type { LetiClient } from "../api/client.js";
 import type { SessionDto } from "../api/types.js";
 
 // Create a session against the given (or default) agent, register it in the
@@ -12,7 +12,7 @@ import type { SessionDto } from "../api/types.js";
 // is available (nothing to bind the session to). Callers that only need the
 // side effect can ignore the return value.
 export async function createAndActivateSession(
-  client: OpenletClient,
+  client: LetiClient,
   agentId?: string,
 ): Promise<SessionDto | null> {
   const resolvedAgentId = agentId ?? useStore.getState().agents[0]?.id;

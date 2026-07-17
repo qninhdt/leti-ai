@@ -4,11 +4,11 @@
 
 import { createContext, useContext } from "solid-js";
 
-import type { OpenletClient } from "../api/client.js";
+import type { LetiClient } from "../api/client.js";
 import type { PromptHistory } from "../services/prompt-history.js";
 
 export interface AppRuntime {
-  client: OpenletClient;
+  client: LetiClient;
   baseUrl: string;
   history: PromptHistory;
   token?: string;

@@ -1,24 +1,24 @@
 # System Architecture
 
-_Last updated: 2026-06-11. Supersedes the Phase-8 snapshot in `architecture.md`._
+_Last updated: 2026-07-17. See `architecture.md` for the integration boundary._
 
 ## Crate boundaries
 
 ```
-openlet-core            domain types, port traits, runtime, projection, dispatch
-openlet-protocol        wire DTOs (utoipa derive)
-openlet-adapters        local impls: openai + openrouter, sqlite, localfs,
+leti-core            domain types, port traits, runtime, projection, dispatch
+leti-protocol        wire DTOs (utoipa derive)
+leti-adapters        local impls: openai + openrouter, sqlite, localfs,
                         localshell, broadcast bus, config-perm
-openlet-plugin-api      stable Plugin trait + PluginContext (CoreApi facade) + hook IO
-openlet-plugin-registry install_all — drains registrations into hook chains
-openlet-plugins/*       core-tools (8 builtins), core-agents, test-quota-stub
-openlet-server          axum router, AppState, auth + workspace middleware,
+leti-plugin-api      stable Plugin trait + PluginContext (CoreApi facade) + hook IO
+leti-plugin-registry install_all — drains registrations into hook chains
+leti-plugins/*       core-tools (8 builtins), core-agents, test-quota-stub
+leti-server          axum router, AppState, auth + workspace middleware,
                         metrics, evidence scrubber, subagent spawner/driver, binary
-openlet-test-mock-provider  in-process OpenAI-compat mock (wire capture, keyless)
+leti-test-mock-provider  in-process OpenAI-compat mock (wire capture, keyless)
 tui/                    TypeScript terminal client (Ink→Solid migration in progress)
 ```
 
-`openlet-core` knows nothing about HTTP or filesystems. `openlet-server` wires
+`leti-core` knows nothing about HTTP or filesystems. `leti-server` wires
 concrete adapters into the runtime and exposes REST + SSE.
 
 ## Port traits (the adapter surface)
@@ -31,12 +31,9 @@ concrete adapters into the runtime and exposes REST + SSE.
 | `EventSink` | `BroadcastBus` (+ sqlite repo) | SSE channel + replay; **routing key** + **delivery semantics** | `publish_routed`, `delivery_semantics()` |
 | `PermissionManager` | `ConfigPermissionMgr` | always/ask/never rulesets, deferred resolution | async, opaque AskId |
 | `Filesystem` | `LocalFilesystem` | workspace file IO (read/write/glob/grep), jailed to workspace root | swappable for remote workspace |
-| `WorkspaceResolver` | `StaticWorkspaceResolver` | caller+id → workspace AppState, ownership 403 | takes the principal |
-| `Authenticator` | `LocalDevAuthenticator` | inbound identity (zero-trust) | cloud JWKS impl plugs in |
-| `CredentialProvider` | `NoopCredentialProvider` | outbound SA credential | cloud SA issuer plugs in |
 
 Widening is additive default methods where possible; cloud impls live in the
-openlet repo and satisfy the contract spec in `docs/integration-guide.md`.
+leti repo and satisfy the contract spec in `docs/integration-guide.md`.
 
 ## Data flow — a single turn
 
@@ -60,15 +57,15 @@ Durable events persist to the `events` table; a disconnected client resumes via
 `GET /v1/event` with `Last-Event-ID`, and hydrates history with
 `GET /v1/session/:id/messages` (the Part union).
 
-## Identity & multi-tenancy (Phases 6–7)
+## Host authentication and multi-tenancy
 
-Mount order (outermost→innermost): BodyLimit → CORS → Trace → `AuthLayer` →
-`WorkspaceRoutingLayer` → handler. `AuthLayer` runs first and injects the
-canonical `AuthPrincipal`; the workspace layer resolves `(principal, ws_id)` →
-`AppState`, returning 403 on an ownership mismatch. Local profile uses the dev
-authenticator + single-tenant static resolver; the cloud binary supplies its
-own via `RouterBuilder::build_with_auth` and a dynamic resolver. Runtime profile
-(`OPENLET_RUNTIME_PROFILE`) fails closed for `cloud` without a real authenticator.
+Authentication, tenant lookup, and ownership authorization belong to the host.
+The reference server includes loopback-oriented auth and static workspace
+routing so it can run standalone; a cloud host supplies its own verifier and
+resolver around `RouterBuilder`. The host must authenticate before workspace
+lookup and must authorize session creation and interaction-mode changes.
+Identity needed by a host adapter travels through opaque `TurnExtensions`; it
+is not an engine policy type.
 
 ## Plugins & hooks
 
@@ -108,17 +105,21 @@ variant to a stable HTTP status + slug, logs the class via `tracing`, returns an
 Correlated spans: `request` (request_id) → `turn` (session_id, turn_id) →
 dispatch/provider/compaction, flowing into JSON logs. Metrics via the `metrics`
 facade — emission is a no-op until a Prometheus recorder is installed, and
-`/metrics` binds only when `OPENLET_METRICS_BIND` is set (separate listener, no
+`/metrics` binds only when `LETI_METRICS_BIND` is set (separate listener, no
 per-workspace label on the open scrape).
 
 ## Persistence
 
-SQLite via sqlx, migrations `0001`–`0016`. `SessionMeta` = explicit columns +
+SQLite via sqlx, migrations `0001`–`0017`. `SessionMeta` = explicit columns +
 JSON blobs (`extensions`, `capabilities`). Durable event ids assigned/persisted/
 broadcast under one lock (ordering guarantee), seeded from `MAX(id)` across
 restart. Artifacts on localfs, sha256-keyed, metadata in sqlite. The
 `LocalfsSessionLogger` writes a redacted JSONL mirror; the `audit` subcommand
 replays it (re-redacting, defense-in-depth).
+
+Session interaction mode is explicit and defaults to `Interactive`. Detached
+permission checks emit durable authorization events, while top-level detached
+turns are not automatically re-driven after process restart.
 
 ## Infrastructure & CI (Phases 13–14)
 
@@ -134,4 +135,4 @@ evidence); `image.yml` (build + healthcheck smoke).
 - TUI is mid Ink→Solid migration; its agent-surface fixes (Phase 8/9) are
   deferred. The server-side `GET …/messages` it needs is done.
 - Cloud adapter implementations (Postgres/S3/Kafka, JWKS, SA issuer) live in the
-  openlet repo, built against these seams.
+  leti repo, built against these seams.

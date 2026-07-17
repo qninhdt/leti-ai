@@ -3,7 +3,7 @@
 #
 # Sourced by drive scripts. Provides:
 #   up_mock              start the in-process mock-openai-service; export MOCK_BASE_URL
-#   up_server <base_url> start `openlet-server serve` pointed at <base_url>; poll health
+#   up_server <base_url> start `leti-server serve` pointed at <base_url>; poll health
 #   build_tui            build tui/dist/cli.mjs (the launcher is the only other build site)
 #   down                 kill the tracked child PIDs directly + tmux kill-session
 #
@@ -15,12 +15,12 @@ set -euo pipefail
 
 ACC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$ACC_ROOT/../.." && pwd)"
-RUN_DIR="${ACC_RUN_DIR:-$REPO_ROOT/.openlet-run/acceptance}"
+RUN_DIR="${ACC_RUN_DIR:-$REPO_ROOT/.leti-run/acceptance}"
 mkdir -p "$RUN_DIR"
 
-PROFILE="${OPENLET_E2E_PROFILE:-debug}"
+PROFILE="${LETI_E2E_PROFILE:-debug}"
 BIN_DIR="$REPO_ROOT/target/$PROFILE"
-SERVER_BIN="$BIN_DIR/openlet-server"
+SERVER_BIN="$BIN_DIR/leti-server"
 MOCK_BIN="$BIN_DIR/mock-openai-service"
 
 SERVER_LOG="$RUN_DIR/server.log"
@@ -29,11 +29,11 @@ MOCK_LOG="$RUN_DIR/mock.log"
 # Tracked child PIDs — populated by up_* and killed by down.
 SERVER_PID=""
 MOCK_PID=""
-ACC_TMUX_SESSION="${ACC_TMUX_SESSION:-openlet-acc}"
+ACC_TMUX_SESSION="${ACC_TMUX_SESSION:-leti-acc}"
 
 _require_bin() {
   if [ ! -x "$1" ]; then
-    echo "missing binary: $1 (run: cargo build -p openlet-server -p openlet-test-mock-provider)" >&2
+    echo "missing binary: $1 (run: cargo build -p leti-server -p leti-test-mock-provider)" >&2
     return 1
   fi
 }
@@ -65,15 +65,15 @@ up_mock() {
 }
 
 # Start the server. $1 = model base URL (mock or OpenRouter). The server
-# binds 127.0.0.1:0-style via OPENLET_BIND; caller passes a concrete port.
+# binds 127.0.0.1:0-style via LETI_BIND; caller passes a concrete port.
 # Required env the caller must export beforehand:
-#   OPENLET_BIND, OPENLET_DEFAULT_MODEL, OPENLET_WORKSPACE, OPENLET_DATA_DIR
+#   LETI_BIND, LETI_DEFAULT_MODEL, LETI_WORKSPACE, LETI_DATA_DIR
 #   and (real mode) OPENAI_API_KEY.
 up_server() {
   _require_bin "$SERVER_BIN"
   local base_url="$1"
   : >"$SERVER_LOG"
-  local bind="${OPENLET_BIND:-127.0.0.1:8788}"
+  local bind="${LETI_BIND:-127.0.0.1:8788}"
   OPENAI_API_BASE_URL="$base_url" "$SERVER_BIN" serve >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   local health="http://$bind/v1/health"

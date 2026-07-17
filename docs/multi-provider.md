@@ -4,7 +4,7 @@ Phase 5 wires a prefix-based provider router so cloud deployments can serve mult
 
 ## Routing matrix (prefix-strict)
 
-The router (`openlet-adapters::multi_provider::MultiProvider`) selects a backend by inspecting the model name prefix:
+The router (`leti-adapters::multi_provider::MultiProvider`) selects a backend by inspecting the model name prefix:
 
 | Model prefix          | Backend         |
 |-----------------------|-----------------|
@@ -26,7 +26,7 @@ A custom model named `claude-myprovider/foo` syntactically begins with `claude-`
 
 ```rust
 use std::collections::HashMap;
-use openlet_adapters::multi_provider::{MultiProvider, ProviderKind};
+use leti_adapters::multi_provider::{MultiProvider, ProviderKind};
 
 let mut overrides = HashMap::new();
 overrides.insert("claude-myprovider/".to_string(), ProviderKind::OpenAiCompat);
@@ -37,7 +37,7 @@ let router = MultiProvider::new(anthropic, gemini, openai_compat)
 
 ## Per-provider request shaping
 
-Each backend has request-shape quirks the runtime must absorb. The shaper (`openlet-adapters::openai_compat::prefix_shaping`) detects quirks and rewrites the JSON body before the wire send:
+Each backend has request-shape quirks the runtime must absorb. The shaper (`leti-adapters::openai_compat::prefix_shaping`) detects quirks and rewrites the JSON body before the wire send:
 
 | Family           | Quirk                                              |
 |------------------|----------------------------------------------------|
@@ -54,9 +54,9 @@ The shaper runs unconditionally in `OpenAiCompatProvider::chat_stream`. Custom O
 
 Cloud deployments serve multiple workspaces from a single binary. Each workspace can carry its own API keys for any backend (BYOK = bring-your-own-key). The pattern:
 
-1. **`WorkspaceResolver`** trait (in `openlet-server::workspace_resolver`) maps an incoming workspace id to an `Arc<AppState>`.
+1. **`WorkspaceResolver`** trait (in `leti-server::workspace_resolver`) maps an incoming workspace id to an `Arc<AppState>`.
 2. Each `AppState` carries its own `MultiProvider` constructed from the workspace's BYOK keys.
-3. The HTTP middleware (`workspace_routing`) reads `x-openlet-workspace` from the request, resolves it via the trait, and inserts the resolved state into request extensions.
+3. The HTTP middleware (`workspace_routing`) reads `x-leti-workspace` from the request, resolves it via the trait, and inserts the resolved state into request extensions.
 4. Handlers extract the per-workspace state via `State<AppState>` (the layer inserts the resolved `Arc<AppState>` into request extensions; there is no separate extractor).
 
 Single-tenant deployments use `StaticWorkspaceResolver`, which always returns the same state — so the local binary keeps booting unchanged.

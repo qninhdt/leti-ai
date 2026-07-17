@@ -2,21 +2,21 @@
 
 **Date:** 2026-05-23
 **Branch:** `main`
-**Plan:** [phase-05-http-api-and-sse.md](../../plans/20260523-1414-openlet-agent-core-mvp/phase-05-http-api-and-sse.md)
+**Plan:** [phase-05-http-api-and-sse.md](../../plans/20260523-1414-leti-agent-core-mvp/phase-05-http-api-and-sse.md)
 
 ## What shipped
 
 The runtime is reachable over HTTP. Eleven REST routes under `/v1` cover session CRUD, fire-and-forget prompts, abort, agent listing, permission replies, plugin introspection, health, and OpenAPI docs. A single multiplexed SSE channel fans out `AgentEvent`s with durable replay-from-checkpoint via `Last-Event-ID`.
 
-- **Routes** — `crates/openlet-server/src/routes/{session,message,cancel,agent,permission,plugin,event}.rs`. Each module is `#[utoipa::path]`-annotated; `OpenApiRouter::routes!()` aggregates them in `router.rs`.
-- **DTO layer** — `crates/openlet-protocol/src/dto/{error,agent,session,part,message,permission,event}.rs` with `utoipa::ToSchema` + `From<DomainType>` impls so handlers stay thin. `openlet-core` now derives `ToSchema` on `Role`, `SessionStatus`, `PermissionMode` so the protocol crate can re-export schemas without re-defining types.
-- **BroadcastBus rewrite** — `crates/openlet-adapters/src/bus/mod.rs`. Two-tier publish: `Persistence::Durable` writes to SQLite first (assigns autoincrement `event_id`) then broadcasts; `Persistence::Transient` (used for `part.delta`, `heartbeat`) broadcasts only. `replay_since(session_id, after_id)` queries the `events` table for resume.
-- **DeliveredEvent envelope** — `crates/openlet-core/src/adapters/event_sink.rs`. `subscribe()` now returns `broadcast::Receiver<DeliveredEvent>` carrying `(event_id, event)`; durable rows have an id, transient frames don't. SSE writes `id: <event_id>` only when present.
-- **AppError → ErrorDto** — `crates/openlet-server/src/error.rs`. Stable `code` slugs per HTTP status; explicit `From` impls for every domain error variant (`MemoryError`, `ArtifactError`, `EventError`, `PermissionError`, `ConfigError`, `ProviderError`, `ToolError`, `CoreError`). No catch-all 500 for known cases.
+- **Routes** — `crates/leti-server/src/routes/{session,message,cancel,agent,permission,plugin,event}.rs`. Each module is `#[utoipa::path]`-annotated; `OpenApiRouter::routes!()` aggregates them in `router.rs`.
+- **DTO layer** — `crates/leti-protocol/src/dto/{error,agent,session,part,message,permission,event}.rs` with `utoipa::ToSchema` + `From<DomainType>` impls so handlers stay thin. `leti-core` now derives `ToSchema` on `Role`, `SessionStatus`, `PermissionMode` so the protocol crate can re-export schemas without re-defining types.
+- **BroadcastBus rewrite** — `crates/leti-adapters/src/bus/mod.rs`. Two-tier publish: `Persistence::Durable` writes to SQLite first (assigns autoincrement `event_id`) then broadcasts; `Persistence::Transient` (used for `part.delta`, `heartbeat`) broadcasts only. `replay_since(session_id, after_id)` queries the `events` table for resume.
+- **DeliveredEvent envelope** — `crates/leti-core/src/adapters/event_sink.rs`. `subscribe()` now returns `broadcast::Receiver<DeliveredEvent>` carrying `(event_id, event)`; durable rows have an id, transient frames don't. SSE writes `id: <event_id>` only when present.
+- **AppError → ErrorDto** — `crates/leti-server/src/error.rs`. Stable `code` slugs per HTTP status; explicit `From` impls for every domain error variant (`MemoryError`, `ArtifactError`, `EventError`, `PermissionError`, `ConfigError`, `ProviderError`, `ToolError`, `CoreError`). No catch-all 500 for known cases.
 - **Fire-and-forget `prompt_async`** — appends user message + parts, marks session `Running`, spawns the runtime loop on a tokio task, returns `202 Accepted` with `{message_id, ack: true}` immediately. Errors propagate via SSE `error` events, not the HTTP response.
 - **Cancel route** — `POST /v1/session/:id/abort` flips the `CancellationToken` registered in `AppState::active_turns: DashMap<SessionId, TurnHandle>` and returns `200` without awaiting teardown (§N).
 - **§I crash recovery** — `main.rs` lists `Running` sessions on boot and marks them `Errored("crashed")` so they don't ghost forever after an unclean shutdown.
-- **Test harness** — `crates/openlet-server/tests/support.rs` wires a fully-booted router over in-memory SQLite + a stub provider that errors on every call. Eight integration tests exercise session CRUD, agent listing, permission reply 404, SSE replay, abort happy path, and empty-prompt rejection.
+- **Test harness** — `crates/leti-server/tests/support.rs` wires a fully-booted router over in-memory SQLite + a stub provider that errors on every call. Eight integration tests exercise session CRUD, agent listing, permission reply 404, SSE replay, abort happy path, and empty-prompt rejection.
 
 ## Decisions worth remembering
 
@@ -30,13 +30,13 @@ The runtime is reachable over HTTP. Eleven REST routes under `/v1` cover session
 
 **`tokio_util::CancellationToken` over `JoinHandle::abort()`.** Token first, abort as backstop. The plan flagged that `abort()` doesn't kill subprocesses; the token routes cooperatively through every await point in the loop.
 
-**utoipa::ToSchema on core types.** Pulled `utoipa.workspace = true` into `openlet-core` so `Role`, `SessionStatus`, `PermissionMode` are first-class schemas. The alternative — wrapping each as a separate enum in protocol — would have doubled the variants and invited drift.
+**utoipa::ToSchema on core types.** Pulled `utoipa.workspace = true` into `leti-core` so `Role`, `SessionStatus`, `PermissionMode` are first-class schemas. The alternative — wrapping each as a separate enum in protocol — would have doubled the variants and invited drift.
 
 ## Friction
 
 **Test fixtures and `Config::default()`.** `Config` doesn't impl `Default`. The harness manually constructs every field. Worth a `Config::for_test(tempdir)` helper later, but not in this phase.
 
-**Type-shared lib.rs.** `support.rs` initially defined its own `AgentResources` struct mirroring the server's. The router rejected it (different type). Fix was to expose `AgentResources` from `openlet_server` directly so tests reach for the canonical type. Pulled `pub mod app_state` etc. up into a new `lib.rs`.
+**Type-shared lib.rs.** `support.rs` initially defined its own `AgentResources` struct mirroring the server's. The router rejected it (different type). Fix was to expose `AgentResources` from `leti_server` directly so tests reach for the canonical type. Pulled `pub mod app_state` etc. up into a new `lib.rs`.
 
 **Clippy round trip.** Build green, tests green, clippy `-D warnings` flagged four spots: `manual_implementation_of_ok` on a `match res { Ok(d) => Some(d), Err(_) => None }` filter_map (replaced with `.ok()`), two `ok_or_else` closures wrapping non-allocating values (replaced with `ok_or`), and one `or_insert_with(ReadHistory::new)` on a `Default`-implementing type (replaced with `or_default()`). Removed the now-unused `ReadHistory` import as a side effect.
 

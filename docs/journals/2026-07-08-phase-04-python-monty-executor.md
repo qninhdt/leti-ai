@@ -6,7 +6,7 @@
 
 ## What shipped
 
-- `crates/openlet-adapters/src/pyexec/` — new adapter module:
+- `crates/leti-adapters/src/pyexec/` — new adapter module:
   - `executor.rs` — `MontyExecutor` (impl `PythonExecutor`). Drives `MontyRun::start`→`OsCall.resume` loop from an `async fn`; `max_memory` (256 MiB default) + `max_duration` (= timeout). Maps `Complete`→stdout+last-expr echo, exception→stderr+exit 1, `TimeoutError`→`timed_out`.
   - `mount_bridge.rs` — the single IO seam. One match arm per `OsFunctionCall` variant → `ctx.fs` async. Encodes two spike contracts: write-family resume with `Int(count)` (FIND-D), and `WriteText`=truncate / `AppendText`=append (Monty flips 2nd write on a `w` handle to `AppendText`). Curated `ENV_ALLOWLIST` (no PATH, no secrets); `FsError`→CPython exception type (`FileNotFoundError`/`PermissionError`/`OSError`).
 - Registration fan-out: `CoreToolsPlugin::with_python()` builder (4-arg `new` unchanged); `all_plugins` gains a trailing `Option<Arc<dyn PythonExecutor>>`; `install_plugins` threads it. All 7 internal call sites updated (server binary passes `Some(MontyExecutor)`, every test harness passes `None`).

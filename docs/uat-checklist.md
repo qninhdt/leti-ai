@@ -1,7 +1,7 @@
-# Openlet UAT Checklist
+# Leti UAT Checklist
 
 Manual user-acceptance test the operator runs against the **one-command
-launch** (`./openlet-ai`), exactly as a customer would. Covers all five
+launch** (`./leti-ai`), exactly as a customer would. Covers all five
 feature-matrix items. Each item lists exact steps, the expected observable
 outcome, a checkbox, and an "If it fails" pointer.
 
@@ -13,9 +13,9 @@ that is what this checklist is for.
 
 ```bash
 cp .env.example .env        # then fill OPENAI_API_KEY
-./openlet-ai                # real OpenRouter
+./leti-ai                # real OpenRouter
 # or, no key / no network:
-./openlet-ai --mock         # in-process mock LLM
+./leti-ai --mock         # in-process mock LLM
 ```
 
 Expected: the launcher builds the server, prints a `doctor` preflight, waits
@@ -23,8 +23,8 @@ for health, builds the TUI if needed, and drops you into the live terminal
 app. On `Ctrl-C` the server is torn down (no orphaned process on the bind
 port — verify with `lsof -i :8787` after exit; should be empty).
 
-- [ ] `./openlet-ai` reaches a live TUI in one command (filled `.env`)
-- [ ] `./openlet-ai --mock` reaches a live TUI with no key and no network
+- [ ] `./leti-ai` reaches a live TUI in one command (filled `.env`)
+- [ ] `./leti-ai --mock` reaches a live TUI with no key and no network
 - [ ] After `Ctrl-C`, the bind port is free (no orphan server)
 
 If it fails: see `docs/troubleshooting.md` → "launcher: port in use" /
@@ -72,7 +72,7 @@ Steps:
 4. Prompt: `append a second line "bye" to hello.txt`.
 5. Prompt: `delete hello.txt`.
 6. Check the workspace on disk between steps:
-   `ls "$OPENLET_WORKSPACE"` (default `~/.openlet/workspace`).
+   `ls "$LETI_WORKSPACE"` (default `~/.leti/workspace`).
 
 Expected: `hello.txt` appears after step 2 with `hi`; step 3 echoes the
 content; step 4 adds the line on disk; step 5 removes the file.
@@ -113,17 +113,17 @@ If it fails: see `docs/troubleshooting.md` → "turn hangs forever".
 Steps:
 1. Run one turn (any prompt) so the session has history.
 2. `/quit` the TUI (server tears down).
-3. Relaunch: `./openlet-ai` (same `OPENLET_DATA_DIR`).
+3. Relaunch: `./leti-ai` (same `LETI_DATA_DIR`).
 4. Run `/sessions` and open the prior session.
 
 Expected: the prior session is listed and its message history is intact —
-sqlite under `OPENLET_DATA_DIR` survived the restart.
+sqlite under `LETI_DATA_DIR` survived the restart.
 
 - [ ] Prior session listed after relaunch
 - [ ] Its message history is present
 
-If it fails: confirm `OPENLET_DATA_DIR` is the same across both launches
-(default `~/.openlet`); a fresh dir means a fresh database.
+If it fails: confirm `LETI_DATA_DIR` is the same across both launches
+(default `~/.leti`); a fresh dir means a fresh database.
 
 ---
 
@@ -150,6 +150,6 @@ serving `AppState` (the `/v1/plugin` route reads it).
 
 ## Sign-off
 
-- [ ] All five items pass against `./openlet-ai` (real OpenRouter)
-- [ ] All non-network items pass against `./openlet-ai --mock`
+- [ ] All five items pass against `./leti-ai` (real OpenRouter)
+- [ ] All non-network items pass against `./leti-ai --mock`
 - Operator: ________________   Date: ____________   Build/commit: ____________

@@ -2,16 +2,16 @@
 
 _Last updated: 2026-06-11_
 
-The design rules that keep openlet-ai cohesive and cloud-integration-ready.
+The design rules that keep leti-ai cohesive and cloud-integration-ready.
 These are architectural/API design guidelines (not UI design — the only UI is
 the terminal client, covered in `tui/`).
 
 ## Port/adapter (hexagonal) discipline
 
 - Every external dependency (model, storage, events, permissions, filesystem,
-  tool execution) sits behind a **port trait** in `openlet-core/src/adapters/`.
-- Core depends on the trait, never a concrete impl. `openlet-adapters` provides
-  the local impls; cloud impls live in the openlet repo.
+  tool execution) sits behind a **port trait** in `leti-core/src/adapters/`.
+- Core depends on the trait, never a concrete impl. `leti-adapters` provides
+  the local impls; cloud impls live in the leti repo.
 - A port method's signature must be expressible by a remote backend: async,
   workspace/session-scoped where relevant, paginated where unbounded, no
   `std::path` assumption that a remote workspace can't honor.
@@ -46,7 +46,7 @@ When a cloud need shows the current shape blocks it:
   database server, no auth server, no compose. Defaults make this true —
   metrics emission is a no-op until a recorder installs, `/metrics` is off
   unless bound, auth is the dev authenticator, storage is SQLite + localfs.
-- Opt-in, never opt-out: an operator turns features on via env (`OPENLET_*`),
+- Opt-in, never opt-out: an operator turns features on via env (`LETI_*`),
   they are never required to turn infra off.
 
 ## Fail-closed on security boundaries
