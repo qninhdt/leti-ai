@@ -11,9 +11,9 @@ import { AppRuntimeProvider, type AppRuntime } from "./render/app-context.js";
 import { createClient } from "./api/client.js";
 import { PromptHistory } from "./services/prompt-history.js";
 
-const DEFAULT_BASE_URL = process.env.OPENLET_BASE_URL ?? "http://127.0.0.1:8787";
-const TOKEN = process.env.OPENLET_TOKEN;
-const STATE_DIR = process.env.OPENLET_STATE_DIR ?? join(homedir(), ".openlet");
+const DEFAULT_BASE_URL = process.env.LETI_BASE_URL ?? "http://127.0.0.1:8787";
+const TOKEN = process.env.LETI_TOKEN;
+const STATE_DIR = process.env.LETI_STATE_DIR ?? join(homedir(), ".leti");
 
 const client = createClient({ baseUrl: DEFAULT_BASE_URL, token: TOKEN });
 const history = new PromptHistory(join(STATE_DIR, "prompt-history.jsonl"));

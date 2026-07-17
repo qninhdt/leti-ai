@@ -2,7 +2,7 @@
 // the single mutation point for the store. Kept a PURE function `(state, ev) =>
 // Partial<State>` so the store's `set` call stays a thin wrapper (mirrors the
 // reducers.ts / message-hydration.ts split in this dir). Snake-case kinds match
-// EventDto from crates/openlet-protocol after axum's serde
+// EventDto from crates/leti-protocol after axum's serde
 // rename_all="snake_case". Arms are grouped by domain (parts, session,
 // overlays/asks) but the logic of each is byte-identical to its inline origin.
 

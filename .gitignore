@@ -104,8 +104,8 @@ assets/
 !claude/skills/use-mcp/assets/**
 # Exception: core-agents embeds plan_mode.md at compile time (include_str!),
 # so this is load-bearing source, not a marketing asset — must be tracked.
-!crates/openlet-plugins/core-agents/assets/
-!crates/openlet-plugins/core-agents/assets/**
+!crates/leti-plugins/core-agents/assets/
+!crates/leti-plugins/core-agents/assets/**
 
 # External repos for study/reference
 external/
@@ -119,8 +119,11 @@ temp
 drafts/
 release-manifest.json
 
+.kiro
+
 # Launcher runtime state (server/mock logs, pids)
 .openlet-run/
+.leti-run/
 # Code-intelligence index (local tooling artifact)
 .codegraph/
 # Acceptance test evidence (may contain scrubbed real-LLM transcripts)

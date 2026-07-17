@@ -1,10 +1,10 @@
 {
-  "name": "openlet",
+  "name": "leti",
   "version": "0.1.0",
-  "description": "Openlet TUI client (SolidJS/@opentui) for openlet-agent-core",
+  "description": "Leti TUI client (SolidJS/@opentui) for leti-agent-core",
   "type": "module",
   "bin": {
-    "openlet": "dist/cli.mjs"
+    "leti": "dist/cli.mjs"
   },
   "scripts": {
     "codegen": "openapi-typescript http://localhost:8787/doc/openapi.json -o src/api/schema.d.ts",

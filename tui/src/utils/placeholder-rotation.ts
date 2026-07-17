@@ -2,7 +2,7 @@
 // `Ask anything... "<example>"` line. OpenCode picks a random index per mount
 // and per session change; we expose the example list plus a picker so the
 // editor can do the same. Shell-mode placeholders are intentionally absent —
-// shell mode was dropped from Openlet.
+// shell mode was dropped from Leti.
 
 export const PROMPT_PLACEHOLDERS: readonly string[] = [
   "Fix a TODO in the codebase",

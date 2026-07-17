@@ -1,14 +1,14 @@
 # Troubleshooting
 
 A field guide for common failures. For anything not covered here, run
-`openlet-server audit --session-id <ID>` and post the (already-redacted)
+`leti-server audit --session-id <ID>` and post the (already-redacted)
 output along with the error.
 
 ## Server won't start
 
 ### "loading config: invalid bind address"
 
-`OPENLET_BIND` must be `host:port`. The default is `127.0.0.1:8787`.
+`LETI_BIND` must be `host:port`. The default is `127.0.0.1:8787`.
 A bare port number won't work.
 
 ### "binding 127.0.0.1:8787: Address already in use"
@@ -19,7 +19,7 @@ Another process owns the port. Find and stop it:
 lsof -i :8787
 ```
 
-Or pick a different port: `OPENLET_BIND=127.0.0.1:8788 cargo run -p openlet-server`.
+Or pick a different port: `LETI_BIND=127.0.0.1:8788 cargo run -p leti-server`.
 
 ### "running sqlite migrations: …"
 
@@ -27,7 +27,7 @@ Usually a corrupt or partially-written `db.sqlite` from an older crash.
 Back it up if it has data you care about, then move it aside:
 
 ```bash
-mv ~/.openlet/db.sqlite ~/.openlet/db.sqlite.broken
+mv ~/.leti/db.sqlite ~/.leti/db.sqlite.broken
 ```
 
 The next start will recreate it.
@@ -43,7 +43,7 @@ so restart the server after changing it.
 ### `provider_rate_limit` 429
 
 OpenRouter is throttling. The retry is currently 1s; if this is steady
-state, lower `OPENLET_DEFAULT_MODEL` to a less-constrained tier or stop
+state, lower `LETI_DEFAULT_MODEL` to a less-constrained tier or stop
 parallel sessions.
 
 ### `context_window` 413
@@ -80,10 +80,10 @@ or `/danger` in the TUI) to auto-approve workspace tools.
 ### Model unreachable / wrong base URL
 
 If turns fail immediately with a connect error, the serving provider's
-base URL is likely wrong. `openlet-server` resolves it from
+base URL is likely wrong. `leti-server` resolves it from
 `OPENAI_API_BASE_URL` (unset → `https://openrouter.ai/api/v1`); the
 boot log prints the resolved value as `model backend endpoint`. Run
-`openlet-server doctor` — its `model_reachable` check GETs `<base>/models`
+`leti-server doctor` — its `model_reachable` check GETs `<base>/models`
 (no chat spend) and reports the failure. Common mistake: appending an
 extra `/v1` to the mock's printed `base_url` (it already ends in `/v1`),
 which yields `…/v1/v1/chat/completions` — a 404 on real OpenRouter. Use
@@ -101,7 +101,7 @@ Use a relative path or extend the agent's workspace via its `AgentSpec`.
 The shell or file tool was blocked by `ConfigPermissionMgr`. Either:
 - approve the specific call interactively in the TUI, or
 - add a rule to the permission config (always-allow / always-ask /
-  always-deny) — see `crates/openlet-adapters/src/config_perm/`.
+  always-deny) — see `crates/leti-adapters/src/config_perm/`.
 
 ### `tool_read_before_write`
 
@@ -119,8 +119,8 @@ read a slice with `--limit`/`--offset`.
 ### "Cannot connect to server"
 
 The TUI talks to `http://127.0.0.1:8787` by default. If you set
-`OPENLET_BIND` to a non-default, the TUI needs the matching base URL
-(currently a build-time const — set `OPENLET_API_URL` env var if
+`LETI_BIND` to a non-default, the TUI needs the matching base URL
+(currently a build-time const — set `LETI_API_URL` env var if
 the TUI honors it; otherwise rebuild).
 
 ### Garbled rendering / no color
@@ -132,32 +132,32 @@ modal UI still works, gradients won't.
 
 Best-effort in MVP. Linux + macOS are tested.
 
-## Launcher (`./openlet-ai`)
+## Launcher (`./leti-ai`)
 
 ### "port … already answering /v1/health — another server is running"
 
 The launcher refuses to start a second server on a bind port that already
 answers health, so it never polls a foreign process by mistake. Stop the
-existing server, or run `./openlet-ai --clean` to kill the straggler on
-the bind port and clear `.openlet-run/`, then retry.
+existing server, or run `./leti-ai --clean` to kill the straggler on
+the bind port and clear `.leti-run/`, then retry.
 
 ### "OPENAI_API_KEY is missing or empty"
 
 Real mode fails fast via the binary's own `doctor` preflight (it keys off
 the `api_key_set` check, which reads `OPENAI_API_KEY`). Fill the key in
 `.env` (copy `.env.example` if absent), or run network-free with
-`./openlet-ai --mock` — the mock backend needs no key.
+`./leti-ai --mock` — the mock backend needs no key.
 
 ### TUI launches stale after a code change
 
 The launcher builds the TUI only when `tui/dist/cli.mjs` is absent
 (presence check, not an mtime heuristic — an mtime compare can silently
 skip a needed rebuild after a branch switch). Force a fresh build with
-`./openlet-ai --rebuild`.
+`./leti-ai --rebuild`.
 
 ## Audit / forensics
 
-`openlet-server audit --session-id <UUID>` re-redacts and pretty-prints
+`leti-server audit --session-id <UUID>` re-redacts and pretty-prints
 the JSONL session log. Use `--from` / `--to` (RFC3339) to narrow the
 window, and `--format json` for piping into `jq`.
 
@@ -178,6 +178,6 @@ follow-up.
 ## Still stuck?
 
 Open an issue with:
-- `openlet-server --version`
+- `leti-server --version`
 - The `class` from the error envelope
 - The last ~20 lines of an audit dump (already redacted)

@@ -1,5 +1,5 @@
 // Tool results are persisted as a JSON string of the tool's structured Output
-// struct (crates/openlet-core/src/tools/builtins/*.rs) because that JSON is
+// struct (crates/leti-core/src/tools/builtins/*.rs) because that JSON is
 // what the model consumes on the next turn. For display we parse the known
 // shapes back into human text so the TUI shows stdout / file content / match
 // lists instead of a raw `{"exit_code":0,...}` blob. Unknown shapes and error

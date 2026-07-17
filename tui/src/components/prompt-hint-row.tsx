@@ -4,7 +4,7 @@
 // interrupt arm count; otherwise a muted idle label. Right (idle only): the
 // `tokens (pct) · $cost` usage summary plus the `⌘K commands` shortcut. The
 // retry/workspace/warp states OpenCode shows are out of scope here (no data
-// source on the Openlet backend), so the running state is the single busy view.
+// source on the Leti backend), so the running state is the single busy view.
 
 import { Show, Switch, Match } from "solid-js";
 import "opentui-spinner/solid";

@@ -13,7 +13,7 @@
 // "dirty" flag that fires exactly one more fetch when it lands, so a burst of
 // events never stacks requests.
 
-import type { OpenletClient } from "../api/client.js";
+import type { LetiClient } from "../api/client.js";
 import { useStore } from "../store/index.js";
 import type { EventDto } from "../api/types.js";
 
@@ -26,7 +26,7 @@ export interface HydrationController {
 
 const SETTLED: ReadonlySet<string> = new Set(["idle", "errored", "cancelled"]);
 
-export function createHydrationController(client: OpenletClient): HydrationController {
+export function createHydrationController(client: LetiClient): HydrationController {
   const inflight = new Set<string>();
   const dirty = new Set<string>();
 

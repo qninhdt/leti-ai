@@ -13,9 +13,9 @@ import { createHydrationController } from "./hydration-controller.js";
 import { createEventPump } from "./event-pump.js";
 import { warmTreeSitter } from "./warm-tree-sitter.js";
 
-import type { OpenletClient } from "../api/client.js";
+import type { LetiClient } from "../api/client.js";
 
-async function loadInitial(client: OpenletClient): Promise<void> {
+async function loadInitial(client: LetiClient): Promise<void> {
   const store = useStore.getState();
   const [agents, plugins, sessions] = await Promise.all([
     client.listAgents().catch(() => []),

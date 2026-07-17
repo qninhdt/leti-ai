@@ -1,5 +1,5 @@
 # Nightly + manual real-LLM acceptance. NEVER runs on PRs (cost + secret).
-# Gated by vars.OPENLET_NIGHTLY_ENABLED == 'true' (an Actions variable), so a
+# Gated by vars.LETI_NIGHTLY_ENABLED == 'true' (an Actions variable), so a
 # missing variable skips cleanly rather than failing the dashboard.
 name: nightly
 
@@ -30,25 +30,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Only run when a key is configured — keeps forks + key-less repos green.
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.OPENLET_NIGHTLY_ENABLED == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.LETI_NIGHTLY_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup
 
       - name: Run gated acceptance suite
         env:
-          OPENLET_LIVE_E2E: "1"
+          LETI_LIVE_E2E: "1"
           OPENAI_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          OPENLET_LIVE_E2E_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o-mini' }}
+          LETI_LIVE_E2E_MODEL: ${{ github.event.inputs.model || 'openai/gpt-4o-mini' }}
         run: |
           if [ -z "$OPENAI_API_KEY" ]; then
             echo "::notice::OPENAI_API_KEY not set — skipping live acceptance (CI stays green)."
             exit 0
           fi
-          # Two-tier scenarios: the env gate (OPENLET_LIVE_E2E=1 + key) selects
+          # Two-tier scenarios: the env gate (LETI_LIVE_E2E=1 + key) selects
           # the LIVE backend; without it the same tests run mock-backed in ci.yml.
           # No --ignored filter — the scenarios are no longer #[ignore]'d.
-          cargo test -p openlet-server
+          cargo test -p leti-server
 
       # Evidence is written to gitignored plans/**/evidence/. It is scrubbed
       # at write time by the Phase 12 evidence scrubber (sk- keys, bearer,

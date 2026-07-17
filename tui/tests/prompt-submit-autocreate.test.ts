@@ -13,7 +13,7 @@ import { useStore } from "../src/store/index.js";
 import { PromptHistory } from "../src/services/prompt-history.js";
 
 import type { AppRuntime } from "../src/render/app-context.js";
-import type { OpenletClient } from "../src/api/client.js";
+import type { LetiClient } from "../src/api/client.js";
 import type { AgentDto, SessionDto } from "../src/api/types.js";
 
 const AGENT: AgentDto = { id: "agent-1", display_name: "Default" };
@@ -43,12 +43,12 @@ function fakeClient(created: SessionDto) {
       calls.prompt.push({ sessionId });
       return { message_id: "msg-1" };
     },
-  } as unknown as OpenletClient;
+  } as unknown as LetiClient;
   return { client, calls };
 }
 
-function runtime(client: OpenletClient): AppRuntime {
-  const historyFile = join(mkdtempSync(join(tmpdir(), "openlet-history-")), "history.jsonl");
+function runtime(client: LetiClient): AppRuntime {
+  const historyFile = join(mkdtempSync(join(tmpdir(), "leti-history-")), "history.jsonl");
   return { client, baseUrl: "http://x", history: new PromptHistory(historyFile), exit: () => {} };
 }
 

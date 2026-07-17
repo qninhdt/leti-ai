@@ -1,13 +1,13 @@
 # Alias-only convenience wrapper. Bare-metal launch logic lives in
-# ./openlet-ai; container logic lives in docker-compose.yml. These targets
+# ./leti-ai; container logic lives in docker-compose.yml. These targets
 # are one-line delegations so a reader debugging launch reads exactly one
 # file. Do not add orchestration here.
 .PHONY: run run-mock clean help compose-up compose-down compose-build compose-logs
 
-run: ; ./openlet-ai
-run-mock: ; ./openlet-ai --mock
-clean: ; ./openlet-ai --clean
-help: ; ./openlet-ai --help
+run: ; ./leti-ai
+run-mock: ; ./leti-ai --mock
+clean: ; ./leti-ai --clean
+help: ; ./leti-ai --help
 
 # Container workflow. `compose-up` needs a local override for host ports
 # (cp docker-compose.override.yml.example docker-compose.override.yml) and

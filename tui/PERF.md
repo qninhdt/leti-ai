@@ -43,7 +43,7 @@ Out of scope for phase-06 MVP.
 
 ## How to investigate regressions
 
-1. Reproduce locally with `OPENLET_BASE_URL=http://localhost:8787 bun dist/cli.mjs`.
+1. Reproduce locally with `LETI_BASE_URL=http://localhost:8787 bun dist/cli.mjs`.
 2. Add a `console.error("frame", performance.now())` in the suspected
    component; look for missing ~33ms gaps.
 3. Check that the event pump (`src/render/event-pump.ts`) is batching

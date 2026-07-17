@@ -15,7 +15,8 @@ tui/dist
 
 # Local run state + scratch.
 .openlet-run
-.openlet
+.leti-run
+.leti
 temp
 drafts
 plans

@@ -1,0 +1,57 @@
+[package]
+name = "leti-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+globset.workspace = true
+ignore.workspace = true
+regex.workspace = true
+rust_decimal.workspace = true
+schemars.workspace = true
+secrecy.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+similar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "macros", "fs", "process", "io-util"] }
+tokio-stream.workspace = true
+tokio-util = { workspace = true, features = ["rt"] }
+utoipa.workspace = true
+walkdir.workspace = true
+tracing.workspace = true
+metrics.workspace = true
+uuid.workspace = true
+
+# Attachments pipeline (Phase 3). `image` re-exports a default-features
+# decoder set; we trim to only the formats we accept on the upload route
+# (PNG, JPEG, WebP, GIF) so we don't pull in TIFF/AVIF/etc.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Pinned exact after the security upgrade; PDF parsing remains isolated
+# behind `pdf_text`, and attachment security tests cover the boundary.
+pdf-extract = "=0.12.0"
+# Content-based MIME sniffing for the multipart upload route. F3.5 — we
+# never trust the client-supplied Content-Type.
+infer = "0.16"
+tera.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+leti-adapters = { path = "../leti-adapters" }
+rstest.workspace = true
+proptest.workspace = true
+metrics-util = "0.19"

@@ -11,7 +11,7 @@ Cutover default was ALREADY live from prior phases (`adapter_stack.rs` wired
 
 - **Runtime rollback flag** (`adapter_stack.rs`): `ShellImpl` enum +
   `parse_shell_impl` (string→impl) + `resolve_shell_impl` (folds parse + the
-  subprocess/cloud-incompat guard into one pure fn). `OPENLET_SHELL_IMPL`:
+  subprocess/cloud-incompat guard into one pure fn). `LETI_SHELL_IMPL`:
   `emulated` default (incl unset/empty), `subprocess` fallback. Unknown value →
   hard error; non-UTF-8 → hard error (`var_os`+`to_str`, not `var().ok()`).
   `subprocess`+`cloud_fs` → hard error (LocalShellExecutor bypasses `ctx.fs`).
@@ -81,6 +81,6 @@ Addressed its MEDIUM findings before finalize:
 
 - Cloud-real parity still needs Phase 6's gated live e2e; the mock proves
   FS-impl independence but not the actual gRPC backend.
-- `OPENLET_SHELL_IMPL` is documented in-source but has no operator-facing docs
+- `LETI_SHELL_IMPL` is documented in-source but has no operator-facing docs
   entry yet (reviewer NIT) — candidate for `docs/deployment-guide.md`.
 - Nothing committed (ask-first); repo has uncommitted Phase 6 + Phase 7 work.

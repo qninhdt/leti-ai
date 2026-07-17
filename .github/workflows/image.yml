@@ -39,7 +39,7 @@ jobs:
           context: .
           file: ./Dockerfile
           load: true
-          tags: openlet-server:ci
+          tags: leti-server:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -52,19 +52,19 @@ jobs:
           # host-published port would force a 0.0.0.0 bind and trip that gate —
           # so we test the shippable image without weakening the security model.
           # The runtime stage ships curl (for the built-in HEALTHCHECK too).
-          docker run -d --name openlet-smoke \
-            -e OPENLET_BIND=127.0.0.1:8787 \
-            -e OPENLET_DEFAULT_MODEL=mock/model-small \
-            openlet-server:ci
+          docker run -d --name leti-smoke \
+            -e LETI_BIND=127.0.0.1:8787 \
+            -e LETI_DEFAULT_MODEL=mock/model-small \
+            leti-server:ci
           ok=0
           for i in $(seq 1 30); do
-            if docker exec openlet-smoke curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then
+            if docker exec leti-smoke curl -fsS http://127.0.0.1:8787/v1/health >/dev/null 2>&1; then
               ok=1; break
             fi
             sleep 2
           done
-          docker logs openlet-smoke || true
-          docker rm -f openlet-smoke || true
+          docker logs leti-smoke || true
+          docker rm -f leti-smoke || true
           if [ "$ok" != "1" ]; then
             echo "::error::container failed /v1/health smoke"
             exit 1
@@ -87,6 +87,6 @@ jobs:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ vars.REGISTRY }}/openlet-server:latest
+          tags: ${{ vars.REGISTRY }}/leti-server:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

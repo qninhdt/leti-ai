@@ -1,7 +1,7 @@
-# Openlet TUI
+# Leti TUI
 
-SolidJS client (on `@opentui`) for openlet-agent-core. Connects to an
-`openlet-server` instance over REST + SSE; streams agent turns into a
+SolidJS client (on `@opentui`) for leti-agent-core. Connects to an
+`leti-server` instance over REST + SSE; streams agent turns into a
 full-screen terminal UI with an OpenCode-style prompt, overlay dialogs, and
 `@`-file mentions.
 
@@ -19,16 +19,16 @@ npm run build
 bun dist/cli.mjs
 ```
 
-After `npm pack` you can `npm i -g <tarball>` to get the `openlet`
+After `npm pack` you can `npm i -g <tarball>` to get the `leti`
 binary on `$PATH`.
 
 ## Environment
 
 | Var | Default | Purpose |
 |---|---|---|
-| `OPENLET_BASE_URL` | `http://127.0.0.1:8787` | Server URL |
-| `OPENLET_TOKEN` | — | Bearer token (post-MVP auth) |
-| `OPENLET_STATE_DIR` | `~/.openlet` | Prompt history + frecency |
+| `LETI_BASE_URL` | `http://127.0.0.1:8787` | Server URL |
+| `LETI_TOKEN` | — | Bearer token (post-MVP auth) |
+| `LETI_STATE_DIR` | `~/.leti` | Prompt history + frecency |
 
 ## Slash commands
 
@@ -95,7 +95,7 @@ command registry, and the event pump.
 
 - Runtime is [Bun](https://bun.sh) — `@opentui/core` uses native FFI Node
   does not provide. The UI is SolidJS on `@opentui/solid`.
-- SSE wire format mirrors `openlet-server` `/v1/event` exactly:
+- SSE wire format mirrors `leti-server` `/v1/event` exactly:
   `id:` + `event:<dotted.kind>` + `data:<json>`. `Last-Event-ID` is
   header-only.
 - Streaming text deltas append to a per-part `buffer` in the store; the
@@ -108,8 +108,8 @@ command registry, and the event pump.
 
 ## See also
 
-- Phase plan: `../plans/20260523-1414-openlet-agent-core-mvp/phase-06-ink-tui.md`
+- Phase plan: `../plans/20260523-1414-leti-agent-core-mvp/phase-06-ink-tui.md`
 - Cross-check reports:
-  - `../plans/20260523-1414-openlet-agent-core-mvp/research/cross-check-phase-06-opencode.md`
-  - `../plans/20260523-1414-openlet-agent-core-mvp/research/cross-check-phase-06-clawcode.md`
+  - `../plans/20260523-1414-leti-agent-core-mvp/research/cross-check-phase-06-opencode.md`
+  - `../plans/20260523-1414-leti-agent-core-mvp/research/cross-check-phase-06-clawcode.md`
 - Performance gates: `./PERF.md`

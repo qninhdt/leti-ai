@@ -26,14 +26,14 @@ mkdir -p "$EVIDENCE_DIR"
 # Absolute temp workspace + data dir (never repo / $HOME) — the workspace
 # guard the plan demands. Cleaned on exit.
 TMP_ROOT="$(mktemp -d)"
-export OPENLET_WORKSPACE="$TMP_ROOT/ws"
-export OPENLET_DATA_DIR="$TMP_ROOT/data"
-mkdir -p "$OPENLET_WORKSPACE" "$OPENLET_DATA_DIR"
+export LETI_WORKSPACE="$TMP_ROOT/ws"
+export LETI_DATA_DIR="$TMP_ROOT/data"
+mkdir -p "$LETI_WORKSPACE" "$LETI_DATA_DIR"
 
 # Pick a free loopback port for the server bind.
 PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
-export OPENLET_BIND="127.0.0.1:$PORT"
-export OPENLET_DEFAULT_MODEL="mock/model-small"
+export LETI_BIND="127.0.0.1:$PORT"
+export LETI_DEFAULT_MODEL="mock/model-small"
 
 cleanup() {
   down || true
@@ -47,10 +47,10 @@ up_server "$MOCK_BASE_URL"
 
 echo "── build + launch TUI in tmux ───────────────────"
 build_tui
-tui_start "http://$OPENLET_BIND" "$OPENLET_DATA_DIR"
+tui_start "http://$LETI_BIND" "$LETI_DATA_DIR"
 
 # Assert the pane shows a connected status before driving keys.
-if ! tui_wait "openlet" 15; then
+if ! tui_wait "leti" 15; then
   echo "FAIL: TUI never rendered the status bar" >&2
   tui_frame "phase-01-tui-noboot"
   exit 1

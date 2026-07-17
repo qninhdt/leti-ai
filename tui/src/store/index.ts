@@ -1,6 +1,6 @@
 // Zustand root store. applyEvent is the single mutation point — every SSE
 // frame routes through here. Snake-case kinds match EventDto from
-// crates/openlet-protocol after axum's serde rename_all="snake_case".
+// crates/leti-protocol after axum's serde rename_all="snake_case".
 
 import { createStore } from "zustand/vanilla";
 

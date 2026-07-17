@@ -729,7 +729,7 @@ export interface components {
             id: string;
         };
         /**
-         * @description Wire mirror of [`openlet_core::types::event::NotificationLevel`].
+         * @description Wire mirror of [`leti_core::types::event::NotificationLevel`].
          * @enum {string}
          */
         NotificationLevelDto: "info" | "warn" | "error";
@@ -931,7 +931,7 @@ export interface components {
         Role: "system" | "user" | "assistant" | "tool";
         /**
          * @description Wire shape for a `subagent.roster` entry. Mirrors
-         *     `openlet_core::types::event::RosterFrameEntry`.
+         *     `leti_core::types::event::RosterFrameEntry`.
          */
         RosterEntryDto: {
             /** Format: int64 */

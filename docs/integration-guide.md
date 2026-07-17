@@ -1,7 +1,7 @@
 # Integration Guide
 
-Embedding `openlet-server` as a library inside a downstream binary
-(e.g. Openlet Cloud). The runnable `openlet-server` binary is the local
+Embedding `leti-server` as a library inside a downstream binary
+(e.g. Leti Cloud). The runnable `leti-server` binary is the local
 mode; the cloud binary is a **superset** that imports the same crates,
 swaps adapters, layers auth, and adds routes — without forking core.
 
@@ -9,21 +9,22 @@ swaps adapters, layers auth, and adds routes — without forking core.
 
 | Layer | Crate | Role |
 |---|---|---|
-| Runtime | `openlet-core` | Conversation loop, tool dispatcher, traits |
-| Adapters | `openlet-adapters` | Reference impls (sqlite, localfs, OpenAI-compat, …) |
-| Plugin SPI | `openlet-plugin-api` | `Plugin` trait, `PluginContext`, `CoreApi` |
-| Plugin host | `openlet-plugin-registry` | Plugin discovery + drain |
-| HTTP/SSE | `openlet-server` | `AppState`, `AppStateBuilder`, `RouterBuilder`, route handlers |
+| Runtime | `leti-core` | Conversation loop, tool dispatcher, traits |
+| Adapters | `leti-adapters` | Reference impls (sqlite, localfs, OpenAI-compat, …) |
+| Plugin SPI | `leti-plugin-api` | `Plugin` trait, `PluginContext`, `CoreApi` |
+| Plugin host | `leti-plugin-registry` | Plugin discovery + drain |
+| HTTP/SSE | `leti-server` | `AppState`, `AppStateBuilder`, `RouterBuilder`, route handlers |
 
-**Core sees only `AgentId`.** The user→agent map lives entirely upstream
-in the integrator. `SessionMeta` does not carry `user_id` (phase 4 adds
-an opaque `extensions: serde_json::Value` slot for that).
+`leti-core` has no user, tenant, principal, or client-type model. Host-owned
+request metadata travels through the typed, opaque `TurnExtensions` carrier;
+the engine passes it to permission checks, tools, and subagents but never
+interprets or persists it. See [`cloud-integration.md`](cloud-integration.md).
 
 ## Canonical embedding
 
 ```rust
 use std::sync::Arc;
-use openlet_server::{AppStateBuilder, RouterBuilder, routes};
+use leti_server::{AppStateBuilder, RouterBuilder, routes};
 use axum::Router;
 use axum::routing::post;
 
@@ -45,11 +46,11 @@ async fn main() -> anyhow::Result<()> {
         .permission(permission)
         .events(events)
         .artifacts(artifacts)
-        .tools(tools)
         .tool_registry(tool_registry)
         .config(Arc::new(config.clone()))
         .agents(agents)
         .default_agent_id(default_agent_id)
+        .workspace_root(workspace_root)
         .build()?;
 
     // 3. Compose the router. Skip core's session::create — the
@@ -81,16 +82,16 @@ These are the types integrators import. Everything else is internal.
 
 | Type | Crate | Purpose |
 |---|---|---|
-| `AppState` | `openlet_server` | The shared handle every route reads from |
-| `AppStateBuilder` | `openlet_server` | Fluent constructor with required-field validation |
-| `AppStateBuilderError` | `openlet_server` | Error returned by `.build()` when a required field is missing |
-| `RouterBuilder` | `openlet_server` | Fluent router composer; pick which route groups to mount |
-| `AgentResources` | `openlet_server` | Per-agent `(spec, fs, shell)` triple stored in `AppState::agents` |
-| `routes::*` | `openlet_server` | Each handler is `pub async fn` — re-mount one at a time when overriding |
-| `Plugin`, `PluginContext`, `PluginManifest` | `openlet_plugin_api` | Author plugins for tools/agents/hooks |
-| `CoreApi` | `openlet_plugin_api` | Back-channel for plugins (read-only into core) — body lands in phase 4 |
-| `MemoryStore`, `EventSink`, `ModelProvider`, `PermissionManager`, `ArtifactStore`, `Filesystem` | `openlet_core::adapters` | Six-trait adapter split — swap any backend |
-| `EventSink::subscribe(EventFilter)` | `openlet_core::adapters` | Out-of-band event tap for billing/audit/SIEM |
+| `AppState` | `leti_server` | The shared handle every route reads from |
+| `AppStateBuilder` | `leti_server` | Fluent constructor with required-field validation |
+| `AppStateBuilderError` | `leti_server` | Error returned by `.build()` when a required field is missing |
+| `RouterBuilder` | `leti_server` | Fluent router composer; pick which route groups to mount |
+| `AgentResources` | `leti_server` | Per-agent `(spec, fs, shell)` triple stored in `AppState::agents` |
+| `routes::*` | `leti_server` | Each handler is `pub async fn` — re-mount one at a time when overriding |
+| `Plugin`, `PluginContext`, `PluginManifest` | `leti_plugin_api` | Author plugins for tools/agents/hooks |
+| `CoreApi` | `leti_plugin_api` | Read-only runtime back-channel for plugins |
+| `MemoryStore`, `EventSink`, `ModelProvider`, `PermissionManager`, `ArtifactStore`, `Filesystem` | `leti_core::adapters` | Six-trait adapter split — swap any backend |
+| `EventSink::subscribe(EventFilter)` | `leti_core::adapters` | Out-of-band event tap for billing/audit/SIEM |
 | `POST /v1/session/:id/abort` | HTTP | Cancels the active turn — already cascades into the running loop |
 
 ## What integrators control vs. what core controls
@@ -99,7 +100,7 @@ These are the types integrators import. Everything else is internal.
 |---|---|---|
 | Auth (login, sessions, JWT, OAuth) | Integrator | Layer middleware over `RouterBuilder::build` |
 | User → agent ownership | Integrator | Track in own DB; pass `AgentId` to core via `CreateSessionDto.agent_id` |
-| Quota / billing | Integrator | Subscribe to `EventSink` or use `before_turn` hook (phase 3) + `cancel_session` (phase 5) |
+| Quota / billing | Integrator | Subscribe to `EventSink` or use hooks + `cancel_session` |
 | Audit logging | Integrator | `EventSink::subscribe(EventFilter::all)` |
 | Permission policy | Integrator | Supply own `Arc<dyn PermissionManager>` |
 | Custom tools / agents / providers | Integrator | Plugin via `PluginContext::register_*`. Core tools, including `read`, `list`, `glob`, `grep`, `write`, `edit`, `bash`, `todo`, and opt-in `web_fetch`, ship through the `core-tools` plugin — proof the surface is sufficient. `web_fetch` needs a host-injected `WebFetcher` and should remain Ask-by-default. |
@@ -128,20 +129,20 @@ let core_router = RouterBuilder::new()
 
 // Mount the integrator's session::create + core's other session routes
 // at the merge boundary.
-use openlet_server::routes::session;
+use leti_server::routes::session;
 let app = Router::new()
     .route("/v1/session", post(cloud::create_session_with_ownership_check))
     .route("/v1/session", get(session::list))
     .route("/v1/session/:id", get(session::get_one).delete(session::delete))
     .route("/v1/session/:id/mode", post(session::set_mode))
-    .route("/v1/session/:id/abort", post(crate::routes::cancel::abort))
+    .route("/v1/session/:id/abort", post(routes::cancel::abort))
     .merge(core_router)
     .with_state(state);
 ```
 
 ## Local binary backward compat
 
-The reference binary in `crates/openlet-server/src/main.rs` uses
+The reference binary in `crates/leti-server/src/main.rs` uses
 `AppStateBuilder` + `RouterBuilder::default()`. Behavior is identical to
 the previous monolithic `build_router(state)` call. `build_router(state)`
 is kept as a thin wrapper around `RouterBuilder::default().build(state)`
@@ -149,53 +150,40 @@ so existing tests + downstream callers don't churn.
 
 ## Versioning
 
-`openlet-plugin-api` declares `core_version_req` on every manifest. Core
+`leti-plugin-api` declares `core_version_req` on every manifest. Core
 bumps the major when the extension API breaks. Pin your plugin's
 `core_version_req` to the version range you tested against.
 
 ## Next steps
 
-- Phase 3 wires the 13 plugin hooks (`before_turn`, `on_chat_params`, …)
-  and adds `register_tool` / `register_provider` to `PluginContext`.
-- Phase 4 adds `extensions: serde_json::Value` to `SessionMeta` so
-  integrators bind `user_id` without forking core types.
-- Phase 5 adds `CoreApi::cancel_session` so plugins can stop a session
-  mid-flight from any hook.
-- Phase 6 ships the `core-tools` plugin: the original 8 built-in tools register
-  through `PluginContext::register_tool` like any custom tool, proving
-  the public surface is sufficient.
-- Phase 7 ships the `tests/integration_smoke.rs` regression gate that
-  asserts (a) `install_all` drains the original 8 built-in tools + the `general`
-  agent through the public surface, (b) the `test-quota-stub` plugin
-  installs its hook chain cleanly, and (c) `extensions["user_id"]`
-  round-trips through SQLite. Clone it as a starting reference for
-  downstream integrators. The runnable `examples/integration-shape/`
-  reference crate is deferred until a concrete downstream integrator
-  (Cloud) lands and informs its shape.
+The reference `core-tools` and `core-agents` plugins demonstrate the public
+registration surface. The `test-quota-stub` crate demonstrates cost hooks;
+clone it as a starting point for a host billing plugin.
 
 ## Workspace routing (multi-tenant)
 
 Cloud deployments serve multiple workspaces from a single binary. The
-`openlet-server::workspace_resolver` + `middleware::workspace_routing`
+`leti-server::workspace_resolver` + `middleware::workspace_routing`
 modules make this routing pluggable.
 
 ### Trait surface
 
 ```rust
-use openlet_server::workspace_resolver::{WorkspaceResolver, WorkspaceError};
+use leti_server::workspace_resolver::{WorkspaceResolver, WorkspaceError};
 use std::sync::Arc;
 
 #[async_trait::async_trait]
 impl WorkspaceResolver for cloud::CloudResolver {
     async fn resolve(
         &self,
+        principal: &leti_server::AuthPrincipal,
         workspace_id: &str,
-    ) -> Result<Arc<openlet_server::AppState>, WorkspaceError> {
+    ) -> Result<Arc<leti_server::AppState>, WorkspaceError> {
         // Look up the workspace's BYOK keys + plugin set, build a per-
         // workspace AppState, and cache it. Cache invalidation is the
         // integrator's responsibility — when the control plane mutates
         // a workspace, evict its cached entry.
-        self.cache.get_or_build(workspace_id).await
+        self.cache.get_or_build(principal, workspace_id).await
     }
 }
 ```
@@ -206,30 +194,29 @@ impl WorkspaceResolver for cloud::CloudResolver {
 auth middleware → WorkspaceRoutingLayer → handler
 ```
 
-`WorkspaceRoutingLayer` refuses to proceed unless an `AuthPrincipal` is
-already in the request extensions, and inserts the resolved `Arc<AppState>`
-into request extensions for the handler. Mounting workspace routing before
-auth produces 401 on every request — loud-fail by design, because skipping
-auth before workspace lookup is a cross-tenant data exposure. Handlers
-receive the resolved state via `State<AppState>`; there is no separate
-extractor.
+The host must authenticate before workspace lookup and must authorize the
+requested workspace before returning an `AppState`. The reference server's
+`WorkspaceRoutingLayer` and `LocalDevAuthenticator` are local conveniences;
+a cloud host supplies its own verifier/resolver or wraps the base router with
+its middleware. Mounting workspace routing before authentication must fail
+closed to avoid cross-tenant lookup.
 
 ```rust
 let resolver = cloud::CloudResolver::new(control_plane);
 let app = Router::new()
     .route("/v1/turn", post(handler))
-    .layer(openlet_server::WorkspaceRoutingLayer::new(resolver))
+    .layer(leti_server::WorkspaceRoutingLayer::new(resolver))
     .layer(cloud::AuthLayer::new(jwt_validator));  // mounts FIRST → runs FIRST
 ```
 
-The HTTP header `x-openlet-workspace` selects the workspace. Header
+The HTTP header `x-leti-workspace` selects the workspace. Header
 parsing is lenient (missing → falls back to `default`) so single-tenant
 deployments work with the included `StaticWorkspaceResolver`.
 
 ### Per-workspace data root
 
 ```rust
-use openlet_server::workspace_data_root;
+use leti_server::workspace_data_root;
 
 let ws_root = workspace_data_root(&data_dir, workspace_id)?;
 // → {data_dir}/workspaces/{ws_id}/   (path-traversal-safe)
@@ -246,46 +233,13 @@ See `docs/multi-provider.md` for the per-workspace BYOK pattern with
 
 ## Inbound auth & outbound credentials
 
-openlet-ai is zero-trust: identity is never read from an upstream-injected
-header — it must come from a verified credential. The `openlet_server::auth`
-module ships two pluggable traits, each with a local default, plus the
-canonical identity types.
-
-### Inbound: `Authenticator`
-
-```rust
-use openlet_server::{AuthError, AuthPrincipal, Authenticator};
-
-#[async_trait::async_trait]
-impl Authenticator for cloud::JwksAuthenticator {
-    async fn authenticate(
-        &self,
-        headers: &axum::http::HeaderMap,
-    ) -> Result<AuthPrincipal, AuthError> {
-        // RS256-verify the bearer token against openlet's JWKS, reject
-        // act-bearing tokens, map the verified subject → AuthPrincipal.
-        let token = bearer(headers).ok_or(AuthError::MissingCredential)?;
-        let claims = self.verify(token).map_err(|e| AuthError::InvalidCredential(e.to_string()))?;
-        Ok(AuthPrincipal { caller_id: claims.sub, principal_type: PrincipalType::User })
-    }
-
-    fn is_dev(&self) -> bool { false } // not the admit-all dev default
-}
-```
-
-Mount it via `RouterBuilder::build_with_auth(state, Arc::new(my_auth))`. The
-default `build(state)` mounts `LocalDevAuthenticator` (admits one fixed
-principal, no token) — correct for `./openlet-ai` loopback dev, refused on a
-non-loopback bind and under `OPENLET_RUNTIME_PROFILE=cloud` (fail-closed).
-The `AuthLayer` runs before the workspace layer and injects the
-`AuthPrincipal` the workspace gate + question route require.
-
-### Runtime profile
-
-`OPENLET_RUNTIME_PROFILE=local|cloud` (default `local`). `local` resolves the
-dev authenticator; `cloud` makes `authenticator_for_profile` fail closed —
-the cloud binary MUST build its own `Authenticator` and call
-`build_with_auth` rather than relying on the default.
+Authentication and credential issuance are host responsibilities. The
+reference `leti-server` exposes a pluggable `Authenticator` only for its
+loopback-oriented HTTP composition; a cloud deployment must provide its own
+verified middleware and authorization layer. Do not add auth or tenant
+semantics to `leti-core`. If a port needs request-scoped credential data, pass
+an opaque host-defined value through `TurnExtensions` as described in
+[`cloud-integration.md`](cloud-integration.md).
 
 ## Adapter contract spec (cloud impl conformance)
 
@@ -336,21 +290,21 @@ kit ships — run your own targeted tests against these behaviors).
 ## Quota / cost-cap integration (plugin seam, not a trait)
 
 There is **no `Quota` trait**. Cost control is the plugin cost-tick seam,
-demonstrated by `test-quota-stub` (`crates/openlet-plugins/test-quota-stub`):
+demonstrated by `test-quota-stub` (`crates/leti-plugins/test-quota-stub`):
 
-- `on_cost_tick`: read `extensions["user_id"]`, decrement the per-user
-  balance by `delta_usd`, and call `CoreApi::cancel_session` when it hits
-  zero — the active turn unwinds mid-flight.
+- `on_cost_tick`: consult the host's billing context, decrement the balance
+  by `delta_usd`, and call `CoreApi::cancel_session` when it hits zero — the
+  active turn unwinds mid-flight.
 - `before_turn`: re-check the balance and return `HookResult::Stop` so the
   next turn never starts (covers the cancel-vs-next-iteration race).
 
 Cost numbers come from core's verified cost path; the plugin only decides
-when to stop. Openlet Cloud forks this plugin to call its billing/ledger
+when to stop. Leti Cloud forks this plugin to call its billing/ledger
 service instead of the in-memory map. **Fail-closed vs fail-open on a
 ledger outage is the integrator's choice** — local stays fail-open (no cap,
 logs); a cloud deploy should deny on ledger-unreachable.
 
-**Open question (owner):** does openlet-ai own a self-contained cost ledger,
-or call a future openlet quota service? Determines whether the cost-tick
-plugin is storage-backed or a remote client. No openlet LLM-cost service
+**Open question (owner):** does leti-ai own a self-contained cost ledger,
+or call a future leti quota service? Determines whether the cost-tick
+plugin is storage-backed or a remote client. No leti LLM-cost service
 exists today, so this stays a plugin seam with the decision deferred.

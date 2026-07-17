@@ -1,7 +1,7 @@
 # Testing Conventions
 
-Workspace-wide rules for writing integration tests across `openlet-core`,
-`openlet-adapters`, and `openlet-server`. Updated as part of the
+Workspace-wide rules for writing integration tests across `leti-core`,
+`leti-adapters`, and `leti-server`. Updated as part of the
 integration-test-suite phase 1 foundation.
 
 ## Stack
@@ -27,14 +27,14 @@ never mocked — in these tiers.
 | Tier | File(s) | Gate | Run |
 |---|---|---|---|
 | Mock-LLM (default) | `live_e2e_server_core`, `live_e2e_plugin_agent`, `live_e2e_fs_write`, `live_e2e_session_persist` | none — runs on plain `cargo test` | `cargo test --workspace` |
-| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud`, and the other `live_e2e_*` scenario files | runtime env only: `OPENLET_LIVE_E2E=1` + `OPENAI_API_KEY` (no `#[ignore]`) | `OPENLET_LIVE_E2E=1 OPENAI_API_KEY=... cargo test -p openlet-server` |
+| Real OpenRouter (gated) | `live_e2e_openrouter_gated`, `live_e2e_fs_agent_crud`, and the other `live_e2e_*` scenario files | runtime env only: `LETI_LIVE_E2E=1` + `OPENAI_API_KEY` (no `#[ignore]`) | `LETI_LIVE_E2E=1 OPENAI_API_KEY=... cargo test -p leti-server` |
 | TUI Node wire-double (default) | `tui/tests/e2e/tui-live-e2e.test.tsx` | none | `cd tui && npm test` |
-| TUI real-binary (gated) | `tui/tests/e2e/tui-real-binary-e2e.test.tsx` | `OPENLET_TUI_REAL_E2E=1` (+ `OPENLET_LIVE_E2E=1` + key for the OpenRouter sub-tier) | `cd tui && npm run test:e2e:real` |
+| TUI real-binary (gated) | `tui/tests/e2e/tui-real-binary-e2e.test.tsx` | `LETI_TUI_REAL_E2E=1` (+ `LETI_LIVE_E2E=1` + key for the OpenRouter sub-tier) | `cd tui && npm run test:e2e:real` |
 
 The real-OpenRouter scenario files (`live_e2e_*`) carry **no `#[ignore]`
 attribute**. They are gated purely at RUNTIME through the shared harness:
 `LiveServer::for_scenario` (and its variants) use the real
-`OpenRouterProvider` only when `OPENLET_LIVE_E2E=1` AND `OPENAI_API_KEY`
+`OpenRouterProvider` only when `LETI_LIVE_E2E=1` AND `OPENAI_API_KEY`
 are both set. Unset (the keyless CI default), the harness transparently
 falls back to the in-process scripted mock driving the SAME test body — so
 `cargo test` makes no network calls and the scenarios still exercise the
@@ -42,9 +42,9 @@ full transport/sqlite/plugin wiring. There is no `cargo test -- --ignored`
 step; the env vars are the single source of truth.
 
 
-The TUI real-binary tier spawns the prebuilt `openlet-server` +
-`mock-openai-service`; build them first (`cargo build -p openlet-server
--p openlet-test-mock-provider`). The deterministic FS proof is the
+The TUI real-binary tier spawns the prebuilt `leti-server` +
+`mock-openai-service`; build them first (`cargo build -p leti-server
+-p leti-test-mock-provider`). The deterministic FS proof is the
 single-`write` `fs_write_once` scenario (the stateless mock can't script
 multi-step CRUD); the full create→read→edit→delete sequence is proven by
 the gated real-OpenRouter `live_e2e_fs_agent_crud` tier, where a real
@@ -72,7 +72,7 @@ The rule of thumb is **mock the boundary, never the logic under test**.
 | **Unit** | inline `#[cfg(test)]` | the logic under test | I/O, time, provider, stores | cost math, compaction decision, token estimate, doom guard, dispatch fault synthesis |
 | **Integration** | `crates/*/tests/` | local adapters (sqlite `:memory:`, localfs, bus) | model provider only | sqlite paging, bus replay, `plugin_fault_observability` |
 | **E2E (mock-LLM)** | `live_e2e_*` / `subagent_e2e` | full wiring over loopback TCP or in-proc AppState | LLM responses (scripted/`MockOpenAiService`) | session persist, fs write, `subagent_e2e` |
-| **E2E (real-LLM)** | `live_e2e_*`, runtime-gated by `OPENLET_LIVE_E2E=1` + key | everything incl. the model | nothing | `live_e2e_openrouter_gated` |
+| **E2E (real-LLM)** | `live_e2e_*`, runtime-gated by `LETI_LIVE_E2E=1` + key | everything incl. the model | nothing | `live_e2e_openrouter_gated` |
 
 - The **mock-LLM e2e layer is the default keyless CI path** — it exercises real transport/sqlite/plugins with deterministic model output.
 - **Never mock a store to dodge a contract** (e.g. sqlite's monotonic `seq`): use the real local adapter — its rich suite is the cloud-impl reference (Phase 7 contract spec).
@@ -98,7 +98,7 @@ The rule of thumb is **mock the boundary, never the logic under test**.
 
 ```rust
 #[tokio::test]
-#[ignore = "blocked: clean-parent-exit pgroup leak — production fix tracked in openlet-ai#XXX"]
+#[ignore = "blocked: clean-parent-exit pgroup leak — production fix tracked in leti-ai#XXX"]
 async fn close_pgroup_on_clean_exit() { ... }
 ```
 

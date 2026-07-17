@@ -65,4 +65,4 @@ seam, not `MountTable`.
 - Budget/timeout thresholds are compile-time constants; no env config surface
   was added (plan mentioned it as optional). Tune at dogfood if needed.
 
-**Next:** Phase 6 (cloud Filesystem gRPC + pg_trgm, cross-repo to `~/projects/openlet`).
+**Next:** Phase 6 (cloud Filesystem gRPC + pg_trgm, cross-repo to `~/projects/leti`).

@@ -76,7 +76,7 @@ no wire-contract changes.
 
 1. **Docker build had TWO breakers, not one.** The plan flagged the MSRV pin.
    The `docker build` in P10 also revealed the builder stage never installed
-   `protoc` / `libprotobuf-dev` — `openlet-adapters/build.rs` needs them to
+   `protoc` / `libprotobuf-dev` — `leti-adapters/build.rs` needs them to
    compile the cloudfs proto (added by the executor plan). The host builds only
    because it has system protoc. Fixed the Dockerfile (protobuf-compiler +
    libprotobuf-dev). The image had not built since cloudfs landed.

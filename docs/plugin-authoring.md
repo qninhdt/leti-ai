@@ -5,10 +5,10 @@ manifests, capability declarations, the `PluginContext` registration API,
 the 14 hook signatures, and three worked examples (quota enforcement,
 audit logging, request-header injection).
 
-A plugin is a single `impl Plugin` registered through `openlet-plugin-registry`.
+A plugin is a single `impl Plugin` registered through `leti-plugin-registry`.
 At server boot the host calls `install`, drains the context into a sorted
 `HookChains`, and forwards every dispatch site through the merged chain.
-Plugins author *only* against `openlet_plugin_api::prelude` — the rest of
+Plugins author *only* against `leti_plugin_api::prelude` — the rest of
 the workspace is private surface.
 
 ---
@@ -17,7 +17,7 @@ the workspace is private surface.
 
 ```rust
 use async_trait::async_trait;
-use openlet_plugin_api::prelude::*;
+use leti_plugin_api::prelude::*;
 
 #[async_trait]
 pub trait Plugin: Send + Sync + 'static {
@@ -113,7 +113,7 @@ fine; declaring less is a fatal install error.
 
 The built-in core tools (including `read`, `list`, `glob`, `grep`, `write`,
 `edit`, `bash`, `todo`, and optional `web_fetch`) ship through this surface — see
-`crates/openlet-plugins/core-tools/src/lib.rs` for the canonical
+`crates/leti-plugins/core-tools/src/lib.rs` for the canonical
 `register_tool` example. If MVP can dogfood its own tools through the
 plugin API, downstream integrators can register custom tools the same
 way without forking core.
@@ -207,7 +207,7 @@ Halts a session when cumulative cost crosses a configured ceiling.
 enforce the budget.
 
 ```rust
-use openlet_plugin_api::prelude::*;
+use leti_plugin_api::prelude::*;
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -251,7 +251,7 @@ the conversation. Pure observation; `Continue` threads the ctx forward
 unchanged.
 
 ```rust
-use openlet_plugin_api::prelude::*;
+use leti_plugin_api::prelude::*;
 
 pub struct Audit { sink: std::sync::Arc<dyn AuditSink> }
 
@@ -277,8 +277,8 @@ impl Plugin for Audit {
 trait AuditSink: Send + Sync + 'static {
     fn record(
         &self,
-        session: openlet_plugin_api::SessionId,
-        message: openlet_plugin_api::MessageId,
+        session: leti_plugin_api::SessionId,
+        message: leti_plugin_api::MessageId,
     ) -> futures::future::BoxFuture<'static, ()>;
 }
 ```
@@ -304,7 +304,7 @@ mutating hook: returning `Replace` (or `Continue`) threads the new
 header list to the next plugin.
 
 ```rust
-use openlet_plugin_api::prelude::*;
+use leti_plugin_api::prelude::*;
 
 pub struct TraceHeaders;
 
@@ -315,7 +315,7 @@ impl Plugin for TraceHeaders {
     async fn install(&self, ctx: &mut PluginContext) -> Result<(), PluginError> {
         ctx.on_chat_headers(Priority(70), |mut c: OnChatHeadersCtx| async move {
             c.headers.push((
-                "x-openlet-trace".into(),
+                "x-leti-trace".into(),
                 uuid::Uuid::new_v4().to_string(),
             ));
             HookResult::Replace(c)             // audit-logged mutation
@@ -412,7 +412,7 @@ Section 7 stops the loop when a *session* exceeds a flat ceiling. A
 real cloud integrator wants per-*user* enforcement: each `user_id`
 maps to a remaining-credit balance, and a session must abort the
 moment its user's balance drains, even mid-flight. The
-`test-quota-stub` plugin (in `crates/openlet-plugins/test-quota-stub/`)
+`test-quota-stub` plugin (in `crates/leti-plugins/test-quota-stub/`)
 shows the canonical pattern. Two hooks compose:
 
 - `on_cost_tick`: reads `extensions["user_id"]`, decrements the
@@ -422,7 +422,7 @@ shows the canonical pattern. Two hooks compose:
   exhausted, so the next turn never issues a model call (no charge
   for a turn the runtime would have cancelled anyway).
 
-Skeleton (full source: `crates/openlet-plugins/test-quota-stub/src/lib.rs`):
+Skeleton (full source: `crates/leti-plugins/test-quota-stub/src/lib.rs`):
 
 ```rust
 async fn install(&self, ctx: &mut PluginContext) -> Result<(), PluginError> {

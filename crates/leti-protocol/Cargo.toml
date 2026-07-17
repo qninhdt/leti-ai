@@ -1,0 +1,23 @@
+[package]
+name = "leti-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+leti-core.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+rust_decimal = { workspace = true }
+
+[lints]
+workspace = true
